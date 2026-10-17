@@ -3,27 +3,26 @@
 // and the workflows all read and write it, so every change happens under one lock.
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import type { Domain } from "./domain";
 import { raise } from "./errors";
+import { opFolder } from "./names";
 import { EXIT } from "./output";
 import { appendJsonLine, readJson, readJsonLines, timestamp, withLock, writeJson } from "./store";
 
 export type RequestKind = "intake" | "new" | "change" | "repair";
 export type RequestState = "received" | "building" | "done" | "failed" | "blocked" | "deferred" | "declined" | "duplicate" | "cancelled";
 
-export const TERMINAL: readonly RequestState[] = ["done", "failed", "deferred", "declined", "duplicate", "cancelled"];
+const TERMINAL: readonly RequestState[] = ["done", "failed", "deferred", "declined", "duplicate", "cancelled"];
 export const isTerminal = (state: RequestState): boolean => TERMINAL.includes(state);
+/** The states `request:retry` puts back in the queue. */
+export const RETRYABLE: readonly RequestState[] = ["failed", "deferred", "cancelled"];
 
 /** The question a run blocks on when its context is signed out; signing in answers it. */
 export const signInQuestion = (cli: string, context: string): string => `sign in again: ${cli} context:login ${context}`;
 export const isSignInQuestion = (question: string | undefined): boolean => !!question?.startsWith("sign in again: ");
 
 /** Where the tool lives, so a workflow started for a request knows what to build and how to call it. */
-export interface DomainRef {
-  name: string;
-  root: string;
-  dir: string;
-  home: string;
-}
+export type DomainRef = Pick<Domain, "name" | "root" | "dir" | "home">;
 
 export interface RequestRecord {
   id: string;
@@ -55,9 +54,10 @@ export interface RequestRecord {
   /** Another request holds the lock on this op; this one waits for it. */
   waitingFor?: string;
   /**
-   * A retry of a run that completed (deferred, declined, flaky) asks for it to be redone from its
-   * first agent stage, which awf must be told on every attempt until that stage starts again. Any
-   * other retry continues from the stage that stopped.
+   * The next attempt starts again from the first agent stage instead of continuing from the one
+   * that stopped, and awf must be told so on every attempt until that stage starts again. Set by
+   * the worker for a run that completed (deferred, declined, flaky), and wherever the worktree
+   * went: a cancel, a lock wait with nothing built.
    */
   redo?: boolean;
   /** How many times the worker has started a run for it. */
@@ -143,23 +143,31 @@ export class Requests {
   list(filter: { state?: RequestState; op?: string } = {}): RequestRecord[] {
     let names: string[];
     try {
-      names = readdirSync(this.dir).filter((name) => /^R-\d+\.json$/.test(name));
+      names = readdirSync(this.dir);
     } catch {
       return [];
     }
     return names
-      .map((name) => readJson<RequestRecord>(join(this.dir, name), undefined as never))
-      .filter((r) => r && (!filter.state || r.state === filter.state) && (!filter.op || r.op === filter.op))
+      .flatMap((name) => (name.endsWith(".json") ? (this.get(name.slice(0, -".json".length)) ?? []) : []))
+      .filter((r) => (!filter.state || r.state === filter.state) && (!filter.op || r.op === filter.op))
       .sort((a, b) => b.id.localeCompare(a.id, undefined, { numeric: true }));
   }
 
-  /** Apply a change under the lock and log it; `event` names it in the ledger. */
-  update(id: string, change: (r: RequestRecord) => Partial<RequestRecord>, event?: string): RequestRecord {
+  /**
+   * Apply a change under the lock and log it; `event` names it in the ledger. A cancelled request's
+   * run may still be stopping, so what it records on the way out is dropped: only a change made
+   * `evenIfCancelled` (a cancel, a retry) applies to one.
+   */
+  update(
+    id: string,
+    change: (r: RequestRecord) => Partial<RequestRecord>,
+    event?: string,
+    { evenIfCancelled = false }: { evenIfCancelled?: boolean } = {},
+  ): RequestRecord {
     return withLock(this.lockDir, () => {
       const current = this.get(id);
       if (!current) throw new Error(`no request ${id}`);
-      // A cancelled request's run may still be stopping: what it records on the way out is dropped.
-      if (current.state === "cancelled" && event !== "retried" && event !== "cancelled") return current;
+      if (current.state === "cancelled" && !evenIfCancelled) return current;
       const patch = change(current);
       const next: RequestRecord = { ...current, ...patch, updatedAt: timestamp() };
       writeJson(this.fileOf(id), next);
@@ -184,32 +192,38 @@ export class Requests {
 
   /**
    * A repair that ended failed and hasn't been retried, which marks the op broken; with `direct`,
-   * its direct way, which the op then skips.
+   * one of its direct way (filed when the op fell back to the browser), which the op then skips.
    */
   brokenBy(op: string, direct = false): RequestRecord | undefined {
-    const latest = this.list({ op }).find((r) => r.kind === "repair" && !r.failure?.fellBack === !direct);
+    const latest = this.list({ op }).find((r) => r.kind === "repair" && (r.failure?.fellBack === true) === direct);
     return latest?.state === "failed" ? latest : undefined;
   }
 
   /** Take the lock on an op for a request; returns the holder when another request has it. */
   lockOp(op: string, id: string): string | undefined {
-    const file = join(this.home, "locks", `${op.replace(":", "-")}.json`);
-    return withLock(join(this.home, "locks", ".lock"), () => {
-      const holder = readJson<{ id?: string }>(file, {}).id;
+    return withLock(this.opLocks, () => {
+      const holder = readJson<{ id?: string }>(this.opLock(op), {}).id;
       if (holder && holder !== id) {
         const held = this.get(holder);
         if (held && !isTerminal(held.state)) return holder;
       }
-      writeJson(file, { id, at: timestamp() });
+      writeJson(this.opLock(op), { id, at: timestamp() });
       return undefined;
     });
   }
 
   unlockOp(op: string, id: string): void {
-    const file = join(this.home, "locks", `${op.replace(":", "-")}.json`);
-    withLock(join(this.home, "locks", ".lock"), () => {
-      if (readJson<{ id?: string }>(file, {}).id === id) writeJson(file, {});
+    withLock(this.opLocks, () => {
+      if (readJson<{ id?: string }>(this.opLock(op), {}).id === id) writeJson(this.opLock(op), {});
     });
+  }
+
+  private get opLocks(): string {
+    return join(this.home, "locks", ".lock");
+  }
+
+  private opLock(op: string): string {
+    return join(this.home, "locks", `${opFolder(op)}.json`);
   }
 
   answer(id: string, text: string): RequestRecord {
@@ -228,10 +242,9 @@ export class Requests {
   }
 
   /** Continue every request blocked on signing in to `context`; returns their ids. */
-  signedIn(cli: string, context: string): string[] {
-    const question = signInQuestion(cli, context);
+  signedIn(context: string): string[] {
     return this.list({ state: "blocked" })
-      .filter((r) => r.context === context && r.question === question)
+      .filter((r) => r.context === context && isSignInQuestion(r.question))
       .map((r) => this.answer(r.id, "signed in again").id);
   }
 
@@ -240,22 +253,24 @@ export class Requests {
       id,
       (r) => {
         if (isTerminal(r.state)) raise(`${id} is ${r.state} already`, EXIT.PRECONDITION);
-        return { state: "cancelled", reason, waitingFor: undefined, question: undefined };
+        // Its worktree goes with it, so a retry starts it again from its first stage.
+        return { state: "cancelled", reason, waitingFor: undefined, question: undefined, redo: true };
       },
       "cancelled",
+      { evenIfCancelled: true },
     );
   }
 
-  retry(id: string, { redo = false }: { redo?: boolean } = {}): RequestRecord {
+  retry(id: string): RequestRecord {
     return this.update(
       id,
       (r) => {
-        if (r.state !== "failed" && r.state !== "deferred" && r.state !== "cancelled")
+        if (!RETRYABLE.includes(r.state))
           raise(`${id} is ${r.state}; only failed, deferred and cancelled requests are retried`, EXIT.PRECONDITION);
-        // A cancelled request's worktree is gone, so it starts again from its first stage.
-        return { state: "received", reason: undefined, waitingFor: undefined, redo: redo || r.state === "cancelled" || undefined };
+        return { state: "received", reason: undefined, waitingFor: undefined };
       },
       "retried",
+      { evenIfCancelled: true },
     );
   }
 }

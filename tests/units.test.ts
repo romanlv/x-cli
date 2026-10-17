@@ -3,15 +3,17 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Type from "typebox";
+import { awfArgs, describeRun, formatCost, runUsage } from "../core/awf";
 import { launch } from "../core/browser";
 import { callOf, parseArgs } from "../core/cli";
 import { Contexts } from "../core/contexts";
 import type { Domain } from "../core/domain";
 import { InputError, OpError } from "../core/errors";
 import { callArgv, loadOps, type OpEntry, opHelp, parseInput } from "../core/ops";
+import { formatDuration } from "../core/output";
 import { Requests } from "../core/requests";
 import { formatSnapshot, suggestLocator, takeSnapshot } from "../core/snapshot";
-import { awfArgs, describeRun, formatCost, formatDuration, RUN_TIMEOUT, runUsage } from "../core/worker";
+import { lineText, requestLines } from "../core/watch";
 import { DEFAULTS, loadConfig } from "../core/workflows/config";
 import { renderPrompts } from "../core/workflows/prompts-doc";
 import { accountOf, xDomain } from "../x/domain";
@@ -109,10 +111,14 @@ describe("the call a request keeps", () => {
     expect(
       callOf(
         "x:y",
-        ["--a", "1", "--json", "--context", "acme", "--request", "do it", "--flag", "--dry-run", "--wait", "--timeout=5"],
+        ["--a", "1", "--json", "--context", "acme", "--request", "do it", "--flag", "--dry-run", "--wait", "--timeout=5", "--", "--b"],
         new Set(["flag"]),
       ),
-    ).toEqual(["x:y", "--a", "1", "--flag", "--dry-run"]);
+    ).toEqual(["x:y", "--a", "1", "--flag", "--dry-run", "--", "--b"]);
+  });
+
+  test("--state and --session are a command's own flags, so an op can take them too", () => {
+    expect(parseArgs(["--state", "building", "--session", "s"]).flags).toEqual({ state: "building", session: "s" });
   });
 });
 
@@ -304,7 +310,7 @@ describe("request ledger", () => {
       ],
     };
     const turns = [
-      { kind: "operation-started", of: "turn", operationId: "a", agent: "checker", label: "review 1", deliveredAt: "2026-10-17T20:04:00Z" },
+      { kind: "operation-started", of: "turn", operationId: "a", agent: "checker", label: "review 1" },
       { kind: "turn", operationId: "a", agent: "checker", label: "review 1" },
       {
         kind: "operation-started",
@@ -312,34 +318,31 @@ describe("request ledger", () => {
         operationId: "b",
         agent: "builder",
         label: "revise 1",
-        deliveredAt: "2026-10-17T20:06:00Z",
         execution: { model: "claude-sonnet-5-5" },
       },
     ];
-    expect(describeRun(view, turns, now)).toEqual([
-      { text: "✓ write  17m", key: "write succeeded" },
-      {
-        text: "▸ check  14m · revise 1 · builder (claude-sonnet-5-5) · Bash: bun run ci:sandbox (4m)",
-        key: "check running · revise 1 · builder",
-      },
+    const builder = { label: "revise 1", agent: "builder", model: "claude-sonnet-5-5" };
+    const stages = describeRun(view, turns, now);
+    expect(stages).toEqual([
+      { stage: "write", state: "succeeded", time: "17m", turns: [] },
+      { stage: "check", state: "running", time: "14m", turns: [{ ...builder, step: "Bash: bun run ci:sandbox (4m)" }] },
     ]);
+    // On a terminal and in a log alike, a line each; a log prints one again only when its key changes.
+    const lines = requestLines(requests.file({ kind: "intake", text: "a\nthread", context: "acme", domain: domain() }), stages);
+    expect(lines.map(lineText)).toEqual([
+      "R-0001 · received · intake: a thread",
+      "  ✓ write  17m",
+      "  ▸ check  14m · revise 1 · builder (claude-sonnet-5-5) · Bash: bun run ci:sandbox (4m)",
+    ]);
+    expect(lines.map((l) => l.key)).toEqual(["R-0001 received", "write succeeded", "check running · revise 1 · builder"]);
     // awf cuts a long argument, so a command can be nothing but its first assignment.
     view.agents[1]!.live!.lastActivity.activity.input = "S=/Users/roman/.awf/sandboxes/op-build/R-0012/…";
-    expect(describeRun(view, turns, now)[1]!.text).toBe("▸ check  14m · revise 1 · builder (claude-sonnet-5-5) · Bash (4m)");
+    expect(describeRun(view, turns, now)[1]!.turns).toEqual([{ ...builder, step: "Bash (4m)" }]);
     // A turn an earlier attempt left open is not working now.
     const stale = turns.map((t) => ({ ...t, attempt: 1 }));
-    expect(describeRun(view, [...stale, { kind: "attempt-started", attempt: 2 }], now)[1]!.text).toBe("▸ check  14m");
+    expect(describeRun(view, [...stale, { kind: "attempt-started", attempt: 2 }], now)[1]!.turns).toEqual([]);
     // Between turns, as while the checks run, the stage alone.
-    expect(describeRun(view, turns.slice(0, 2), now)[1]!.text).toBe("▸ check  14m");
-  });
-
-  test("a retry of a run that completed redoes it from its first agent stage", () => {
-    const r = requests.file({ kind: "intake", text: "x", context: "acme", domain: domain() });
-    mkdirSync(join(t.home, "runs", "op-build", r.id), { recursive: true });
-    writeFileSync(join(t.home, "runs", "op-build", r.id, "output.json"), JSON.stringify({ outcome: "failed" }));
-    expect(awfArgs(t.home, "/root", r).slice(-2)).toEqual(["--continue", r.id]);
-    writeFileSync(join(t.home, "runs", "op-build", r.id, "output.json"), JSON.stringify({ outcome: "completed" }));
-    expect(awfArgs(t.home, "/root", r).slice(-4)).toEqual(["--continue", r.id, "--from-stage", "intake"]);
+    expect(describeRun(view, turns.slice(0, 2), now)[1]!.turns).toEqual([]);
   });
 
   test("a retry of a run that stopped continues from the stage that stopped", () => {
@@ -347,29 +350,26 @@ describe("request ledger", () => {
     mkdirSync(join(t.home, "runs", "op-build", r.id), { recursive: true });
     writeFileSync(join(t.home, "runs", "op-build", r.id, "output.json"), JSON.stringify({ outcome: "stopped" }));
     requests.update(r.id, () => ({ state: "failed", reason: "the run was killed" }));
-    expect(awfArgs(t.home, "/root", requests.retry(r.id)).slice(-2)).toEqual(["--continue", r.id]);
+    expect(awfArgs(t.home, "/root", requests.retry(r.id), "3h").slice(-2)).toEqual(["--continue", r.id]);
   });
 
-  test("a retried request is redone from its first stage until that stage starts, whatever stopped the attempt between", () => {
+  test("a request to be redone is, from its workflow's first stage, whatever stopped the attempt before", () => {
     const r = requests.file({ kind: "repair", op: "x:y", text: "x", context: "acme", domain: domain() });
     mkdirSync(join(t.home, "runs", "op-repair", r.id), { recursive: true });
-    writeFileSync(join(t.home, "runs", "op-repair", r.id, "output.json"), JSON.stringify({ outcome: "completed" }));
-    requests.update(r.id, () => ({ state: "failed" }));
-    const retried = requests.retry(r.id, { redo: true });
     // An attempt stopped on a lock before reaching diagnose: its outcome is no longer "completed".
     writeFileSync(join(t.home, "runs", "op-repair", r.id, "output.json"), JSON.stringify({ outcome: "stopped" }));
-    expect(awfArgs(t.home, "/root", retried).slice(-4)).toEqual(["--continue", r.id, "--from-stage", "diagnose"]);
+    expect(awfArgs(t.home, "/root", { ...r, redo: true }, "3h").slice(-4)).toEqual(["--continue", r.id, "--from-stage", "diagnose"]);
   });
 
   test("the worker continues a run that has a record, and starts one that doesn't", () => {
     const r = requests.file({ kind: "repair", op: "x:y", text: "x", context: "acme", domain: domain() });
-    expect(awfArgs(t.home, "/root", r)).toEqual([
+    expect(awfArgs(t.home, "/root", r, "3h")).toEqual([
       "run",
       "/root/core/workflows/repair.ts",
       "--run-root",
       `${t.home}/runs`,
       "--timeout",
-      RUN_TIMEOUT,
+      "3h",
       "--no-watch",
       "--id",
       r.id,
