@@ -118,9 +118,9 @@ const usage = (env: Env, ops: Map<string, OpEntry>): string => {
     `  ${cli} request:retry <id>`,
     `  ${cli} request:cancel <id> ["<why>"]   stop it, and its run if one is going`,
     "",
-    "Contexts: one tenant per call, the current one unless --context names another.",
+    "Contexts: one per call (an account or tenant, and its sign-in), the current one unless --context names another.",
     `  ${cli} contexts`,
-    `  ${cli} context:add <name> --url <tenant url>`,
+    `  ${cli} context:add <name> --url <url>`,
     `  ${cli} context:login <name>        a person signs in, in a browser window`,
     `  ${cli} context:login <name> --username <u> --password <p>   or headless; .env.<name> can hold both`,
     `  ${cli} context:use <name>`,
@@ -181,7 +181,7 @@ const dispatch = async (env: Env, argv: string[]): Promise<Outcome> => {
       return listOps(env);
     case "contexts": {
       const { current, contexts: all } = contexts.list();
-      if (all.length === 0) return ok("no contexts yet", [{ hint: "add a tenant", cmd: `${cli} context:add <name> --url <tenant url>` }]);
+      if (all.length === 0) return ok("no contexts yet", [{ hint: "add one", cmd: `${cli} context:add <name> --url <url>` }]);
       const width = Math.max(...all.map((c) => c.name.length));
       const rows = all.map((c) => {
         const state = !contexts.isSignedIn(c) ? "signed out" : `signed in, ${ago(c.signedInAt ?? c.addedAt)}`;
@@ -192,7 +192,7 @@ const dispatch = async (env: Env, argv: string[]): Promise<Outcome> => {
     }
     case "context:add": {
       const name = need(first, "a context name");
-      const url = typeof args.flags.url === "string" ? args.flags.url : raiseUsage("give --url <tenant url>");
+      const url = typeof args.flags.url === "string" ? args.flags.url : raiseUsage("give --url <url>");
       const added = contexts.add(name, url);
       return ok(`context ${added.name}: ${added.url}`, [{ hint: "sign in", cmd: `${cli} context:login ${added.name}` }]);
     }
@@ -654,11 +654,11 @@ const rerun = async (env: Env, r: RequestRecord, again: string[]): Promise<never
   process.exit(await child.exited);
 };
 
-/** An op's last run, as `x ops` shows it: only a failure that wasn't the input's, tenant's or session's is "failed". */
+/** An op's last run, as `x ops` shows it: only a failure that wasn't the input's, the app's or the session's is "failed". */
 const lastResult = (last: HistoryLine): string => {
   if (last.ok) return "ok";
   const at = last.step ? ` at "${last.step}"` : "";
-  if (last.exit === EXIT.REFUSED) return `refused by the tenant${at}`;
+  if (last.exit === EXIT.REFUSED) return `refused by the app${at}`;
   if (last.exit === EXIT.USAGE) return `bad input${at}`;
   if (last.exit === EXIT.PRECONDITION) return `not run: ${last.error ?? "a precondition"}`;
   return `failed${at}`;

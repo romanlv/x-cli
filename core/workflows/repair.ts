@@ -9,9 +9,9 @@
 // The worktree and the op's lock are taken between stages, so every attempt has them.
 import { defineExecutableWorkflow, type WorkflowContext } from "agentswf/workflow";
 import Type from "typebox";
+import * as prompts from "../instructions/prompts";
 import { FIRST_STAGE } from "../worker";
 import { type Deps, realDeps } from "./deps";
-import * as prompts from "./prompts";
 import {
   approve,
   ask,

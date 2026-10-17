@@ -77,7 +77,7 @@ export const launch = async (headed: boolean): Promise<Browser> => {
 };
 
 /**
- * A browser on the context's saved sign-in, at its URL, checked to be signed in to that tenant and
+ * A browser on the context's saved sign-in, at its URL, checked to be signed in as that context and
  * no other. Signed out, it signs in from `.env.<context>` when the checkout has one; otherwise that
  * is a precondition, not something an agent can fix, so nothing is filed.
  */
@@ -136,7 +136,7 @@ const openOnce = async (
     }
     if (state === "elsewhere") {
       throw new PreconditionError(
-        `the saved session for "${ctx.name}" is signed in to another tenant than ${ctx.appUrl}; refusing to run`,
+        `the saved session for "${ctx.name}" is signed in elsewhere than ${ctx.appUrl} (another account or tenant); refusing to run`,
         login,
       );
     }
@@ -183,7 +183,7 @@ export const signIn = async (
       if (state === "signed-in") break;
       if (credentials && state === "signed-out" && Date.now() > refusedBy && (await password.isVisible().catch(() => false)))
         throw new PreconditionError(`the sign-in as ${credentials.username} was turned down: check the username and password`);
-      if (state === "elsewhere") throw new PreconditionError(`signed in to another tenant than ${ctx.url}`);
+      if (state === "elsewhere") throw new PreconditionError(`signed in elsewhere than ${ctx.url} (another account or tenant)`);
       if (Date.now() > deadline)
         throw new PreconditionError(
           credentials

@@ -11,7 +11,7 @@ one the first time an op relies on it.
   saved session signed in as anyone else; plain `https://x.com` takes whichever account signs in.
 - A person signs in by hand in the window (`x context:login <name>`). There is no username and
   password sign-in: X challenges automated logins.
-- What is particular to one account (its lists, who it follows) goes in `tenants/<context>.md`.
+- What is particular to one account (its lists, who it follows) goes in `contexts/<context>.md`.
 
 ## Pages _(unconfirmed)_
 

@@ -29,8 +29,8 @@ export interface Domain<Helpers = unknown> {
   /** The helper library ops get as `wd`. */
   helpers(page: Page, options: { contextUrl: string; dryRun: boolean }): Helpers;
   /**
-   * Is the page signed in to this context's tenant? Called on a page that has loaded the context's
-   * URL. `elsewhere` means signed in, but to another tenant than the URL names; `unknown` that the
+   * Is the page signed in as this context? Called on a page that has loaded the context's
+   * URL. `elsewhere` means signed in, but as another account or tenant than the URL names; `unknown` that the
    * page showed neither a signed-in page nor a sign-in, such as one still loading.
    */
   signInState(page: Page, contextUrl: string): Promise<SignInState>;
@@ -46,7 +46,7 @@ export interface Domain<Helpers = unknown> {
   prepareBrowser?(context: BrowserContext): Promise<void>;
   /**
    * The URL a run starts from, given the URL a sign-in landed on and the context's own URL: the
-   * tenant's home page. The sign-in check is made against it, so it keeps what the check needs.
+   * app's home page. The sign-in check is made against it, so it keeps what the check needs.
    */
   appUrl?(signedInUrl: string, contextUrl: string): string;
   /**

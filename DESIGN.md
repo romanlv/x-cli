@@ -29,12 +29,13 @@ core/                       the reusable part: knows nothing of X
   requests.ts               request ledger and the worker loop
   browser.ts                sessions and the `page` commands
   workflows/                awf workflows: build.ts (new ops, changes), repair.ts
+  instructions/             what core tells agents: prompts.ts (every prompt), authoring.md (any op)
 x/                          the domain
   domain.ts                 sign-in check, the account a context names, page:search, page:posts
   helpers/                  Playwright moves every X page shares (open, search, profile, posts, errors)
-  knowledge/                x.md, bot-detection.md, tenants/<context>.md
+  knowledge/                x.md, bot-detection.md, contexts/<context>.md
   ops/<op>/                 one folder per op
-  authoring.md              how to write an op here; read-only rules; names the reference op
+  authoring.md              what is particular to X ops; read-only rules; names the reference op
 ```
 
 The workflows take the domain folder as an argument and read its `authoring.md`, knowledge and ops; they never name X. Their test-data rules come from `authoring.md` too, which for X says: read only.
@@ -193,7 +194,7 @@ $ x contexts
 - **The URL names the account.** `https://x.com/<handle>` makes the sign-in check refuse a session signed in as anyone else (`elsewhere`); runs start from that profile. Plain `https://x.com` accepts whichever account signs in and starts from `/home`.
 - **Only a person signs in**, in the window. There is no username and password sign-in for X: automated logins are what X challenges hardest. The saved sign-in is `.state/contexts/<name>/auth.json`; agents never see or type credentials.
 - **A request keeps the context it was filed in**, so switching contexts never moves a running build to another account.
-- **Account knowledge** lives in `x/knowledge/tenants/<name>.md` (core's word for a context's file is "tenant"), and examples are tagged by context.
+- **Account knowledge** lives in `x/knowledge/contexts/<name>.md`, and examples are tagged by context.
 - **Signed out mid-run**, a run stops `blocked` with "sign in again: x context:login me" as its question, and continues once that is done.
 
 ## Browser layer
@@ -289,14 +290,15 @@ A signed-out session is no agent's to fix: the run signs in again from `.env.<co
 
 ## Prompts
 
-Everything the workflows tell an agent is in `core/workflows/prompts.ts`: the instructions each agent is opened with, each stage's prompt, and the problems a round hands to the next. The workflows decide when a prompt is sent and to whom; prompts.ts decides what it says. [`docs/prompts.md`](docs/prompts.md) shows every prompt filled in for a sample request, in the order a run sends them; `bun run docs:prompts` writes it, and a test fails when it is out of date.
+Everything the workflows tell an agent is in `core/instructions/prompts.ts`: the instructions each agent is opened with, each stage's prompt, and the problems a round hands to the next. The workflows decide when a prompt is sent and to whom; prompts.ts decides what it says. [`docs/prompts.md`](docs/prompts.md) shows every prompt filled in for a sample request, in the order a run sends them; `bun run docs:prompts` writes it, and a test fails when it is out of date.
 
 Every stage prompt starts with the request's whole brief and ends with what a person has answered so far, since an agent may start fresh at any stage. Text goes where it holds:
 
 | What | Where |
 | --- | --- |
-| How the workflow runs: stages, rounds, what to answer | `core/workflows/prompts.ts`, which never names the domain |
-| How an op is written, and the reference op | `authoring.md` in the domain folder |
+| How the workflow runs: stages, rounds, what to answer | `core/instructions/prompts.ts`, which never names the domain |
+| How any op is written | `core/instructions/authoring.md` |
+| What is particular to this app's ops, and the reference op | `authoring.md` in the domain folder |
 | What the app, and each account, are like | `knowledge/` |
 | One op's screens and quirks | `ops/<op>/notes.md` |
 
@@ -311,7 +313,7 @@ The tool should get faster at building with every op, because what one op learns
 | One op | `ops/<op>/notes.md` | "Latest search loads 20 posts per scroll; the cursor is in the last entry" |
 | All of X | `knowledge/x.md` | "a post's permalink is the link around its `time`" |
 | Detection and limits | `knowledge/bot-detection.md` | what X watches for, rate-limit headers, what keeps a low profile |
-| One account | `knowledge/tenants/<context>.md` | its lists, its own handle |
+| One account | `knowledge/contexts/<context>.md` | its lists, its own handle |
 | Code | `helpers/` | `wd.posts({ limit })`, written once and used by every op |
 
 Promotion moves knowledge up a level, as in the template: a note not specific to its op goes into `x.md` too; a move written out in two ops becomes a helper; a person's answer is written where it belongs.

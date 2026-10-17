@@ -13,8 +13,11 @@ command reference. The machinery comes from `../workday-cli`; only `x/` is X's.
 - Run it as `bin/x` (bun). State lives in `.state/` in this folder (gitignored), or `XCLI_HOME`.
 - Ops in `x/ops/` are written by the build and repair workflows, in worktrees, and merged by
   fast-forward. Don't edit them in the main checkout by hand: work in a worktree.
-- `core/workflows/prompts.ts` holds every prompt the workflows send; `docs/prompts.md` shows them filled in.
-  After changing a prompt or `workflows.json`, run `bun run docs:prompts`.
+- Code and instructions are apart: `core/instructions/` is what core tells agents (`prompts.ts`, every
+  prompt; `authoring.md`, how any op is written), and `x/authoring.md` and `x/knowledge/` are X's.
+  `docs/new-site.md` says where each thing goes when starting a CLI for another site.
+- `docs/prompts.md` shows every prompt filled in. After changing a prompt or `workflows.json`, run
+  `bun run docs:prompts` and read its diff: it is what agents will see.
 - `workflows.json` names each agent's model and turns the agents' sandbox on (DESIGN.md, "Models and the sandbox").
 - `bun run ci:fast` is everything but browser e2e tests (seconds), `ci:sandbox` that without the
   workflow tests (what sandboxed agents run); `bun run ci:check` runs Biome, tsc, the bun tests and

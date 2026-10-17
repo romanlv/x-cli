@@ -9,11 +9,11 @@ import { existsSync, rmSync } from "node:fs";
 import { join, relative } from "node:path";
 import { type AgentRef, isAnswered, type JsonValue, type RuntimeSelection, type SandboxRef, type WorkflowContext } from "agentswf/workflow";
 import Type from "typebox";
+import * as prompts from "../instructions/prompts";
 import { opFromFolder } from "../names";
 import { isSignInQuestion, isTerminal, type RequestRecord, signInQuestion } from "../requests";
 import { loadConfig, type WorkflowConfig } from "./config";
 import { type CheckScope, cliEnv, type Deps, entryIn, type Verified } from "./deps";
-import * as prompts from "./prompts";
 import { type SandboxPaths, sandboxPaths, shellEnv, widen } from "./sandbox";
 
 /** Revise rounds at most, whoever has them, so a run that keeps finding something new still ends. */

@@ -43,7 +43,7 @@ const READS = new Set(["page", "page:requests", "page:fetch", "page:trace", "pag
 
 export const CORE_PAGE_COMMANDS: Record<string, string> = {
   page: "URL, title and the page's controls, each with a ref such as e14",
-  "page:goto": "<url>  open a URL in the context's tenant",
+  "page:goto": "<url>  open a URL on the context's site",
   "page:click": "<ref>  click, then the page with what changed marked +",
   "page:fill": "<ref> <value>  type into a field; prints its new value",
   "page:select": "<ref> <option>  choose an option of a native select",

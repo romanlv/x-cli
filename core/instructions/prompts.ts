@@ -5,13 +5,14 @@
 // Text a prompt didn't write itself (the person's words, a plan, an error, an output) goes in an
 // XML-style tag, so an agent can tell it from the instructions; short facts are labelled lines.
 //
-// What holds for one domain doesn't go here: how ops are written is the domain's authoring.md, and
-// what the app and a tenant are like is its knowledge/, which the instructions send agents to read.
+// What holds for every op is authoring.md beside this file; what holds for one domain is that domain's
+// authoring.md, and what its app and each context are like is its knowledge/. The instructions send
+// agents to read them.
 import { join } from "node:path";
 import { opFolder } from "../names";
 import { type RequestRecord, signInQuestion } from "../requests";
-import { CHECK_SCRIPT, type CheckScope, type Verified } from "./deps";
-import type { Paths } from "./shared";
+import { CHECK_SCRIPT, type CheckScope, type Verified } from "../workflows/deps";
+import type { Paths } from "../workflows/shared";
 
 /** What a prompt reads: the request, and where its run works. A RequestRun is one. */
 interface PromptRun {
@@ -42,6 +43,9 @@ function md(strings: TemplateStringsArray, ...values: unknown[]): string {
 
 const opDir = ({ paths }: PromptRun, op: string): string => join(paths.domainDir, "ops", opFolder(op));
 
+/** The rules for writing any op, beside this file in the worktree's core. */
+const coreAuthoring = (paths: Paths): string => join(paths.worktree, "core", "instructions", "authoring.md");
+
 // ── Pieces ────────────────────────────────────────────────────────────────────────────────────────
 /** Text the prompt didn't write (a person's words, a plan, an error, an output), set apart from the instructions. */
 const tag = (name: string, body: string, attrs: Record<string, string> = {}): string => {
@@ -57,7 +61,7 @@ const answers = (request: RequestRecord): string => {
   return [
     "",
     "",
-    "A person answered questions this request asked earlier. Follow the answers, and write each into the level of knowledge it belongs to (the op's notes.md, knowledge/*.md, or the tenant's file) so it is not asked again.",
+    "A person answered questions this request asked earlier. Follow the answers, and write each into the level of knowledge it belongs to (the op's notes.md, knowledge/*.md, or the context's file) so it is not asked again.",
     tag("answers", request.answers.map((a) => `- Q: ${a.question ?? "(none)"}\n  A: ${a.text}`).join("\n")),
   ].join("\n");
 };
@@ -86,7 +90,7 @@ const runAndCheck = ({ request, paths }: PromptRun, op: string): string => md`
   - Each example: its output is what spec.md says, read from ${request.domain.name}. Open the record it names and check it there.
   - An op that saves: \`--dry-run\` first, then for real.
   - An op with a direct way: each example with \`--browser\` too, and the two outputs match.
-  - A bad input, such as a value the tenant doesn't have: exit 2, with a message that says what is valid.
+  - A bad input, such as a value the app doesn't offer in this context: exit 2, with a message that says what is valid.
   - Run \`${paths.run(`bun run ${paths.sandbox ? "ci:sandbox" : "ci:fast"}`)}\`; \`${paths.run("bun run lint:fix")}\` formats and fixes what it safely can, and the full \`ci:check\` runs before approval. A helper you change must keep the mock tests in tests/ passing.
   - Answer done with what you ran and what it printed.
 `;
@@ -101,9 +105,10 @@ const workspace = ({ request, paths }: PromptRun, role: string): string => md`
   - Leave your changes uncommitted: the workflow commits them once they are verified and reviewed.
 
   Before anything else, read:
-  - ${paths.domainDir}/authoring.md: how an op is written here, and which op is the reference
+  - ${coreAuthoring(paths)}: how any op is written
+  - ${paths.domainDir}/authoring.md: what is particular to ${request.domain.name}, which wins where the two differ, and which op is the reference
   - ${paths.domainDir}/knowledge/${request.domain.name}.md
-  - ${paths.domainDir}/knowledge/tenants/${request.context}.md, the tenant's file, if it exists
+  - ${paths.domainDir}/knowledge/contexts/${request.context}.md, what is particular to this context (the account or tenant it signs in as), if it exists
 `;
 
 export const plannerInstructions = (run: PromptRun): string => md`
@@ -198,7 +203,7 @@ export const spec = (run: PromptRun, op: string, summary: string, change: boolea
   ${change ? `Update ${opDir(run, op)}/spec.md for the change.` : `Write ${opDir(run, op)}/spec.md for the new op.`} It says:
   - what the person wants, as the intent says
   - which way in the app the op uses, and the others the builder found, each with why not
-  - its inputs, each a flag, typed, with which values come from the tenant
+  - its inputs, each a flag, typed, with which values differ between contexts
   - its outputs, as the app gives them back
   - what done looks like in ${run.request.domain.name}, so someone can check it there
   authoring.md says which spec to follow. Say only what the notes show of the app. If another way the builder found serves the intent better, choose it in the spec and say why: the op is written to the spec.${answers(run.request)}
@@ -209,7 +214,7 @@ export const write = (run: PromptRun, op: string, summary: string): string => {
   return md`
     ${brief(run, op, summary)}
 
-    Write ${opDir(run, op)}/op.ts from the trace and ${opDir(run, op)}/notes.md, with ${paths.domainDir}/authoring.md and the reference op open. If spec.md chose a way you didn't do the task through while exploring, do it that way once first, and write it in notes.md.
+    Write ${opDir(run, op)}/op.ts from the trace and ${opDir(run, op)}/notes.md, with both authoring.md files and the reference op open. If spec.md chose a way you didn't do the task through while exploring, do it that way once first, and write it in notes.md.
     - Use the helpers; add one to ${paths.domainDir}/helpers/ when a move holds for every screen and isn't there yet.
     - Name every step.
     - Write it to spec.md: its inputs, outputs and errors, and the way in the app it names.
@@ -291,9 +296,9 @@ export const review = (run: PromptRun, op: string, summary: string, verified: Ve
     ${describeVerify(verified, request.context)}${builder}
 
     1. Run it yourself on an input of your own, not one from examples.json, and find the result in ${request.domain.name} through the CLI's page commands: the record it made or changed, or what it read, shown in the app. Check it is what spec.md says done looks like.
-    2. Read the change against the intent, spec.md, ${paths.domainDir}/authoring.md and the reference op it names. Look for:
+    2. Read the change against the intent, spec.md, ${coreAuthoring(paths)}, ${paths.domainDir}/authoring.md and the reference op it names. Look for:
        - an op that does what spec.md says but not what the intent asks
-       - values copied from exploring that should be inputs or come from the tenant's knowledge file
+       - values copied from exploring that should be inputs or come from the context's knowledge file
        - logic that belongs in a helper, or the same move written out in two ops
        - steps without names
        - output echoed from input instead of read back

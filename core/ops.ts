@@ -199,7 +199,7 @@ export interface HistoryLine {
   ok: boolean;
   step?: string;
   error?: string;
-  /** A failure triage put on the input, the tenant or the session: 2, 3 or 4. Unset is the op's fault. */
+  /** A failure triage put on the input, the app or the session: 2, 3 or 4. Unset is the op's fault. */
   exit?: number;
   /** Done without a browser. */
   direct?: boolean;
@@ -389,7 +389,7 @@ export const triage = async (env: RunEnv, ctx: Context, open: OpenBrowser, err: 
   if (isBrowserFailure(err)) return fail(`the browser failed: ${(err as Error).message.split("\n")[0]}`, EXIT.ERROR);
   const refused = domain.refusal && !page.isClosed() ? await domain.refusal(page).catch(() => undefined) : undefined;
   if (refused) return fail(`${domain.name} refused it: ${refused}`, EXIT.REFUSED);
-  // Did the session end under the op? Asked of a fresh page at the tenant's home, in a context of its
+  // Did the session end under the op? Asked of a fresh page at the app's home, in a context of its
   // own, since the failed page may be anything: an error screen, a dialog, a page without the header.
   const fresh = await open.browser.newContext({ storageState: ctx.authFile }).catch(() => undefined);
   if (fresh) {

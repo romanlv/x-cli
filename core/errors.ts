@@ -1,5 +1,5 @@
 // Failures that are not the op's fault. Triage files a repair for anything else an op throws, so
-// helpers throw these when they know better: a value the tenant doesn't have is bad input, not a bug.
+// helpers throw these when they know better: a value the app doesn't offer is bad input, not a bug.
 import { EXIT, type NextHint } from "./output";
 
 export class OpError extends Error {
@@ -13,7 +13,7 @@ export class OpError extends Error {
   }
 }
 
-/** The caller asked for something that can't be: a stage the tenant doesn't have. Exit 2. */
+/** The caller asked for something that can't be: a value the app doesn't offer. Exit 2. */
 export class InputError extends OpError {
   constructor(message: string, next?: NextHint[]) {
     super(message, EXIT.USAGE, next);

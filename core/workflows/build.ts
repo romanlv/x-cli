@@ -14,10 +14,10 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { defineExecutableWorkflow, type WorkflowContext } from "agentswf/workflow";
+import * as prompts from "../instructions/prompts";
 import { OP_NAME, opFolder } from "../names";
 import { FIRST_STAGE } from "../worker";
 import { type Deps, realDeps } from "./deps";
-import * as prompts from "./prompts";
 import {
   approve,
   ask,

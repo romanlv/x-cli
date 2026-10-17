@@ -1,11 +1,12 @@
-// Named tenants, as `kubectl config use-context` names clusters: a nickname, a URL and a saved sign-in.
+// Named contexts, as `kubectl config use-context` names clusters: a nickname, a URL (the app, as one
+// account or tenant of it) and a saved sign-in.
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { EXIT, raise } from "./output";
 import { readJson, withLock, writeJson } from "./store";
 
 export interface ContextEntry {
-  /** What the person gave: the tenant, or its sign-in page. */
+  /** What the person gave: the app's URL for this context, or its sign-in page. */
   url: string;
   /** Where the signed-in app lives, recorded at sign-in; runs and sessions start here. */
   appUrl?: string;
@@ -133,8 +134,8 @@ export class Contexts {
     if (name) return this.get(name);
     const { current } = this.read();
     if (!current) {
-      return raise("no context: add a tenant and sign in first", EXIT.PRECONDITION, [
-        { hint: "add a tenant", cmd: `${this.cli} context:add <name> --url <tenant url>` },
+      return raise("no context: add one and sign in first", EXIT.PRECONDITION, [
+        { hint: "add one", cmd: `${this.cli} context:add <name> --url <url>` },
       ]);
     }
     return this.get(current);
@@ -174,7 +175,7 @@ export class Contexts {
   private missing(name: string): never {
     const names = Object.keys(this.read().contexts);
     return raise(`no context "${name}"${names.length ? ` (contexts: ${names.join(", ")})` : ""}`, EXIT.PRECONDITION, [
-      { hint: "add it", cmd: `${this.cli} context:add ${name} --url <tenant url>` },
+      { hint: "add it", cmd: `${this.cli} context:add ${name} --url <url>` },
     ]);
   }
 }

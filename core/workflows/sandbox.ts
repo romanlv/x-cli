@@ -1,7 +1,7 @@
 // Where sandboxed agents live: srt, writing only the worktree, a CLI home of the request's own and a
 // short socket directory. They read awf's source, which the type-check resolves, and their context's
 // saved sign-in where it is. Their checks are ci:sandbox: `awf test` can't run under srt, nor the e2e
-// tests, whose mock tenant can't take a port, so those run on the host only. The worktree gets
+// tests, whose mock app can't take a port, so those run on the host only. The worktree gets
 // node_modules of its own, since bun resolving through a link to the checkout's would need the
 // checkout readable. The browser stays on the host, reached through one socket in that directory,
 // since Chromium doesn't start under srt; so do an op's direct calls.
