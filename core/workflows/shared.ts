@@ -362,9 +362,8 @@ const openTeam = (run: RequestRun): Team => {
   let box: Promise<SandboxRef> | undefined;
   const sandbox = async () => {
     if (!paths.sandbox) return {};
-    const sandboxPaths = paths.sandbox;
     box ??= run.deps
-      .sandbox(request, paths.worktree, sandboxPaths)
+      .sandbox(request, paths.worktree, paths.sandbox)
       .then((spec) => widen(spec, config.sandbox || {}, request.domain.root))
       .then((spec) => workflow.sandboxes.open({ key: "agents", cwd: paths.worktree, ...spec }));
     return { sandbox: await box };

@@ -23,10 +23,10 @@ export const renderPrompts = (cli: string, domainFolder: string, config: Workflo
   const request: RequestRecord = {
     id: "R-0001",
     kind: "new",
-    text: "the posts an account wrote about a topic, newest first",
+    text: "the things that match a word, newest first",
     context: "sandbox",
     domain: { name: cli, root: ROOT, dir: join(ROOT, domainFolder), home: join(ROOT, ".state") },
-    call: { op: "posts:search", argv: ["posts:search", "--from", "jack", "--query", "bitcoin"] },
+    call: { op: "thing:find", argv: ["thing:find", "--query", "lamp"] },
     state: "building",
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
@@ -35,10 +35,16 @@ export const renderPrompts = (cli: string, domainFolder: string, config: Workflo
   };
   const runFor = (r: RequestRecord) => ({ request: r, paths: pathsFor(r, { ...config, sandbox: false }) });
   const run = runFor(request);
-  const answered = { ...run, request: { ...request, answers: [{ at: request.createdAt, question: "Which source?", text: "Referral" }] } };
-  const op = "posts:search";
-  const plan = "List the account's posts that match the query, newest first, with their text, time and counts.";
-  const failure = { step: "open search", error: "timeout at read posts", bundle: join(ROOT, ".state/failures/F-1") };
+  const answered = {
+    ...run,
+    request: {
+      ...request,
+      answers: [{ at: request.createdAt, question: "Should archived things be left out?", text: "Yes, only current ones." }],
+    },
+  };
+  const op = "thing:find";
+  const plan = "List the things that match the query, newest first, with their name, time and link.";
+  const failure = { step: "open search", error: "timeout at read results", bundle: join(ROOT, ".state/failures/F-1") };
   const repair = runFor({
     ...request,
     id: "R-0002",
@@ -51,8 +57,8 @@ export const renderPrompts = (cli: string, domainFolder: string, config: Workflo
   const other: RequestRecord = {
     ...request,
     id: "R-0003",
-    text: "the replies under a post",
-    op: "post:thread",
+    text: "one thing and what links to it",
+    op: "thing:show",
     call: undefined,
   };
   const verify = (error?: string): Verified[] => [
@@ -61,16 +67,16 @@ export const renderPrompts = (cli: string, domainFolder: string, config: Workflo
       ok: !error,
       signedOut: false,
       noExamples: false,
-      runs: [{ input: { from: "jack", query: "bitcoin" }, ok: !error, exitCode: error ? 1 : 0, error }],
+      runs: [{ input: { query: "lamp" }, ok: !error, exitCode: error ? 1 : 0, error }],
     },
   ];
   const problems = [
-    prompts.verifyFailed(request, verify("timeout at read posts")),
-    prompts.checksFailed(run, "fast", `${domainFolder}/ops/posts-search/op.ts:12: Code style issues found`),
+    prompts.verifyFailed(request, verify("timeout at read results")),
+    prompts.checksFailed(run, "fast", `${domainFolder}/ops/thing-find/op.ts:12: Code style issues found`),
     prompts.reviewFound([{ where: "op.ts:30", problem: "the output echoes the input", severity: "blocking" }]),
-    prompts.reviewFound([{ where: "spec.md:3", problem: "names the wrong search tab", severity: "blocking" }]),
+    prompts.reviewFound([{ where: "spec.md:3", problem: "names the wrong sort order", severity: "blocking" }]),
   ];
-  const minor = [{ where: "notes.md:4", problem: "a typo in the screen name" }];
+  const minor = [{ where: "notes.md:4", problem: "a typo in the screen name", severity: "minor" as const }];
 
   const section = (title: string, who: string, text: string) => `### ${title}\n\n${who}\n\n${fence(text)}\n`;
   return [
@@ -112,13 +118,7 @@ export const renderPrompts = (cli: string, domainFolder: string, config: Workflo
     section(
       "spec",
       "The planner, after explore.",
-      prompts.spec(
-        run,
-        op,
-        plan,
-        false,
-        "Search with from:<account> <query> on the Latest tab: it lists the account's matching posts, newest first.",
-      ),
+      prompts.spec(run, op, plan, false, "Search for the query and sort by newest: the results list the matching things, newest first."),
     ),
     section("write", "The builder.", prompts.write(run, op, plan)),
     "## Repair",
@@ -126,7 +126,7 @@ export const renderPrompts = (cli: string, domainFolder: string, config: Workflo
     "Filed by the runner when an op failed; there is no intake. The summary in the brief is the failure.",
     "",
     section("diagnose", "The builder. It answers reproduced or flaky.", prompts.diagnose(repair, op, failure)),
-    section("patch", "The builder.", prompts.patch(repair, op, failure, "The Latest tab is now called Recent.")),
+    section("patch", "The builder.", prompts.patch(repair, op, failure, "The sort control is now a menu.")),
     "## Check",
     "",
     "Verify and the repository's checks run first; what fails becomes the next revise's problem, with no review.",

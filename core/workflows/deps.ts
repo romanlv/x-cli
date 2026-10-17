@@ -146,7 +146,7 @@ export const entryIn = (worktree: string, request: RequestRecord): string => joi
 
 export const opDirIn = (domainDir: string, op: string): string => join(domainDir, "ops", opFolder(op));
 
-export interface Example {
+interface Example {
   context: string;
   input: Record<string, unknown>;
 }
@@ -247,8 +247,8 @@ const checkFailures = (output: string): string => {
 };
 
 /**
- * The repository's own checks (its `ci:check` script), on a copy of the worktree without its git
- * link: the tool behaves differently inside a worktree, and its tests should see a plain checkout.
+ * The repository's own checks, on a copy of the worktree without its git link: the tool behaves
+ * differently inside a worktree, and its tests should see a plain checkout.
  */
 const checks = async (worktree: string, scope: CheckScope): Promise<{ ok: boolean; output: string }> => {
   const pkg = join(worktree, "package.json");

@@ -209,7 +209,7 @@ test("a new op goes through every stage, is merged, and the request ends done", 
 
 test.each([
   ["duplicate", answer(INTAKE, { kind: "duplicate", command: "x candidate:create --help", reason: "candidate:create does it" })],
-  ["deferred", answer(INTAKE, { kind: "deferred", reason: "needs the Merge task, which this tenant hides" })],
+  ["deferred", answer(INTAKE, { kind: "deferred", reason: "needs the Merge task, which this context hides" })],
   ["declined", answer(INTAKE, { kind: "declined", reason: "too vague" })],
 ] as const)("intake ends a %s request without a build, and cleans up", async (state, intake) => {
   const r = file({ kind: "intake", op: undefined, call: undefined });
@@ -488,12 +488,12 @@ test("a troubleshooter round that gets no further asks a person one question", a
       agents: {
         planner: planning(),
         builder: [...building(), done("1")],
-        troubleshooter: [done("2"), answer(QUESTION, { kind: "question", question: "Is the Merge task enabled for this tenant?" })],
+        troubleshooter: [done("2"), answer(QUESTION, { kind: "question", question: "Is the Merge task enabled for this context?" })],
       },
     },
   );
   expect(run.stopped?.stage).toBe("check");
-  expect(requests.get(r.id)).toMatchObject({ state: "blocked", question: "Is the Merge task enabled for this tenant?" });
+  expect(requests.get(r.id)).toMatchObject({ state: "blocked", question: "Is the Merge task enabled for this context?" });
 });
 
 test("explore finding no way in the app ends the request deferred, with no spec written", async () => {

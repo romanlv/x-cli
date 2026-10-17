@@ -6,7 +6,7 @@ import type { RuntimeSelection } from "agentswf/workflow";
 
 const CONFIG_FILE = "workflows.json";
 
-export const ROLES = ["planner", "builder", "checker", "troubleshooter"] as const;
+const ROLES = ["planner", "builder", "checker", "troubleshooter"] as const;
 export type Role = (typeof ROLES)[number];
 
 /** What sandboxed agents reach beyond what the workflow gives them: paths from the checkout's root, and domains. */

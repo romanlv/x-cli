@@ -9,21 +9,14 @@
 // authoring.md, and what its app and each context are like is its knowledge/. The instructions send
 // agents to read them.
 import { join } from "node:path";
-import { opFolder } from "../names";
 import { type RequestRecord, signInQuestion } from "../requests";
-import { type CheckScope, SCRIPTS, type Verified } from "../workflows/deps";
-import type { Paths } from "../workflows/shared";
+import { type CheckScope, opDirIn, SCRIPTS, type Verified } from "../workflows/deps";
+import type { Finding, Paths } from "../workflows/shared";
 
 /** What a prompt reads: the request, and where its run works. A RequestRun is one. */
 interface PromptRun {
   readonly request: RequestRecord;
   readonly paths: Paths;
-}
-
-interface Finding {
-  where: string;
-  problem: string;
-  severity?: "blocking" | "minor";
 }
 
 /** A prompt written inline: the template's own indentation is removed, interpolations kept. */
@@ -41,7 +34,7 @@ function md(strings: TemplateStringsArray, ...values: unknown[]): string {
     .trim();
 }
 
-const opDir = ({ paths }: PromptRun, op: string): string => join(paths.domainDir, "ops", opFolder(op));
+const opDir = ({ paths }: PromptRun, op: string): string => opDirIn(paths.domainDir, op);
 
 /** The rules for writing any op, beside this file in the worktree's core. */
 const coreAuthoring = (paths: Paths): string => join(paths.worktree, "core", "instructions", "authoring.md");
@@ -74,26 +67,30 @@ const asked = (request: RequestRecord, attrs: Record<string, string>): string =>
   ].join("\n");
 
 /** Everything an agent needs about the request, whether or not it saw an earlier stage. */
-const brief = (run: PromptRun, op: string, summary: string, { trace = true } = {}): string => {
+const brief = (run: PromptRun, op: string, summary: string): string => {
   const { request, paths } = run;
   return [
     asked(request, { id: request.id, kind: request.kind, context: request.context }),
     tag("intent", summary),
     `The op: ${op}, in ${opDir(run, op)} (spec.md, notes.md, op.ts, examples.json).`,
-    ...(trace ? [`The builder's exploring trace: ${paths.trace}`] : []),
+    `The builder's exploring trace: ${paths.trace}`,
   ].join("\n");
 };
 
 /** How a builder finishes writing or patching an op: try it as a caller would, then the fast checks. */
 const runAndCheck = ({ request, paths }: PromptRun, op: string): string => md`
   Then try it as a caller would, \`${paths.cli} ${op} ... --context ${request.context}\`, and fix what doesn't hold, until all of it does:
-  - Each example: its output is what spec.md says, read from ${request.domain.name}. Open the record it names and check it there.
+  - Each example: its output is what spec.md says, read from ${request.domain.name}: check it in the app, as spec.md says done looks like.
   - An op that saves: \`--dry-run\` first, then for real.
   - An op with a direct way: each example with \`--browser\` too, and the two outputs match.
   - A bad input, such as a value the app doesn't offer in this context: exit 2, with a message that says what is valid.
-  - Run \`${paths.run(`bun run ${paths.sandbox ? "ci:sandbox" : "ci:fast"}`)}\`; \`${paths.run("bun run lint:fix")}\` formats and fixes what it safely can, and the full \`ci:check\` runs before approval. A helper you change must keep the mock tests in tests/ passing.
+  - Run \`${paths.run(`bun run ${paths.sandbox ? SCRIPTS.sandbox : SCRIPTS.fast}`)}\`; \`${paths.run(`bun run ${SCRIPTS.fix}`)}\` formats and fixes what it safely can, and the full \`${SCRIPTS.full}\` runs before approval. A helper you change must keep the repository's tests passing.
   - Answer done with what you ran and what it printed.
 `;
+
+/** What agents that drive the app may change in it, as the domain says. */
+const testData = ({ paths }: PromptRun): string =>
+  `Change in the app only what ${paths.domainDir}/authoring.md, under "Test data", allows; a step that would change anything else, try with --dry-run.`;
 
 // ── Instructions ──────────────────────────────────────────────────────────────────────────────────
 /** Where the planner and the builders work, and what they read first. */
@@ -103,12 +100,13 @@ const workspace = ({ request, paths }: PromptRun, role: string): string => md`
   You work on request ${request.id}, on branch ${paths.branch}, in the git worktree ${paths.worktree}.
   - Change files only there; never touch ${request.domain.root}.
   - Leave your changes uncommitted: the workflow commits them once they are verified and reviewed.
+  - When only a person can settle something, answer with one specific question rather than guessing.
 
   Before anything else, read:
   - ${coreAuthoring(paths)}: how any op is written
   - ${paths.domainDir}/authoring.md: what is particular to ${request.domain.name}, which wins where the two differ, and which op is the reference
   - ${paths.domainDir}/knowledge/${request.domain.name}.md
-  - ${paths.domainDir}/knowledge/contexts/${request.context}.md, what is particular to this context (the account or tenant it signs in as), if it exists
+  - ${paths.domainDir}/knowledge/contexts/${request.context}.md, what is particular to this context (the account it signs in as), if it exists
 `;
 
 export const plannerInstructions = (run: PromptRun): string => md`
@@ -117,7 +115,6 @@ export const plannerInstructions = (run: PromptRun): string => md`
   Rules:
   - You decide what gets built and say what the person wants; the builder then surveys the app for it, and you write the spec from what it found. Don't open a browser or run the CLI.
   - Read only the worktree. Each prompt says what you need about other requests; don't look them up in ${join(run.request.domain.home, "requests")}.
-  - When only a person can settle something, answer with one specific question rather than guessing.
 `;
 
 /** The builder's and the troubleshooter's. */
@@ -129,20 +126,22 @@ export const builderInstructions = (run: PromptRun): string => {
     Rules:
     - Drive the app only through the CLI, as \`${paths.cli} <command>\`, adding \`--session ${paths.session} --context ${request.context}\` to every page command. \`${paths.cli} help\` lists them. Close nothing you didn't open.
     - Never sign in and never type credentials. If the session is signed out, answer with the question "${signInQuestion(request.domain.name, request.context)}".
-    - Change in the app only what ${paths.domainDir}/authoring.md, under "Test data", allows. Never change a record that isn't test data; a step that would, try with --dry-run.
+    - ${testData(run)}
     - What one screen taught you goes in the op's notes.md; what holds for every op goes in knowledge/${request.domain.name}.md too; a move two ops need becomes a helper.
-    - When only a person can settle something, answer with one specific question rather than guessing.
   `;
 };
 
-export const checkerInstructions = ({ request, paths }: PromptRun): string => md`
-  You check a change to \`${request.domain.name}\`, a CLI that runs ${request.domain.name} tasks in a browser, made for request ${request.id} in ${paths.worktree}. You report; you don't fix, and you change no files.
+export const checkerInstructions = (run: PromptRun): string => {
+  const { request, paths } = run;
+  return md`
+    You check a change to \`${request.domain.name}\`, a CLI that runs ${request.domain.name} tasks in a browser, made for request ${request.id} in ${paths.worktree}. You report; you don't fix, and you change no files.
 
-  Rules:
-  - Use the CLI as \`${paths.cli}\`, with \`--session ${paths.session}-check --context ${request.context}\` on every page command: your own browser session, not the builder's.
-  - Never sign in.
-  - Change nothing in the app that ${paths.domainDir}/authoring.md, under "Test data", doesn't allow.
-`;
+    Rules:
+    - Use the CLI as \`${paths.cli}\`, with \`--session ${paths.session}-check --context ${request.context}\` on every page command: your own browser session, not the builder's.
+    - Never sign in.
+    - ${testData(run)}
+  `;
+};
 
 /** Sent in the same turn after an agent asked to be signed in and the run did it. */
 export const signedInAgain = (request: RequestRecord): string => md`
@@ -184,10 +183,10 @@ export const explore = (run: PromptRun, op: string, summary: string, change: boo
   ${brief(run, op, summary)}
 
   Find how ${run.request.domain.name} serves the intent${change ? `, for the part that changes; ${opDir(run, op)}/spec.md says what the op does now` : ""}. Start from the home page, as the op will.
-  - Survey the ways in a person could use: the global search and its categories, tasks, reports and their prompts, a record's related actions, a list's filters. For each, write in ${opDir(run, op)}/notes.md (append; never remove what an earlier build wrote) what it gives and what it lacks for the intent.
+  - Survey the ways a person could do it in the app: its search, its pages and menus, filters; knowledge/ names this app's. For each, write in ${opDir(run, op)}/notes.md (append; never remove what an earlier build wrote) what it gives and what it lacks for the intent.
   - Pick the way that serves it best, and do the task once that way through the page commands, on test data. Write down every screen, label, prompt and wait that mattered. The trace records the locator each command used.
-  - When the op finds records by a value (a name, a title, an email), the way is the app's own search or filter for it, letting the app match. Reading every record to match in the op is a last resort, and notes.md says why each search doesn't serve.
-  - If the op reads, find the calls behind it and the tokens they need, as the direct-calls skill says, unless authoring.md says how this app's reads use them instead.
+  - When the op finds records by a value the person gives, the way is the app's own search or filter for it, letting the app match. Reading every record to match in the op is a last resort, and notes.md says why each search doesn't serve.
+  - If the op reads, find the calls behind it and the tokens they need, as the direct-calls skill says, unless authoring.md rules it out.
   - If no way serves the intent, answer missing with what you tried. If the ways differ in what the person would get back (how a name matches, which records are left out), and the intent doesn't settle it, ask.
   - Otherwise answer done with the way you picked and why.${answers(run.request)}
 `;
@@ -219,7 +218,7 @@ export const write = (run: PromptRun, op: string, summary: string): string => {
     - Name every step.
     - Write it to spec.md: its inputs, outputs and errors, and the way in the app it names.
     - Read the output back from ${request.domain.name}, never from the input.
-    - If the op reads and notes.md has the calls behind it, give it a direct way beside \`run\`, as the direct-calls skill says, unless authoring.md says how this app's reads use them instead.
+    - If the op reads and notes.md has the calls behind it, give it a direct way beside \`run\`, as the direct-calls skill says, unless authoring.md rules it out.
     - Put inputs that work in context "${request.context}" in ${opDir(run, op)}/examples.json, as [{ "context": "${request.context}", "input": { ... } }], with test data as authoring.md says: one for each case spec.md tells apart, at least one. Verify runs them all.
 
     ${runAndCheck(run, op)}${answers(request)}
@@ -291,7 +290,7 @@ export const review = (run: PromptRun, op: string, summary: string, verified: Ve
   return md`
     ${brief(run, op, summary)}
 
-    \`git diff $(git merge-base HEAD main)\` in ${paths.worktree} shows the whole change, uncommitted. Diff against that base, not main: main may have moved on since the branch was cut, and what it gained is not this change. New files are untracked, so the diff leaves them out: \`git status --short\` lists them (\`??\`), and you read each whole; for a new op that is all of it.
+    The change is uncommitted in ${paths.worktree}: \`git diff $(git merge-base HEAD main)\` shows it against where the branch left main (not main, which may have moved on), and new files are untracked, so read each one \`git status --short\` lists as \`??\` whole.
     Verify ran it on every example for context "${request.context}" and it passed:
     ${describeVerify(verified, request.context)}${builder}
 
@@ -303,12 +302,9 @@ export const review = (run: PromptRun, op: string, summary: string, verified: Ve
        - steps without names
        - output echoed from input instead of read back
        - an example in examples.json that isn't test data as authoring.md defines it
-       - an op that finds records by reading them all and matching itself: look in the app yourself for a search or filter that does it (the app's search, a search field, a filter), even when spec.md or notes.md says there is none; reading all is blocking unless notes.md shows each way tried
+       - an op that reads every record and matches them itself: look in the app yourself for a search or filter that would do it, even when spec.md or notes.md says there is none; blocking unless notes.md shows each way tried
 
-    Each finding says where and what is wrong, and how severe it is:
-    - blocking: the op is wrong, unsafe, or breaks the spec, authoring.md or another op; it needs another look.
-    - minor: wording, a doc line, a name; the builder fixes it and nobody looks again.
-    No findings approves it.${answers(request)}
+    Each finding says where and what is wrong, and its severity: the builder fixes a minor one with nobody looking again. No findings approves it.${answers(request)}
   `;
 };
 
@@ -319,7 +315,7 @@ export const verifyFailed = (request: RequestRecord, results: Verified[]): strin
 /** In a sandbox the workflow and e2e tests can't run, so the agent reruns the rest and reads theirs from the output. */
 export const checksFailed = ({ paths }: PromptRun, scope: CheckScope, output: string): string => {
   const rerun = paths.sandbox
-    ? `; rerun them with \`${paths.run("bun run ci:sandbox")}\`, which leaves out the workflow and e2e tests: those can't run in your sandbox, so read their failures here`
+    ? `; rerun them with \`${paths.run(`bun run ${SCRIPTS.sandbox}`)}\`, which leaves out the workflow and e2e tests: those can't run in your sandbox, so read their failures here`
     : "";
   return `The repository's checks (\`bun run ${SCRIPTS[scope]}\` in ${paths.worktree}) failed${rerun}:\n${tag("output", output)}`;
 };
