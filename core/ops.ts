@@ -2,37 +2,29 @@
 // the op is to blame for becomes a repair request, and anything else an error that says what to do.
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { APIRequestContext, Page } from "playwright";
+import type { Page } from "playwright";
 import type { Static, TObject, TSchema } from "typebox";
 import Value from "typebox/value";
-import { type OpenBrowser, openHttp, openSignedIn, saveSession, signInSaved } from "./browser";
+import { type OpenBrowser, openSignedIn } from "./browser";
 import { type Context, type Contexts, loginHint } from "./contexts";
+import { type DirectContext, type FellBack, tryDirect } from "./direct";
 import type { Domain } from "./domain";
-
-export { OP_NAME, opFolder } from "./names";
-
-import { envNumber } from "./env";
 import { DryRunReached, InputError, isBrowserFailure, OpError, outcomeOf } from "./errors";
 import { OP_NAME, opFolder } from "./names";
 import { formatNetwork, type NetworkEntry } from "./network";
-import { EXIT, fail, type Outcome, plain, progress, shellQuote } from "./output";
+import { EXIT, fail, firstLine, type Outcome, plain, progress, shellQuote } from "./output";
 import type { DomainRef, Requests } from "./requests";
 import { formatSnapshot, takeSnapshot } from "./snapshot";
 import { appendJsonLine, readJson, readJsonLines, timestamp, writeJson } from "./store";
+
+// cli.ts reads op names from here.
+export { OP_NAME, opFolder } from "./names";
 
 export interface OpContext<Helpers> {
   /** The domain's helper library. */
   app: Helpers;
   page: Page;
   /** A named step: progress while it runs, and a failure names it. */
-  step<T>(name: string, fn: () => Promise<T>): Promise<T>;
-  context: { name: string; url: string };
-  dryRun: boolean;
-}
-
-export interface DirectContext {
-  /** HTTP on the context's saved cookies; no browser is started. */
-  http: APIRequestContext;
   step<T>(name: string, fn: () => Promise<T>): Promise<T>;
   context: { name: string; url: string };
   dryRun: boolean;
@@ -94,6 +86,9 @@ export const loadOps = async (domain: Domain): Promise<{ ops: Map<string, OpEntr
         throw new Error(`op.ts must export defineOp({ name: "<noun>:<verb>" }) matching its folder ${folder}`);
       }
       if (RESERVED_NOUNS.includes(definition.name.split(":")[0]!)) throw new Error(`the noun of ${definition.name} is the CLI's own`);
+      if (definition.direct && domain.directCalls === false) {
+        throw new Error(`${definition.name} has a direct way, but ${domain.name} ops make no calls of their own (directCalls: false)`);
+      }
       ops.set(definition.name, { name: definition.name, dir: join(opsDir, folder), definition });
     } catch (err) {
       broken.push({ dir: folder, error: loadError(err) });
@@ -187,9 +182,6 @@ export const callArgv = (op: string, input: Record<string, unknown>): string[] =
 
 export const commandLine = (cli: string, argv: string[]): string => [cli, ...argv.map(shellQuote)].join(" ");
 
-/** How long one Playwright action waits before the step fails. */
-const STEP_TIMEOUT_MS = envNumber("STEP_TIMEOUT_MS", 15_000);
-
 export interface HistoryLine {
   at: string;
   context: string;
@@ -218,103 +210,87 @@ export interface RunEnv {
 
 export const domainRef = (domain: Domain): DomainRef => ({ name: domain.name, root: domain.root, dir: domain.dir, home: domain.home });
 
-/** Run an op against a context: sign-in check, the op's steps, then triage when it fails. */
+/** One way of running an op, direct or in the browser: its named steps, timed, and its history line. */
+export interface Attempt {
+  /** A named step: progress while it runs, and a failure names it. */
+  step<T>(name: string, fn: () => Promise<T>): Promise<T>;
+  /** The step running, or the last that ran. */
+  readonly at: string | undefined;
+  history(line: Omit<HistoryLine, "at" | "context" | "ms" | "steps" | "dryRun">): void;
+}
+
+const attempt = (entry: OpEntry, ctx: Context, started: number, dryRun: boolean): Attempt => {
+  let at: string | undefined;
+  const steps: Record<string, number> = {};
+  return {
+    get at() {
+      return at;
+    },
+    async step(name, fn) {
+      at = name;
+      progress(`› ${name}`);
+      const from = Date.now();
+      try {
+        return await fn();
+      } finally {
+        steps[name] = (steps[name] ?? 0) + Date.now() - from;
+      }
+    },
+    history: (line) =>
+      appendJsonLine(join(entry.dir, "history.jsonl"), {
+        at: timestamp(),
+        context: ctx.name,
+        ms: Date.now() - started,
+        ...line,
+        ...(Object.keys(steps).length ? { steps } : {}),
+        ...(dryRun ? { dryRun } : {}),
+      }),
+  };
+};
+
+/** Run an op against a context: the direct way if it has one, else or failing that its steps in a browser, and triage when it fails. */
 export const runOp = async (
   env: RunEnv,
   entry: OpEntry,
   input: Record<string, unknown>,
   ctx: Context,
-  {
-    headed = false,
-    dryRun = false,
-    browser = false,
-    call = [...callArgv(entry.name, input), ...(dryRun ? ["--dry-run"] : [])],
-  }: {
+  options: {
     headed?: boolean;
     dryRun?: boolean;
     /** Skip the direct way. */
     browser?: boolean;
-    /** The call as the caller made it, to run again once a repair is done. */ call?: string[];
+    /** The call as the caller made it, to run again once a repair is done. */
+    call?: string[];
   } = {},
 ): Promise<Outcome> => {
   const { domain, requests } = env;
-  const cli = domain.name;
+  const { headed = false, dryRun = false, browser = false } = options;
+  const call = options.call ?? [...callArgv(entry.name, input), ...(dryRun ? ["--dry-run"] : [])];
   const started = Date.now();
-  let steps: Record<string, number> = {};
-  const history = (line: Omit<HistoryLine, "at" | "context" | "ms">) =>
-    appendJsonLine(join(entry.dir, "history.jsonl"), {
-      at: timestamp(),
-      context: ctx.name,
-      ms: Date.now() - started,
-      ...line,
-      ...(Object.keys(steps).length ? { steps } : {}),
-      ...(dryRun ? { dryRun } : {}),
-    });
 
   // Builds verify an op whose repair failed, which is how a change can fix it.
   const broken = env.fileRepairs ? requests.brokenBy(entry.name) : undefined;
   if (broken) {
     return {
       ...fail(`${entry.name} is broken: its repair ${broken.id} failed (${broken.reason ?? "no reason given"})`, EXIT.PENDING, [
-        { hint: "see why", cmd: `${cli} request:status ${broken.id}` },
-        { hint: "try the repair again", cmd: `${cli} request:retry ${broken.id}` },
+        { hint: "see why", cmd: `${domain.name} request:status ${broken.id}` },
+        { hint: "try the repair again", cmd: `${domain.name} request:retry ${broken.id}` },
       ]),
       request: broken.id,
     };
   }
 
-  let current: string | undefined;
-  const step = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
-    current = name;
-    progress(`› ${name}`);
-    const at = Date.now();
-    try {
-      return await fn();
-    } finally {
-      steps[name] = (steps[name] ?? 0) + Date.now() - at;
-    }
-  };
-  const checked = (output: unknown) => {
+  const check = (output: unknown): Outcome => {
     if (!Value.Check(entry.definition.output, output)) {
       const problem = [...Value.Errors(entry.definition.output, output)][0];
       throw new Error(`output does not match the op's output schema: ${problem?.instancePath || "/"} ${problem?.message}`);
     }
     return { ok: true, data: entry.definition.format ? entry.definition.format(output as never) : output };
   };
-  const context = { name: ctx.name, url: ctx.appUrl };
 
-  let fellBack: { step: string; error: Error } | undefined;
-  const directBroken = env.fileRepairs ? requests.brokenBy(entry.name, true) : undefined;
-  if (directBroken) progress(`› the direct way's repair ${directBroken.id} failed; in the browser`);
-  // Known to be signed out, the direct way's calls would only meet the sign-in page.
-  if (
-    entry.definition.direct &&
-    !browser &&
-    !env.contexts.isSignedIn(ctx) &&
-    (await signInSaved(domain, env.contexts, ctx).catch(() => false))
-  )
-    ctx = env.contexts.get(ctx.name);
-  if (entry.definition.direct && !browser && !directBroken && existsSync(ctx.authFile)) {
-    const { http, close } = await openHttp(ctx, STEP_TIMEOUT_MS);
-    try {
-      const outcome = checked(await entry.definition.direct({ http, step, context, dryRun }, input));
-      // The app may keep its idle timer in the cookies, as a browser's would.
-      await saveSession(http, ctx).catch(() => {});
-      history({ ok: true, direct: true });
-      return outcome;
-    } catch (err) {
-      if (err instanceof OpError) {
-        history({ ok: false, step: current, error: err.message.split("\n")[0], exit: err.exitCode, direct: true });
-        return outcomeOf(err);
-      }
-      const message = plain(err instanceof Error ? err.message : String(err));
-      fellBack = { step: current ?? "direct", error: new Error(`the direct way failed${current ? ` at "${current}"` : ""}: ${message}`) };
-    } finally {
-      await close();
-    }
-    current = undefined;
-    steps = {};
-  }
+  const direct = browser ? {} : await tryDirect(env, entry, input, ctx, attempt(entry, ctx, started, dryRun), check);
+  if ("outcome" in direct) return direct.outcome;
+  const { fellBack } = direct;
 
   // A direct way that failed may only have met a sign-in that ended, which this finds.
   let open: OpenBrowser;
@@ -325,57 +301,61 @@ export const runOp = async (
     if (err instanceof OpError) return outcomeOf(err);
     throw err;
   }
-  // The direct way met a session that had ended, not a changed call: it runs again, signed in.
-  if (fellBack && open.signedInNow) {
-    await open.close();
-    return runOp(env, entry, input, env.contexts.get(ctx.name), { headed, dryRun, browser, call });
-  }
-  if (fellBack && !env.fileRepairs) {
-    await open.close();
-    history({ ok: false, step: fellBack.step, error: fellBack.error.message.split("\n")[0], direct: true });
-    return fail(`${entry.name}: ${fellBack.error.message}`, EXIT.ERROR);
-  }
-  if (fellBack) progress(`› ${fellBack.error.message.split("\n")[0]}; in the browser`);
-
-  open.page.setDefaultTimeout(STEP_TIMEOUT_MS);
-  const app = domain.helpers(open.page, { contextUrl: ctx.appUrl, dryRun });
-
-  try {
-    const outcome = checked(await entry.definition.run({ app, page: open.page, step, context, dryRun }, input));
-    history({ ok: true, ...(fellBack ? { fellBack: fellBack.step } : {}) });
-    if (fellBack) {
-      const { step: at, error } = fellBack;
-      const bundle = saveFailureBundle(domain, entry, input, ctx, { network: [] }, at, error);
-      const { record } = requests.fileOrJoinRepair({
-        kind: "repair",
-        text: `${entry.name} at "${at}": ${error.message.split("\n")[0]}`,
-        op: entry.name,
-        context: ctx.name,
-        domain: domainRef(domain),
-        failure: { step: at, error: error.message, bundle, fellBack: true },
-      });
-      progress(`${entry.name} ran in the browser; ${record.id} repairs the direct way`);
+  const run = attempt(entry, ctx, started, dryRun);
+  if (fellBack) {
+    // The direct way met a session that had ended, not a changed call: it runs again, signed in.
+    if (open.signedInNow) {
+      await open.close();
+      return runOp(env, entry, input, env.contexts.get(ctx.name), { headed, dryRun, call });
     }
+    if (!env.fileRepairs) {
+      await open.close();
+      run.history({ ok: false, step: fellBack.step, error: firstLine(fellBack.error.message), direct: true });
+      return fail(`${entry.name}: ${fellBack.error.message}`, EXIT.ERROR);
+    }
+    progress(`› ${firstLine(fellBack.error.message)}; in the browser`);
+  }
+
+  const app = domain.helpers(open.page, { contextUrl: ctx.appUrl, dryRun });
+  const context = { name: ctx.name, url: ctx.appUrl };
+  try {
+    const outcome = check(await entry.definition.run({ app, page: open.page, step: run.step, context, dryRun }, input));
+    run.history({ ok: true, ...(fellBack ? { fellBack: fellBack.step } : {}) });
+    if (fellBack) fileDirectRepair(env, entry, input, ctx, fellBack);
     return outcome;
   } catch (err) {
     if (err instanceof DryRunReached) {
       const shot = join(domain.home, "dry-runs", `${opFolder(entry.name)}-${Date.now()}.png`);
       mkdirSync(join(domain.home, "dry-runs"), { recursive: true });
       await open.page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-      history({ ok: true, step: current });
+      run.history({ ok: true, step: run.at });
       return { ok: true, data: { dryRun: `stopped before ${err.action}`, screenshot: shot } };
     }
     // What the page showed when the op failed, taken before triage loads anything else.
-    const captured = await captureFailure(open);
+    const captured = await captureFailure(domain, open);
     const triaged = await triage(env, ctx, open, err);
-    history({ ok: false, step: current, error: (err as Error).message.split("\n")[0], ...(triaged ? { exit: triaged.exitCode } : {}) });
+    run.history({ ok: false, step: run.at, error: firstLine((err as Error).message), ...(triaged ? { exit: triaged.exitCode } : {}) });
     if (triaged) return triaged;
     const error = err instanceof Error ? err : new Error(String(err));
     error.message = plain(error.message);
-    return await fileRepair(env, entry, input, ctx, captured, current, error, call);
+    return await fileRepair(env, entry, input, ctx, captured, run.at, error, call);
   } finally {
     await open.close();
   }
+};
+
+/** The browser way did what the direct way could not: the caller has its output, and the direct way a repair. */
+const fileDirectRepair = (env: RunEnv, entry: OpEntry, input: Record<string, unknown>, ctx: Context, { step, error }: FellBack): void => {
+  const bundle = saveFailureBundle(env.domain, entry, input, ctx, { network: [] }, step, error);
+  const { record } = env.requests.fileOrJoinRepair({
+    kind: "repair",
+    text: `${entry.name} at "${step}": ${firstLine(error.message)}`,
+    op: entry.name,
+    context: ctx.name,
+    domain: domainRef(env.domain),
+    failure: { step, error: error.message, bundle, fellBack: true },
+  });
+  progress(`${entry.name} ran in the browser; ${record.id} repairs the direct way`);
 };
 
 /** Rules only: is this failure someone else's, and which exit says so? Undefined means the op's fault. */
@@ -383,7 +363,7 @@ export const triage = async (env: RunEnv, ctx: Context, open: OpenBrowser, err: 
   const { domain } = env;
   const { page } = open;
   if (err instanceof OpError) return outcomeOf(err);
-  if (isBrowserFailure(err)) return fail(`the browser failed: ${(err as Error).message.split("\n")[0]}`, EXIT.ERROR);
+  if (isBrowserFailure(err)) return fail(`the browser failed: ${firstLine((err as Error).message)}`, EXIT.ERROR);
   const refused = domain.refusal && !page.isClosed() ? await domain.refusal(page).catch(() => undefined) : undefined;
   if (refused) return fail(`${domain.name} refused it: ${refused}`, EXIT.REFUSED);
   // Did the session end under the op? Asked of a fresh page at the app's home, in a context of its
@@ -414,12 +394,12 @@ export interface CapturedFailure {
 }
 
 /** The page as the op left it: URL, screenshot, the controls on it, and the calls that led there. */
-export const captureFailure = async (open: OpenBrowser): Promise<CapturedFailure> => {
+export const captureFailure = async (domain: Domain, open: OpenBrowser): Promise<CapturedFailure> => {
   const { page } = open;
   const network = [...open.network];
   if (page.isClosed()) return { network };
   const screenshot = await page.screenshot({ fullPage: true }).catch(() => undefined);
-  const snapshot = await takeSnapshot(page).catch(() => undefined);
+  const snapshot = await takeSnapshot(page, domain.testIdAttribute).catch(() => undefined);
   return { url: page.url(), screenshot, snapshot: snapshot && formatSnapshot(snapshot), network };
 };
 
@@ -469,7 +449,7 @@ const fileRepair = async (
   const cli = domain.name;
   const bundle = saveFailureBundle(domain, entry, input, ctx, captured, step, err);
   const where = step ? `failed at "${step}"` : "failed";
-  const message = `${entry.name} ${where}: ${err.message.split("\n")[0]}`;
+  const message = `${entry.name} ${where}: ${firstLine(err.message)}`;
 
   if (!env.fileRepairs) {
     return fail(`${message}\nfailure bundle: ${bundle}`, EXIT.ERROR);

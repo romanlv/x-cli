@@ -1,13 +1,40 @@
 import { dirname, join } from "node:path";
-import type { BrowserContext, Page } from "playwright";
+import type { BrowserContext, Locator, Page } from "playwright";
 import { envValue } from "./env";
+import type { NetworkEntry } from "./network";
+import type { SnapshotNode } from "./snapshot";
 
 export type SignInState = "signed-in" | "signed-out" | "elsewhere" | "unknown";
 
-/** What a page command gets: the session's page and the context it was opened for. */
+/** What a page command gets: the session's page, and the moves core's own commands are made of. */
 export interface PageCommandContext {
   page: Page;
+  /** The session's name. */
+  session: string;
+  /** The URL the session's context starts from. */
   contextUrl: string;
+  /** The session's folder, for what a command saves. */
+  dir: string;
+  /** The calls the page has made, as `page:requests` lists them. */
+  network: NetworkEntry[];
+  /** The control a ref from the last snapshot names; bad input when it is not on the page any more. */
+  ref(ref: string | undefined): Promise<{ locator: Locator; node?: SnapshotNode }>;
+  /** Log the command to the session's trace, with `locator`, or the one an op would use for the ref it acted on. */
+  trace(locator?: string): void;
+  /** The page as text once it has gone quiet, what changed since the last snapshot marked; `whole`, unmarked. */
+  snapshot(options?: { whole?: boolean }): Promise<string>;
+  /** End the session once this command has answered. */
+  close(): void;
+}
+
+/** A `page:<name>` command an agent explores with. */
+export interface PageCommand {
+  /** Its arguments and what it does, for `help`. */
+  usage: string;
+  /** It only reads what the session has, so the calls made meanwhile belong to the command before. */
+  reads?: boolean;
+  /** What it prints. A domain's commands print the page after it, with what changed marked. */
+  run(ctx: PageCommandContext, args: string[]): Promise<string | undefined>;
 }
 
 /**
@@ -70,8 +97,8 @@ export interface Domain<Helpers = unknown> {
   testIdAttribute?: string;
   /** False when ops may have no direct way, for an app that tells its own calls from anyone else's. */
   directCalls?: boolean;
-  /** Extra `page:<name>` commands the domain offers agents, such as `page:search` for X. */
-  pageCommands?: Record<string, { usage: string; run(ctx: PageCommandContext, args: string[]): Promise<string | undefined> }>;
+  /** Extra `page:<name>` commands the domain offers agents, by name without `page:`: `search` for X. */
+  pageCommands?: Record<string, PageCommand>;
 }
 
 /** A domain with what core can work out filled in: its checkout is the domain folder's parent. */

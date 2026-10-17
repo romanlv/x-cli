@@ -6,22 +6,23 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Locator } from "playwright";
 import { type OpenBrowser, openSignedIn } from "./browser";
 import type { Context, Contexts } from "./contexts";
-import type { Domain } from "./domain";
+import type { Domain, PageCommand, PageCommandContext } from "./domain";
 import { envName, envNumber } from "./env";
-import { OpError, outcomeOf } from "./errors";
+import { InputError, OpError, outcomeOf } from "./errors";
 import { formatCall, formatNetwork } from "./network";
 import { EXIT, fail, type Outcome, plain } from "./output";
 import { formatNode, formatSnapshot, refLocator, type Snapshot, type SnapshotNode, suggestLocator, takeSnapshot } from "./snapshot";
 import { alive, appendJsonLine, readJson, timestamp, writeJson } from "./store";
 
-export const SESSION_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
+const SESSION_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 const IDLE_MS = envNumber("SESSION_IDLE_MS", 30 * 60_000);
-/** How often an open session nudges its page, so the app's own idle timer never fires. */
-const STAY_ACTIVE_MS = envNumber("STAY_ACTIVE_MS", 4 * 60_000);
+/** How long a daemon may take to start: a browser, and the sign-in check. A start older than that died. */
+const START_MS = 90_000;
 
-export interface SessionState {
+interface SessionState {
   pid: number;
   socket: string;
   context: string;
@@ -31,32 +32,154 @@ export interface SessionState {
   ready?: boolean;
 }
 
-export const sessionDir = (home: string, name: string): string => join(home, "sessions", name);
+const sessionDir = (home: string, name: string): string => join(home, "sessions", name);
 const stateFile = (home: string, name: string): string => join(sessionDir(home, name), "state.json");
-export const traceFile = (home: string, name: string): string => join(sessionDir(home, name), "trace.jsonl");
+const traceFile = (home: string, name: string): string => join(sessionDir(home, name), "trace.jsonl");
 // Unix socket paths are limited to about 100 bytes, which a deep home folder would pass.
-const socketPath = (home: string, name: string): string =>
-  join(tmpdir(), `wd-${createHash("sha1").update(`${home}\0${name}`).digest("hex").slice(0, 16)}.sock`);
+const socketPath = (domain: Domain, name: string): string =>
+  join(tmpdir(), `${domain.name.slice(0, 12)}-${createHash("sha1").update(`${domain.home}\0${name}`).digest("hex").slice(0, 16)}.sock`);
 
-/** Commands that only read what the session has; calls after them belong to the command before. */
-const READS = new Set(["page", "page:requests", "page:fetch", "page:trace", "page:shot"]);
-
-export const CORE_PAGE_COMMANDS: Record<string, string> = {
-  page: "URL, title and the page's controls, each with a ref such as e14",
-  "page:goto": "<url>  open a URL on the context's site",
-  "page:click": "<ref>  click, then the page with what changed marked +",
-  "page:fill": "<ref> <value>  type into a field; prints its new value",
-  "page:select": "<ref> <option>  choose an option of a native select",
-  "page:press": "<key> [ref]  press a key (Enter, Tab, Escape), in a field if a ref is given",
-  "page:wait": "<ms|text>  wait for time to pass or text to appear",
-  "page:shot": "save a screenshot; prints its path",
-  "page:requests":
-    "[all | n [body]]  the session's recent calls (the last 30, all for every kept one) under the command that made them, the newest JSON and event-stream ones numbered; n prints one with its headers and bodies, n body only its response",
-  "page:fetch":
-    "<url> [Name: value ...] [body]  make one call on the session's sign-in, as an op's direct way would; a body makes it a POST (a=b&c=d is a form, {...} JSON)",
-  "page:trace": "the commands this session has run, with the locator each used",
-  "page:close": "close the session's browser",
+/** A URL on the session's site; any other origin is refused. */
+const onSite = (url: string | undefined, contextUrl: string): URL => {
+  const resolved = new URL(url ?? "", contextUrl);
+  const origin = new URL(contextUrl).origin;
+  if (resolved.origin !== origin) throw new InputError(`refusing ${resolved.origin}: this session is for ${origin}`);
+  return resolved;
 };
+
+/** A command that acts on the control `args[0]` names, then prints the page with what changed. */
+const onRef = (usage: string, act: (locator: Locator, args: string[]) => Promise<unknown>): PageCommand => ({
+  usage,
+  async run(s, args) {
+    await act((await s.ref(args[0])).locator, args);
+    s.trace();
+    return s.snapshot();
+  },
+});
+
+/** Every page command, core's and the domain's, by the name it is called as. */
+export const pageCommandsOf = (domain: Domain): Record<string, PageCommand> => ({
+  page: {
+    usage: "URL, title and the page's controls, each with a ref such as e14",
+    reads: true,
+    // It also resets what the next action's diff compares against.
+    run: (s) => s.snapshot({ whole: true }),
+  },
+  "page:goto": {
+    usage: "<url>  open a URL on the context's site",
+    async run(s, [url]) {
+      const target = onSite(url, s.contextUrl);
+      await s.page.goto(target.href, { waitUntil: "domcontentloaded" });
+      s.trace(`page.goto(${JSON.stringify(target.href)})`);
+      return s.snapshot();
+    },
+  },
+  "page:click": onRef("<ref>  click, then the page with what changed marked +", (locator) => locator.click()),
+  "page:fill": {
+    usage: "<ref> <value>  type into a field; prints its new value",
+    async run(s, [ref, value]) {
+      const { locator, node } = await s.ref(ref);
+      if (value === undefined) throw new InputError("give the value to fill");
+      await locator.fill(value);
+      s.trace();
+      return `${node?.name || node?.label || ref} = ${JSON.stringify(await locator.inputValue().catch(() => value))}`;
+    },
+  },
+  "page:select": onRef("<ref> <option>  choose an option of a native select", (locator, [, option]) => {
+    if (option === undefined) throw new InputError("give the option to choose");
+    return locator.selectOption({ label: option });
+  }),
+  "page:press": {
+    usage: "<key> [ref]  press a key (Enter, Tab, Escape), in a field if a ref is given",
+    async run(s, [key, ref]) {
+      if (!key) throw new InputError("give a key, such as Enter");
+      if (ref) {
+        await (await s.ref(ref)).locator.press(key);
+        s.trace();
+      } else {
+        await s.page.keyboard.press(key);
+        s.trace(`page.keyboard.press(${JSON.stringify(key)})`);
+      }
+      return s.snapshot();
+    },
+  },
+  "page:wait": {
+    usage: "<ms|text>  wait for time to pass or text to appear",
+    async run(s, [what]) {
+      if (!what) throw new InputError("give milliseconds or text to wait for");
+      if (/^\d+$/.test(what)) await s.page.waitForTimeout(Number(what));
+      else await s.page.getByText(what).first().waitFor({ state: "visible" });
+      s.trace();
+      return s.snapshot();
+    },
+  },
+  "page:shot": {
+    usage: "save a screenshot; prints its path",
+    reads: true,
+    async run(s) {
+      mkdirSync(join(s.dir, "shots"), { recursive: true });
+      const path = join(s.dir, "shots", `${Date.now()}.png`);
+      await s.page.screenshot({ path, fullPage: true });
+      return path;
+    },
+  },
+  "page:requests": {
+    usage:
+      "[all | n [body]]  the session's recent calls (the last 30, all for every kept one) under the command that made them, the newest JSON and event-stream ones numbered; n prints one with its headers and bodies, n body only its response",
+    reads: true,
+    async run(s, [which, body]) {
+      if (which === undefined || which === "all") return formatNetwork(s.network, which ? Infinity : undefined);
+      const call = /^\d+$/.test(which) ? formatCall(s.network, Number(which), body === "body") : undefined;
+      if (call === undefined) throw new InputError(`no call ${which} kept; \`${domain.name} page:requests\` lists the numbered ones`);
+      return call;
+    },
+  },
+  "page:fetch": {
+    usage:
+      "<url> [Name: value ...] [body]  make one call on the session's sign-in, as an op's direct way would; a body makes it a POST (a=b&c=d is a form, {...} JSON)",
+    reads: true,
+    async run(s, [url, ...rest]) {
+      const target = onSite(url, s.contextUrl);
+      const headers: Record<string, string> = {};
+      let data: string | undefined;
+      for (const arg of rest) {
+        const header = /^([\w-]+):\s*(.*)$/.exec(arg);
+        if (header) headers[header[1]!] = header[2]!;
+        else data = arg;
+      }
+      if (data !== undefined && !Object.keys(headers).some((k) => k.toLowerCase() === "content-type"))
+        headers["Content-Type"] = data.trimStart().startsWith("{") ? "application/json" : "application/x-www-form-urlencoded";
+      const res = await s.page.context().request.fetch(target.href, { method: data === undefined ? "GET" : "POST", headers, data });
+      return `${res.status()} ${res.headers()["content-type"] ?? "no content type"}\n\n${await res.text()}`;
+    },
+  },
+  "page:trace": {
+    usage: "the commands this session has run, with the locator each used",
+    reads: true,
+    run: async (s) => join(s.dir, "trace.jsonl"),
+  },
+  "page:close": {
+    usage: "close the session's browser",
+    async run(s) {
+      s.close();
+      return `session ${s.session} closed`;
+    },
+  },
+  ...Object.fromEntries(
+    Object.entries(domain.pageCommands ?? {}).map(([name, command]): [string, PageCommand] => [
+      `page:${name}`,
+      {
+        ...command,
+        async run(s, args) {
+          const text = await command.run(s, args);
+          s.trace();
+          const after = await s.snapshot();
+          return text ? `${text}\n${after}` : after;
+        },
+      },
+    ]),
+  ),
+});
 
 interface Reply {
   ok: boolean;
@@ -64,13 +187,13 @@ interface Reply {
   exitCode?: number;
 }
 
-/** Send one page command to a session, starting the session first if it isn't running. */
 /** The context a running session was opened on. */
 export const sessionContext = (home: string, session: string): string | undefined => {
   const state = readJson<SessionState | undefined>(stateFile(home, session), undefined);
   return state?.ready && alive(state.pid) ? state.context : undefined;
 };
 
+/** Send one page command to a session, starting the session first if it isn't running. */
 export const pageCommand = async (
   domain: Domain,
   entry: string[],
@@ -83,7 +206,7 @@ export const pageCommand = async (
   let state = readJson<SessionState | undefined>(stateFile(home, session), undefined);
   const running = state?.ready && alive(state.pid) && existsSync(state.socket);
 
-  if (cmd === "page:close" && !running) {
+  if (!running && cmd === "page:close") {
     // A daemon that died leaves its state and socket; closing clears them so the name starts clean.
     // Only a daemon that said it was serving and never said it closed can still be ours to stop.
     if (state?.ready && state.pid && alive(state.pid)) process.kill(state.pid, "SIGTERM");
@@ -91,16 +214,14 @@ export const pageCommand = async (
     rmSync(stateFile(home, session), { force: true });
     return { ok: true, data: `session ${session} is not running` };
   }
-  if (cmd === "page:close") {
-    // Running: the daemon closes itself below.
-  } else if (running && state!.context !== context.name) {
-    return fail(`session ${session} is on context "${state!.context}", not "${context.name}"`, EXIT.USAGE, [
-      { hint: "close it first", cmd: `${domain.name} page:close --session ${session}` },
-    ]);
-  } else if (!running) {
+  if (!running) {
     const started = await startSession(domain, entry, session, context, headed);
     if (!started.ok) return started.outcome;
     state = started.state;
+  } else if (cmd !== "page:close" && state!.context !== context.name) {
+    return fail(`session ${session} is on context "${state!.context}", not "${context.name}"`, EXIT.USAGE, [
+      { hint: "close it first", cmd: `${domain.name} page:close --session ${session}` },
+    ]);
   }
 
   let reply: Reply;
@@ -146,7 +267,7 @@ const startSession = async (
         }
       })();
       if (since === undefined) continue;
-      if (since < 90_000) return waitForStart(home, session, undefined);
+      if (since < START_MS) return waitForStart(home, session, undefined);
       rmSync(starting, { recursive: true, force: true });
     }
   }
@@ -170,7 +291,7 @@ const waitForStart = async (
   session: string,
   child: Bun.Subprocess | undefined,
 ): Promise<{ ok: true; state: SessionState } | { ok: false; outcome: Outcome }> => {
-  const deadline = Date.now() + 90_000;
+  const deadline = Date.now() + START_MS;
   while (Date.now() < deadline) {
     const state = readJson<SessionState | undefined>(stateFile(home, session), undefined);
     if (state?.error) return { ok: false, outcome: JSON.parse(state.error) as Outcome };
@@ -191,7 +312,7 @@ export const runSessionDaemon = async (
   headed: boolean,
 ): Promise<void> => {
   const home = domain.home;
-  const socket = socketPath(home, session);
+  const socket = socketPath(domain, session);
   const base: SessionState = { pid: process.pid, socket, context: context.name, headed, startedAt: timestamp() };
 
   // The page command a call started under, for page:requests.
@@ -207,7 +328,6 @@ export const runSessionDaemon = async (
   }
 
   const { page } = open;
-  page.setDefaultTimeout(15_000);
   let lastActivity = Date.now();
   const active = () => (lastActivity = Date.now());
   open.context.on("request", active);
@@ -215,15 +335,21 @@ export const runSessionDaemon = async (
   open.context.on("requestfailed", active);
   let previous: Snapshot | undefined;
   let idleTimer: ReturnType<typeof setTimeout>;
-  // An agent writing code leaves its page alone for longer than an app allows; a mouse move in the
-  // page's corner counts as a person there, and changes nothing on it.
-  setInterval(() => {
-    if (page.isClosed()) return;
-    void page.mouse
-      .move(2, 2)
-      .then(() => page.mouse.move(3, 3))
-      .catch(() => {});
-  }, STAY_ACTIVE_MS).unref();
+  const pageEveryMs = domain.keepAlive?.pageEveryMs;
+  if (pageEveryMs) {
+    // An agent writing code leaves its page alone for longer than the app allows; a mouse move in the
+    // page's corner counts as a person there, and changes nothing on it.
+    setInterval(
+      () => {
+        if (page.isClosed()) return;
+        void page.mouse
+          .move(2, 2)
+          .then(() => page.mouse.move(3, 3))
+          .catch(() => {});
+      },
+      envNumber("STAY_ACTIVE_MS", pageEveryMs),
+    ).unref();
+  }
 
   const shutdown = async () => {
     server.stop(true);
@@ -245,135 +371,43 @@ export const runSessionDaemon = async (
     while (Date.now() < until && Date.now() - lastActivity < 500) await page.waitForTimeout(100);
   };
 
-  const snapshotDiff = async (): Promise<string> => {
-    await settle();
-    const snapshot = await takeSnapshot(page);
-    const text = formatSnapshot(snapshot, previous);
-    previous = snapshot;
-    return text;
-  };
-
-  const nodeOf = (ref: string): SnapshotNode | undefined => previous?.nodes.find((n) => n.ref === ref);
-  const requireRef = async (ref: string | undefined) => {
-    if (!ref || !/^e\d+$/.test(ref)) throw new UsageError("give a ref such as e14, from `page`");
-    const locator = refLocator(page, ref);
-    if ((await locator.count()) === 0)
-      throw new UsageError(`ref ${ref} is not on the page any more; run \`${domain.name} page\` for fresh refs`);
-    return { locator, node: nodeOf(ref) };
-  };
-  const trace = (cmd: string, args: string[], node: SnapshotNode | undefined, extra: Record<string, unknown> = {}) =>
-    appendJsonLine(traceFile(home, session), {
-      at: timestamp(),
+  const commands = pageCommandsOf(domain);
+  /** What one call's command acts through; `trace` logs the node its last `ref` found. */
+  const contextFor = (cmd: string, args: string[]): PageCommandContext => {
+    let node: SnapshotNode | undefined;
+    return {
+      page,
       session,
-      cmd,
-      args,
-      url: page.url(),
-      ...(node ? { element: formatNode({ ...node, depth: 0 }).slice(2), locator: suggestLocator(node) } : {}),
-      ...extra,
-    });
-
-  const handle = async (cmd: string, args: string[]): Promise<string> => {
-    switch (cmd) {
-      case "page":
-        return snapshotDiffFresh();
-      case "page:goto": {
-        const url = new URL(args[0] ?? "", context.appUrl);
-        if (url.origin !== new URL(context.appUrl).origin)
-          throw new UsageError(`refusing ${url.origin}: this session is for ${new URL(context.appUrl).origin}`);
-        await page.goto(url.href, { waitUntil: "domcontentloaded" });
-        trace(cmd, args, undefined, { locator: `page.goto(${JSON.stringify(url.href)})` });
-        return snapshotDiff();
-      }
-      case "page:click": {
-        const { locator, node } = await requireRef(args[0]);
-        await locator.click();
-        trace(cmd, args, node);
-        return snapshotDiff();
-      }
-      case "page:fill": {
-        const { locator, node } = await requireRef(args[0]);
-        if (args[1] === undefined) throw new UsageError("give the value to fill");
-        await locator.fill(args[1]);
-        trace(cmd, args, node);
-        const value = await locator.inputValue().catch(() => args[1]);
-        return `${node?.name || node?.label || args[0]} = ${JSON.stringify(value)}`;
-      }
-      case "page:select": {
-        const { locator, node } = await requireRef(args[0]);
-        if (args[1] === undefined) throw new UsageError("give the option to choose");
-        await locator.selectOption({ label: args[1] });
-        trace(cmd, args, node);
-        return snapshotDiff();
-      }
-      case "page:press": {
-        if (!args[0]) throw new UsageError("give a key, such as Enter");
-        if (args[1]) {
-          const { locator, node } = await requireRef(args[1]);
-          await locator.press(args[0]);
-          trace(cmd, args, node);
-        } else {
-          await page.keyboard.press(args[0]);
-          trace(cmd, args, undefined, { locator: `page.keyboard.press(${JSON.stringify(args[0])})` });
-        }
-        return snapshotDiff();
-      }
-      case "page:wait": {
-        const what = args[0];
-        if (!what) throw new UsageError("give milliseconds or text to wait for");
-        if (/^\d+$/.test(what)) await page.waitForTimeout(Number(what));
-        else await page.getByText(what).first().waitFor({ state: "visible" });
-        trace(cmd, args, undefined);
-        return snapshotDiff();
-      }
-      case "page:shot": {
-        const path = join(sessionDir(home, session), "shots", `${Date.now()}.png`);
-        mkdirSync(join(sessionDir(home, session), "shots"), { recursive: true });
-        await page.screenshot({ path, fullPage: true });
-        return path;
-      }
-      case "page:requests": {
-        if (args[0] === undefined || args[0] === "all") return formatNetwork(open.network, args[0] ? Infinity : undefined);
-        const call = /^\d+$/.test(args[0]) ? formatCall(open.network, Number(args[0]), args[1] === "body") : undefined;
-        if (call === undefined) throw new UsageError(`no call ${args[0]} kept; \`${domain.name} page:requests\` lists the numbered ones`);
-        return call;
-      }
-      case "page:fetch": {
-        const url = new URL(args[0] ?? "", context.appUrl);
-        if (url.origin !== new URL(context.appUrl).origin)
-          throw new UsageError(`refusing ${url.origin}: this session is for ${new URL(context.appUrl).origin}`);
-        const headers: Record<string, string> = {};
-        let data: string | undefined;
-        for (const arg of args.slice(1)) {
-          const header = /^([\w-]+):\s*(.*)$/.exec(arg);
-          if (header) headers[header[1]!] = header[2]!;
-          else data = arg;
-        }
-        if (data !== undefined && !Object.keys(headers).some((k) => k.toLowerCase() === "content-type"))
-          headers["Content-Type"] = data.trimStart().startsWith("{") ? "application/json" : "application/x-www-form-urlencoded";
-        const res = await page.context().request.fetch(url.href, { method: data === undefined ? "GET" : "POST", headers, data });
-        return `${res.status()} ${res.headers()["content-type"] ?? "no content type"}\n\n${await res.text()}`;
-      }
-      case "page:trace":
-        return traceFile(home, session);
-      case "page:close":
-        setTimeout(() => void shutdown(), 50);
-        return `session ${session} closed`;
-    }
-    const extra = domain.pageCommands?.[cmd.slice("page:".length)];
-    if (cmd.startsWith("page:") && extra) {
-      const text = await extra.run({ page, contextUrl: context.appUrl }, args);
-      trace(cmd, args, undefined);
-      const after = await snapshotDiff();
-      return text ? `${text}\n${after}` : after;
-    }
-    throw new UsageError(`unknown page command ${cmd}`);
-  };
-
-  // `page` prints the whole page; it also resets what the next action's diff compares against.
-  const snapshotDiffFresh = async () => {
-    await settle();
-    previous = await takeSnapshot(page);
-    return formatSnapshot(previous);
+      contextUrl: context.appUrl,
+      dir: sessionDir(home, session),
+      network: open.network,
+      async ref(ref) {
+        if (!ref || !/^e\d+$/.test(ref)) throw new InputError("give a ref such as e14, from `page`");
+        const locator = refLocator(page, ref);
+        if ((await locator.count()) === 0)
+          throw new InputError(`ref ${ref} is not on the page any more; run \`${domain.name} page\` for fresh refs`);
+        node = previous?.nodes.find((n) => n.ref === ref);
+        return { locator, node };
+      },
+      trace: (locator) =>
+        appendJsonLine(traceFile(home, session), {
+          at: timestamp(),
+          session,
+          cmd,
+          args,
+          url: page.url(),
+          ...(node ? { element: formatNode({ ...node, depth: 0 }).slice(2), locator: suggestLocator(node) } : {}),
+          ...(locator ? { locator } : {}),
+        }),
+      async snapshot({ whole = false } = {}) {
+        await settle();
+        const snapshot = await takeSnapshot(page, domain.testIdAttribute);
+        const text = formatSnapshot(snapshot, whole ? undefined : previous);
+        previous = snapshot;
+        return text;
+      },
+      close: () => setTimeout(() => void shutdown(), 50),
+    };
   };
 
   // One command at a time: two agents' calls on one page would interleave their clicks.
@@ -389,10 +423,12 @@ export const runSessionDaemon = async (
         const { cmd, args } = (await request.json()) as { cmd: string; args: string[] };
         const result = queue.then(async (): Promise<Reply> => {
           try {
-            if (!READS.has(cmd)) during = [cmd, ...args].join(" ");
-            return { ok: true, text: await handle(cmd, args) };
+            const command = commands[cmd];
+            if (!command) throw new InputError(`unknown page command ${cmd}`);
+            if (!command.reads) during = [cmd, ...args].join(" ");
+            return { ok: true, text: (await command.run(contextFor(cmd, args), args)) ?? "" };
           } catch (err) {
-            if (err instanceof UsageError) return { ok: false, text: err.message, exitCode: EXIT.USAGE };
+            if (err instanceof OpError) return { ok: false, text: err.message, exitCode: err.exitCode };
             if (page.isClosed()) setTimeout(() => void shutdown(), 50);
             return {
               ok: false,
@@ -421,5 +457,3 @@ export const runSessionDaemon = async (
   touch();
   for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => void shutdown());
 };
-
-class UsageError extends Error {}

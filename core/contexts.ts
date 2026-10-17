@@ -1,11 +1,14 @@
 // Named contexts, as `kubectl config use-context` names clusters: a nickname, a URL (the app, as one
 // account or tenant of it) and a saved sign-in.
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { envValue } from "./env";
 import { raise } from "./errors";
 import { EXIT } from "./output";
 import { readJson, withLock, writeJson } from "./store";
+
+// cli.ts and the workflows read a context's credentials from here.
+export { savedCredentials } from "./credentials";
 
 export interface ContextEntry {
   /** What the person gave: the app's URL for this context, or its sign-in page. */
@@ -32,23 +35,6 @@ export interface Context extends ContextEntry {
 }
 
 const NAME = /^[a-z0-9][a-z0-9_-]{0,62}$/;
-
-/**
- * A person's username and password for a context, from `.env.<context>` in the checkout (or the
- * CREDENTIALS_DIR setting): USERNAME and PASSWORD. The file is gitignored, so a
- * build's worktree never has one, and agents never sign in.
- */
-export const savedCredentials = (root: string, context: string): { username: string; password: string } | undefined => {
-  const file = join(envValue("CREDENTIALS_DIR") ?? root, `.env.${context}`);
-  if (!existsSync(file)) return undefined;
-  const vars: Record<string, string> = {};
-  for (const line of readFileSync(file, "utf8").split("\n")) {
-    const m = /^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line);
-    if (m) vars[m[1]!] = m[2]!.replace(/^(["'])(.*)\1$/, "$2");
-  }
-  const { USERNAME: username, PASSWORD: password } = vars;
-  return username && password ? { username, password } : undefined;
-};
 
 export class Contexts {
   constructor(

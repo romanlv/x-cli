@@ -2,13 +2,14 @@
 // headed sign-in a person does once per context.
 import { chmodSync, existsSync, mkdirSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
-import { type APIRequestContext, type Browser, type BrowserContext, chromium, type Page, request } from "playwright";
-import { type Context, type Contexts, loginHint, savedCredentials } from "./contexts";
+import { type Browser, type BrowserContext, chromium, type LaunchOptions, type Page, selectors } from "playwright";
+import { type Context, type Contexts, loginHint } from "./contexts";
+import { type Credentials, type SignInWait, savedCredentials, submitCredentials } from "./credentials";
 import type { Domain } from "./domain";
 import { envNumber, envValue } from "./env";
 import { BrowserError, InputError, PreconditionError } from "./errors";
 import { type NetworkEntry, recordNetwork } from "./network";
-import { progress } from "./output";
+import { firstLine, progress } from "./output";
 
 export interface OpenBrowser {
   browser: Browser;
@@ -23,21 +24,8 @@ export interface OpenBrowser {
 class SignedOut extends PreconditionError {}
 
 const VIEWPORT = { width: 1440, height: 900 };
-
-/**
- * Plain HTTP on the context's saved sign-in, for an op's direct way. With XCLI_BROWSER the calls go
- * out from the host's browser server, as the pages do: a sandbox reaches no network of its own.
- */
-export const openHttp = async (ctx: Context, timeout: number): Promise<{ http: APIRequestContext; close(): Promise<void> }> => {
-  if (!envValue("BROWSER")) {
-    const http = await request.newContext({ storageState: ctx.authFile, timeout });
-    return { http, close: () => http.dispose() };
-  }
-  const browser = await launch(false);
-  const context = await browser.newContext({ storageState: ctx.authFile });
-  context.setDefaultTimeout(timeout);
-  return { http: context.request, close: () => browser.close() };
-};
+/** How long one Playwright action, or one direct call, waits before the step fails. */
+export const STEP_TIMEOUT_MS = envNumber("STEP_TIMEOUT_MS", 15_000);
 
 /**
  * Save a signed-in browser's cookies as the context's sign-in. The app may keep its idle timer in
@@ -53,12 +41,18 @@ export const saveSession = async (context: Pick<BrowserContext, "storageState">,
 };
 
 /**
- * XCLI_BROWSER_CHANNEL: an installed browser to run instead of Playwright's Chromium, such as
- * "chrome", for an app that tells the two apart. Headless, it runs Chrome's own headless mode.
+ * Start a browser, or a browser server, as XCLI_BROWSER_CHANNEL says: an installed browser such as
+ * "chrome" instead of Playwright's Chromium (headless, in Chrome's own headless mode), and
+ * Playwright's Chromium when that one isn't installed.
  */
-export const launchOptions = (headed: boolean): { headless: boolean; channel?: string } => {
+export const launchWith = async <T>(headed: boolean, start: (options: LaunchOptions) => Promise<T>): Promise<T> => {
   const channel = envValue("BROWSER_CHANNEL");
-  return { headless: !headed, ...(channel ? { channel } : {}) };
+  if (!channel) return start({ headless: !headed });
+  return start({ headless: !headed, channel }).catch((err: Error) => {
+    if (!/is not found|not installed/i.test(err.message)) throw err;
+    progress(`› no ${channel} installed; using Playwright's Chromium`);
+    return start({ headless: !headed });
+  });
 };
 
 /** XCLI_BROWSER: a browser on the host, for a sandboxed build, where Chromium can't start. */
@@ -66,14 +60,9 @@ export const launch = async (headed: boolean): Promise<Browser> => {
   try {
     const endpoint = envValue("BROWSER");
     if (endpoint) return await chromium.connect(endpoint);
-    const options = launchOptions(headed);
-    return await chromium.launch(options).catch(async (err: Error) => {
-      if (!options.channel || !/is not found|not installed/i.test(err.message)) throw err;
-      progress(`› no ${options.channel} installed; using Playwright's Chromium`);
-      return chromium.launch({ headless: !headed });
-    });
+    return await launchWith(headed, (options) => chromium.launch(options));
   } catch (err) {
-    throw new BrowserError(`the browser would not start: ${(err as Error).message.split("\n")[0]}`);
+    throw new BrowserError(`the browser would not start: ${firstLine((err as Error).message)}`);
   }
 };
 
@@ -91,17 +80,11 @@ export const openSignedIn = async (
   try {
     return await openOnce(domain, contexts, ctx, options);
   } catch (err) {
-    if (!(err instanceof SignedOut) || !(await signInSaved(domain, contexts, ctx))) throw err;
+    const credentials = err instanceof SignedOut && domain.submitSignIn ? savedCredentials(domain.root, ctx.name) : undefined;
+    if (!credentials) throw err;
+    await signIn(domain, contexts, ctx, { credentials });
     return { ...(await openOnce(domain, contexts, contexts.get(ctx.name), options)), signedInNow: true };
   }
-};
-
-/** Signed out, a context whose person left their sign-in in `.env.<context>` signs in again by itself. */
-export const signInSaved = async (domain: Domain, contexts: Contexts, ctx: Context): Promise<boolean> => {
-  const credentials = savedCredentials(domain.root, ctx.name);
-  if (!credentials || !domain.submitSignIn) return false;
-  await signIn(domain, contexts, ctx, { credentials });
-  return true;
 };
 
 const openOnce = async (
@@ -112,6 +95,8 @@ const openOnce = async (
 ): Promise<OpenBrowser> => {
   const login = [loginHint(domain.name, ctx.name)];
   if (!existsSync(ctx.authFile)) throw new SignedOut(`context "${ctx.name}" is signed out`, login);
+  // `getByTestId` in ops and in the locators exploring suggests.
+  if (domain.testIdAttribute) selectors.setTestIdAttribute(domain.testIdAttribute);
 
   const browser = await launch(headed);
   const close = () => browser.close().catch(() => {});
@@ -123,7 +108,7 @@ const openOnce = async (
     try {
       await page.goto(ctx.appUrl, { waitUntil: "domcontentloaded" });
     } catch (err) {
-      throw new PreconditionError(`could not reach ${ctx.appUrl}: ${(err as Error).message.split("\n")[0]}`);
+      throw new PreconditionError(`could not reach ${ctx.appUrl}: ${firstLine((err as Error).message)}`);
     }
     const state = await domain.signInState(page, ctx.appUrl);
     if (state === "signed-out") {
@@ -142,6 +127,7 @@ const openOnce = async (
       );
     }
     await saveSession(context, ctx).catch(() => {});
+    page.setDefaultTimeout(STEP_TIMEOUT_MS);
     return { browser, context, page, network, close };
   } catch (err) {
     await close();
@@ -151,52 +137,46 @@ const openOnce = async (
 
 /**
  * A person signs in, SSO and MFA included, in a headed browser; the session is saved for the context.
- * With `credentials`, the form is filled and submitted for them, headless, and they are never saved.
+ * With `credentials`, the form is filled and submitted for them, headless (`credentials.ts`).
  */
 export const signIn = async (
   domain: Domain,
   contexts: Contexts,
   ctx: Context,
-  {
-    timeoutMs,
-    headless = false,
-    credentials,
-  }: { timeoutMs?: number; headless?: boolean; credentials?: { username: string; password: string } } = {},
+  { timeoutMs, headless = false, credentials }: { timeoutMs?: number; headless?: boolean; credentials?: Credentials } = {},
 ): Promise<void> => {
-  if (credentials && !domain.submitSignIn) throw new InputError(`${domain.name} has no sign-in with a username and password`);
-  const wait = timeoutMs ?? (credentials ? 2 * 60_000 : 10 * 60_000);
+  const submit = domain.submitSignIn;
+  if (credentials && !submit) throw new InputError(`${domain.name} has no sign-in with a username and password`);
   const browser = await launch(!(headless || credentials));
   try {
     const context = await browser.newContext({ viewport: VIEWPORT });
     const page = await context.newPage();
     await page.goto(ctx.url, { waitUntil: "domcontentloaded" });
-    if (credentials) {
-      progress(`signing in to ${ctx.url} as ${credentials.username}`);
-      await domain.submitSignIn!(page, credentials);
-    } else progress(`sign in to ${ctx.url} in the browser window; waiting up to ${Math.round(wait / 60_000)} minutes`);
-    const deadline = Date.now() + wait;
-    // A form still asking for the password well after it was sent turned it down.
-    const refusedBy = Date.now() + envNumber("SIGNIN_WAIT_MS", 20_000);
-    const password = page.locator('input[type="password"]').first();
-    for (;;) {
-      if (page.isClosed()) throw new PreconditionError("the sign-in window was closed before signing in");
-      const state = await domain.signInState(page, ctx.url).catch(() => "unknown" as const);
-      if (state === "signed-in") break;
-      if (credentials && state === "signed-out" && Date.now() > refusedBy && (await password.isVisible().catch(() => false)))
-        throw new PreconditionError(`the sign-in as ${credentials.username} was turned down: check the username and password`);
-      if (state === "elsewhere") throw new PreconditionError(`signed in elsewhere than ${ctx.url} (another account or tenant)`);
-      if (Date.now() > deadline)
-        throw new PreconditionError(
-          credentials
-            ? `the sign-in as ${credentials.username} didn't finish: a wrong password, or a second step (MFA, SSO) that needs the window`
-            : "timed out waiting for the sign-in",
-        );
-      await page.waitForTimeout(1500).catch(() => {});
-    }
+    const wait = credentials ? await submitCredentials(submit!, page, ctx.url, credentials, timeoutMs) : byHand(ctx.url, timeoutMs);
+    await waitForSignIn(domain, page, ctx.url, wait);
     await saveSession(context, ctx);
     contexts.markSignedIn(ctx.name, domain.appUrl?.(page.url(), ctx.url) ?? page.url());
   } finally {
     await browser.close().catch(() => {});
+  }
+};
+
+const byHand = (url: string, timeoutMs = 10 * 60_000): SignInWait => {
+  progress(`sign in to ${url} in the browser window; waiting up to ${Math.round(timeoutMs / 60_000)} minutes`);
+  return { ms: timeoutMs, timedOut: "timed out waiting for the sign-in" };
+};
+
+const waitForSignIn = async (domain: Domain, page: Page, url: string, wait: SignInWait): Promise<void> => {
+  const deadline = Date.now() + wait.ms;
+  for (;;) {
+    if (page.isClosed()) throw new PreconditionError("the sign-in window was closed before signing in");
+    const state = await domain.signInState(page, url).catch(() => "unknown" as const);
+    if (state === "signed-in") return;
+    const turnedDown = state === "signed-out" ? await wait.turnedDown?.() : undefined;
+    if (turnedDown) throw new PreconditionError(turnedDown);
+    if (state === "elsewhere") throw new PreconditionError(`signed in elsewhere than ${url} (another account or tenant)`);
+    if (Date.now() > deadline) throw new PreconditionError(wait.timedOut);
+    await page.waitForTimeout(1500).catch(() => {});
   }
 };
 

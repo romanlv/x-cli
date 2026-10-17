@@ -6,7 +6,7 @@
 import { existsSync, rmSync } from "node:fs";
 import { connect, createServer } from "node:net";
 import { chromium } from "playwright";
-import { launchOptions } from "./browser";
+import { launchWith } from "./browser";
 
 export const BROWSER_PATH = "/browser";
 
@@ -17,9 +17,7 @@ if (import.meta.main) {
   const [socket, parent] = process.argv.slice(2);
   if (!socket || !parent) throw new Error("usage: browser-server.ts <socket> <parent pid>");
   const serve = { host: "127.0.0.1", port: 0, wsPath: BROWSER_PATH };
-  const server = await chromium
-    .launchServer({ ...launchOptions(false), ...serve })
-    .catch(() => chromium.launchServer({ headless: true, ...serve }));
+  const server = await launchWith(false, (options) => chromium.launchServer({ ...options, ...serve }));
   const { port } = new URL(server.wsEndpoint());
 
   rmSync(socket, { force: true });
