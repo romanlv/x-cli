@@ -24,7 +24,7 @@ import {
 } from "./ops";
 import { EXIT, fail, finish, firstLine, guardStdout, type NextHint, type Outcome, ok } from "./output";
 import { isTerminal, type RequestRecord, type RequestState, Requests } from "./requests";
-import { CORE_PAGE_COMMANDS, pageCommand, runSessionDaemon, sessionContext } from "./session";
+import { pageCommand, pageCommandsOf, runSessionDaemon, sessionContext } from "./session";
 import { ago, alive } from "./store";
 import { ensureWorker, formatCost, formatDuration, runActivity, runOutput, runRoot, runUsage, runWorker } from "./worker";
 
@@ -96,10 +96,7 @@ const usage = (env: Env, ops: Map<string, OpEntry>): string => {
     `  ${noun}`,
     ...entries.map((e) => `    ${e.name.padEnd(28)} ${e.definition.description}`),
   ]);
-  const pageLines = [
-    ...Object.entries(CORE_PAGE_COMMANDS),
-    ...Object.entries(env.domain.pageCommands ?? {}).map(([name, c]) => [`page:${name}`, c.usage] as const),
-  ].map(([name, text]) => `  ${name.padEnd(30)} ${text}`);
+  const pageLines = Object.entries(pageCommandsOf(env.domain)).map(([name, c]) => `  ${name.padEnd(30)} ${c.usage}`);
   return [
     `Usage: ${cli} <command> [flags]`,
     "",
@@ -314,8 +311,7 @@ const dispatch = async (env: Env, argv: string[]): Promise<Outcome> => {
   }
 
   if (command === "page" || command.startsWith("page:")) {
-    const known = command in CORE_PAGE_COMMANDS || env.domain.pageCommands?.[command.slice(5)] !== undefined;
-    if (!known) return fail(`unknown page command ${command}; see ${cli} help`, EXIT.USAGE);
+    if (!(command in pageCommandsOf(env.domain))) return fail(`unknown page command ${command}; see ${cli} help`, EXIT.USAGE);
     const session = (args.global.session as string | undefined) ?? envValue("SESSION") ?? "default";
     // A running session keeps its context; only an explicit --context can disagree with it.
     const ctx = contexts.resolve((args.global.context as string | undefined) ?? sessionContext(env.domain.home, session));

@@ -380,16 +380,17 @@ describe("request ledger", () => {
 });
 
 describe("snapshot", () => {
-  test("controls get refs, labels and automation ids; a diff marks what is new", async () => {
+  test("controls get refs, labels and test ids; a diff marks what is new", async () => {
     const browser = await launch(false);
     try {
       const page = await browser.newPage();
       await page.setContent(`
         <h1>Create Prospect</h1>
-        <form><label for="f">First Name</label><input id="f" data-automation-id="textInputBox" value="Ada">
-        <label for="l">Last Name</label><input id="l" data-automation-id="textInputBox">
-        <button type="button" data-automation-id="okButton" onclick="document.body.insertAdjacentHTML('beforeend','<div role=alert>Saved</div>')">OK</button>
-        <span aria-hidden="true"><button>Hidden</button></span></form>`);
+        <form><label for="f">First Name</label><input id="f" data-testid="textInputBox" value="Ada">
+        <label for="l">Last Name</label><input id="l" data-testid="textInputBox">
+        <button type="button" data-testid="okButton" onclick="document.body.insertAdjacentHTML('beforeend','<div role=alert>Saved</div>')">OK</button>
+        <span aria-hidden="true"><button>Hidden</button></span></form>
+        <article role="article" tabindex="0" data-testid="tweet"><a href="/ada">Ada</a> posted</article>`);
       const before = await takeSnapshot(page);
       expect(formatSnapshot(before).split("\n").slice(2)).toEqual([
         '- heading "Create Prospect"',
@@ -397,11 +398,14 @@ describe("snapshot", () => {
         '  - textbox "First Name" [e1] = "Ada" {textInputBox}',
         '  - textbox "Last Name" [e2] = "" {textInputBox}',
         '  - button "OK" [e3] {okButton}',
+        // A control only by taking focus, it shows what is in it.
+        '- article "Ada posted" [e4] {tweet}',
+        '  - link "Ada" [e5]',
       ]);
       expect(suggestLocator(before.nodes[2]!)).toBe(`page.getByLabel("First Name", { exact: true })`);
-      expect(suggestLocator(before.nodes[4]!)).toBe(`page.locator('[data-automation-id="okButton"]')`);
+      expect(suggestLocator(before.nodes[4]!)).toBe(`page.getByTestId("okButton")`);
 
-      await page.locator('[data-wdref="e3"]').click();
+      await page.locator('[data-ref="e3"]').click();
       const after = await takeSnapshot(page);
       const diff = formatSnapshot(after, before);
       expect(diff).toContain("changed: 1 new, 0 gone");
@@ -427,6 +431,23 @@ describe("loading ops", () => {
       writeFileSync(join(dir, "ops", "thing-find", "op.ts"), "export const a = 1;\nexport const a = 2;\n");
       const { broken } = await loadOps({ dir } as Domain);
       expect(broken[0]!.error).toBe(`"a" has already been declared at ${join(dir, "ops", "thing-find", "op.ts")}:2:14`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a domain without direct calls refuses an op that has a direct way", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "x-ops-")));
+    try {
+      mkdirSync(join(dir, "ops", "thing-find"), { recursive: true });
+      writeFileSync(
+        join(dir, "ops", "thing-find", "op.ts"),
+        'export default { name: "thing:find", run: async () => ({}), direct: async () => ({}) };\n',
+      );
+      const { ops, broken } = await loadOps({ name: "x", dir, directCalls: false } as Domain);
+      expect(ops.size).toBe(0);
+      expect(broken[0]!.error).toBe("thing:find has a direct way, but x ops make no calls of their own (directCalls: false)");
+      expect((await loadOps({ name: "x", dir } as Domain)).ops.size).toBe(1);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

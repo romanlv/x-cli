@@ -26,8 +26,11 @@ core/                       the reusable part: knows nothing of X
   cli.ts                    command parsing, help, output envelope, exit codes
   contexts.ts               named contexts (here: accounts) and their saved sign-ins
   ops.ts                    op registry, defineOp, step(), the runner, triage
+  direct.ts                 an op's direct way: plain HTTP on the saved sign-in, tried before the browser
   requests.ts               request ledger and the worker loop
-  browser.ts                sessions and the `page` commands
+  browser.ts                a signed-in browser per call, and the sign-in
+  credentials.ts            a sign-in from `.env.<context>`, for a domain with `submitSignIn`
+  session.ts, snapshot.ts   exploring sessions, the `page` commands, the page as text
   workflows/                awf workflows: build.ts (new ops, changes), repair.ts
   instructions/             what core tells agents: prompts.ts (every prompt), authoring.md (any op)
 x/                          the domain
@@ -215,10 +218,10 @@ Playwright does all the browser work, behind the CLI.
 | `x page:requests [all \| n [body]]` | the session's recent calls (the last 30; `all` for every kept one) under the command that made them, the newest JSON and event-stream ones numbered; `n` prints one with its headers and bodies, `n body` only its response |
 | `x page:fetch <url> [Name: value ...] [body]` | one call on the session's sign-in, as an op's direct way would make it; prints status, content type and body |
 
-- **Exploring leaves a trace.** Every `page` command is logged with the locator Playwright used, to `trace.jsonl` in the run. Writing `op.ts` starts from what worked, not from the agent's memory of it.
-- **The page's own calls, not direct ones.** core lets an op have a `direct` way, plain HTTP on the saved cookies with no browser. X ops don't use it: X signs each call, rotates its query ids and sits behind Cloudflare's fingerprinting, so a separate client is what it flags (`x/knowledge/bot-detection.md`). Instead an op reads the GraphQL responses the page fetches (`app.graphql`), which carry more than the screen shows. The builder finds them with `page:requests`, as the `direct-calls` skill says.
+- **Exploring leaves a trace.** Every `page` command is logged with the locator Playwright used, to `trace.jsonl` in the run. Writing `op.ts` starts from what worked, not from the agent's memory of it. The page shows each control's `data-testid` (the domain's `testIdAttribute`), and a unique one is the locator suggested: `page.getByTestId(...)`.
+- **The page's own calls, not direct ones.** core lets an op have a `direct` way, plain HTTP on the saved cookies with no browser. X ops don't use it, and `directCalls: false` in `x/domain.ts` keeps an op that has one from loading: X signs each call, rotates its query ids and sits behind Cloudflare's fingerprinting, so a separate client is what it flags (`x/knowledge/bot-detection.md`). Instead an op reads the GraphQL responses the page fetches (`app.graphql`), which carry more than the screen shows. The builder finds them with `page:requests`, as the `direct-calls` skill says.
 - **Installed Chrome, one request at a time.** `x/domain.ts` sets `browserChannel: "chrome"` (core falls back to Playwright's Chromium when Chrome isn't installed) and `maxRunning: 1`, so one request's browsers use the account at a time.
-- **Signed in for as long as runs need it.** While a request runs, the worker opens the app every five minutes and saves the fresh cookies, and open sessions nudge their page (template behaviour; whether X needs it is an open question).
+- **Signed in for as long as runs need it.** While a request runs, the worker opens the app every five minutes and saves the fresh cookies (template behaviour; whether X needs it is an open question). Open sessions nudge their page only for a domain that sets `keepAlive`; X doesn't.
 - **A sign-in check runs before every op:** is the context's session still signed in to its URL. If not, it exits 3 with how to sign in again, and no request is filed, because no agent can fix a login.
 
 ## Build workflow: new ops and changes

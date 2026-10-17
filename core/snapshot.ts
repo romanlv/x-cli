@@ -1,5 +1,5 @@
 // The page as an agent reads it: one line per control or heading, each control with a ref (`e14`)
-// that `page:click e14` acts on. Refs are stamped on the elements as `data-wdref`, so they stay the
+// that `page:click e14` acts on. Refs are stamped on the elements as `data-ref`, so they stay the
 // same across snapshots of one page and a diff marks what an action changed.
 import type { Locator, Page } from "playwright";
 
@@ -9,9 +9,10 @@ export interface SnapshotNode {
   role: string;
   name: string;
   value?: string;
-  automationId?: string;
-  /** Whether that automation id names this element alone on the page. */
-  automationIdUnique?: boolean;
+  /** The id the app marks the control with, in the domain's `testIdAttribute`. */
+  testId?: string;
+  /** Whether that test id names this element alone on the page. */
+  testIdUnique?: boolean;
   label?: string;
   disabled?: boolean;
   checked?: boolean;
@@ -24,7 +25,7 @@ export interface Snapshot {
 }
 
 /** Runs in the page. Kept free of closures over module scope, since Playwright serializes it. */
-const collect = (): Omit<Snapshot, "url" | "title"> => {
+const collect = (testIdAttribute: string): Omit<Snapshot, "url" | "title"> => {
   const INTERACTIVE_ROLES = new Set([
     "button",
     "link",
@@ -111,12 +112,12 @@ const collect = (): Omit<Snapshot, "url" | "title"> => {
   };
 
   let next = 0;
-  for (const el of document.querySelectorAll("[data-wdref]")) {
-    next = Math.max(next, Number(el.getAttribute("data-wdref")!.slice(1)) || 0);
+  for (const el of document.querySelectorAll("[data-ref]")) {
+    next = Math.max(next, Number(el.getAttribute("data-ref")!.slice(1)) || 0);
   }
   const counts = new Map<string, number>();
-  for (const el of document.querySelectorAll("[data-automation-id]")) {
-    const id = el.getAttribute("data-automation-id")!;
+  for (const el of document.querySelectorAll(`[${testIdAttribute}]`)) {
+    const id = el.getAttribute(testIdAttribute)!;
     counts.set(id, (counts.get(id) ?? 0) + 1);
   }
 
@@ -129,20 +130,17 @@ const collect = (): Omit<Snapshot, "url" | "title"> => {
       return;
     }
     const role = roleOf(el);
-    const automationId = el.getAttribute("data-automation-id") ?? undefined;
+    const testId = el.getAttribute(testIdAttribute) ?? undefined;
     const interactive =
       (role !== undefined && INTERACTIVE_ROLES.has(role)) ||
       (el as HTMLElement).isContentEditable ||
-      (el.getAttribute("tabindex") !== null &&
-        Number(el.getAttribute("tabindex")) >= 0 &&
-        el.getAttribute("tabindex") !== "-1" &&
-        !!automationId);
+      (Number(el.getAttribute("tabindex") ?? -1) >= 0 && !!testId);
     const structural = role !== undefined && STRUCTURE_ROLES.has(role);
     const ownText = Array.from(el.childNodes)
       .filter((n) => n.nodeType === Node.TEXT_NODE)
       .map((n) => n.textContent)
       .join(" ");
-    const labelText = !role && !!automationId && clean(ownText) !== "";
+    const labelText = !role && !!testId && clean(ownText) !== "";
 
     let childDepth = depth;
     if (interactive || structural || labelText) {
@@ -151,15 +149,15 @@ const collect = (): Omit<Snapshot, "url" | "title"> => {
         role: role ?? (interactive ? "generic" : "text"),
         name: labelText && !role ? clean(ownText) : nameOf(el, role ?? "generic"),
       };
-      if (automationId) {
-        node.automationId = automationId;
-        node.automationIdUnique = counts.get(automationId) === 1;
+      if (testId) {
+        node.testId = testId;
+        node.testIdUnique = counts.get(testId) === 1;
       }
       if (interactive) {
-        let ref = el.getAttribute("data-wdref");
+        let ref = el.getAttribute("data-ref");
         if (!ref) {
           ref = `e${++next}`;
-          el.setAttribute("data-wdref", ref);
+          el.setAttribute("data-ref", ref);
         }
         node.ref = ref;
         const label = labelOf(el);
@@ -176,8 +174,9 @@ const collect = (): Omit<Snapshot, "url" | "title"> => {
       }
       nodes.push(node);
       childDepth = depth + 1;
-      // A control's own text is already its name; only containers such as a listbox go deeper.
-      if (interactive && !["listbox", "combobox", "tablist", "treeitem", "generic"].includes(node.role)) return;
+      // A control's own text is already its name; containers such as a listbox go deeper, and so does
+      // an element that is a control only by taking focus, such as a post with links in it.
+      if (role && INTERACTIVE_ROLES.has(role) && !["listbox", "combobox", "tablist", "treeitem"].includes(role)) return;
     }
     for (const child of el.children) walk(child, childDepth);
   };
@@ -185,8 +184,9 @@ const collect = (): Omit<Snapshot, "url" | "title"> => {
   return { nodes };
 };
 
-export const takeSnapshot = async (page: Page): Promise<Snapshot> => {
-  const { nodes } = await page.evaluate(collect);
+/** `testIdAttribute` is the domain's: the attribute the app marks its controls with. */
+export const takeSnapshot = async (page: Page, testIdAttribute = "data-testid"): Promise<Snapshot> => {
+  const { nodes } = await page.evaluate(collect, testIdAttribute);
   return { url: page.url(), title: await page.title(), nodes };
 };
 
@@ -198,7 +198,7 @@ export const formatNode = (node: SnapshotNode): string => {
   if (node.value !== undefined) line += ` = "${node.value}"`;
   if (node.checked !== undefined) line += node.checked ? " (checked)" : " (unchecked)";
   if (node.disabled) line += " (disabled)";
-  if (node.automationId) line += ` {${node.automationId}}`;
+  if (node.testId) line += ` {${node.testId}}`;
   return line;
 };
 
@@ -225,18 +225,18 @@ export const formatSnapshot = (snapshot: Snapshot, previous?: Snapshot): string 
   return [...header, `changed: ${changed} (new lines start with +)`, ...marked].join("\n");
 };
 
-export const refLocator = (page: Page, ref: string): Locator => page.locator(`[data-wdref="${ref}"]`);
+export const refLocator = (page: Page, ref: string): Locator => page.locator(`[data-ref="${ref}"]`);
 
 /**
  * The Playwright locator an op should use for this node, preferring what survives a reload:
- * a unique automation id, then the label, then role and name. Exploring logs it, so writing `op.ts`
- * starts from what worked.
+ * a unique test id, then the label, then role and name. Exploring logs it, so writing `op.ts`
+ * starts from what worked. `getByTestId` reads the domain's `testIdAttribute` (`openSignedIn` sets it).
  */
 export const suggestLocator = (node: SnapshotNode): string => {
   const q = JSON.stringify;
-  if (node.automationId && node.automationIdUnique) return `page.locator('[data-automation-id=${q(node.automationId)}]')`;
+  if (node.testId && node.testIdUnique) return `page.getByTestId(${q(node.testId)})`;
   const label = node.label ?? (["textbox", "combobox", "searchbox", "checkbox", "radio"].includes(node.role) ? node.name : undefined);
   if (label) return `page.getByLabel(${q(label)}, { exact: true })`;
   if (node.name) return `page.getByRole(${q(node.role)}, { name: ${q(node.name)}, exact: true })`;
-  return node.automationId ? `page.locator('[data-automation-id=${q(node.automationId)}]')` : `page.getByRole(${q(node.role)})`;
+  return node.testId ? `page.getByTestId(${q(node.testId)})` : `page.getByRole(${q(node.role)})`;
 };

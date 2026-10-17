@@ -2,6 +2,7 @@ import { join } from "node:path";
 import type { Page } from "playwright";
 import { type Domain, defineDomain, type SignInState } from "../core/domain";
 import { envNumber } from "../core/env";
+import { InputError } from "../core/errors";
 import { readPosts, SEL, type Xh, xHelpers } from "./helpers";
 
 const ORIGIN = "https://x.com";
@@ -104,9 +105,9 @@ export const xDomain = (overrides: Partial<Domain<Xh>> = {}): Domain<Xh> =>
       search: {
         usage: '"<query>" [top|latest|people|media]  open X search for a query (X\'s operators work: from:, since:, filter:)',
         async run({ page }, args) {
-          if (!args[0]) throw new Error('give the query, such as "from:jack bitcoin"');
+          if (!args[0]) throw new InputError('give the query, such as "from:jack bitcoin"');
           const tab = (args[1] ?? "latest") as (typeof TABS)[number];
-          if (!TABS.includes(tab)) throw new Error(`no tab "${tab}" (tabs: ${TABS.join(", ")})`);
+          if (!TABS.includes(tab)) throw new InputError(`no tab "${tab}" (tabs: ${TABS.join(", ")})`);
           await xHelpers(page).search(args[0], tab);
           return undefined;
         },
