@@ -1,0 +1,9 @@
+{
+  "sandbox": true,
+  "agents": {
+    "planner": { "harness": "claude", "model": "claude-opus-5-5" },
+    "builder": { "harness": "claude", "model": "claude-sonnet-5-5" },
+    "checker": { "harness": "codex", "model": "gpt-6.1-sol", "placement": "headless" },
+    "troubleshooter": { "harness": "claude", "model": "claude-opus-5-5", "effort": "high" }
+  }
+}

@@ -1,0 +1,7 @@
+node_modules
+.awf/
+# Written by the runner on every call; the failure bundle carries what a repair needs.
+**/ops/*/history.jsonl
+.state/
+# A person's sign-in per context (.env.<context>), for context:login; never committed.
+.env*

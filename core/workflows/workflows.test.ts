@@ -1,0 +1,829 @@
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { answer, reply, testWorkflow } from "agentswf/testing";
+import { type RequestRecord, Requests } from "../requests";
+import { defineBuild } from "./build";
+import type { Deps, Git, Verified } from "./deps";
+import { defineRepair } from "./repair";
+import { DIAGNOSIS, DONE, EXPLORED, INTAKE, QUESTION, REVIEW } from "./shared";
+
+let home: string;
+let requests: Requests;
+let git: FakeGit;
+let verifies: Verified[];
+let verified: string[];
+let closed: string[][];
+let checks: { ok: boolean; output: string }[];
+let checked: string[];
+let sandboxed: string[];
+/** Whether the checkout has the context's sign-in; each sign-in is recorded. */
+let credentials: boolean;
+let signIns: string[];
+
+type FakeGit = Git & {
+  calls: string[];
+  changedFiles: string[];
+  mainFiles: string[];
+  /** The main commits each rebase lands the branch on, in order; it stays on base0 otherwise. */
+  bases: string[];
+  current: string;
+  conflicts: number;
+  ffFailures: number;
+  rebasing: boolean;
+  /** The branch has nothing left to squash, as after a merge that landed. */
+  empty: boolean;
+  landedAs?: string;
+};
+
+const fakeGit = (): FakeGit => {
+  const g: FakeGit = {
+    calls: [],
+    changedFiles: ["x/ops/candidate-merge/op.ts"],
+    mainFiles: [],
+    bases: [],
+    current: "base0",
+    conflicts: 0,
+    ffFailures: 0,
+    rebasing: false,
+    empty: false,
+    ensureWorktree: async (_r, wt) => void g.calls.push(`worktree ${wt}`),
+    squash: async (_wt, message) => {
+      g.calls.push(`squash ${message}`);
+      return g.empty ? undefined : "abc1234567";
+    },
+    landed: async () => g.landedAs,
+    base: async () => g.current,
+    rebase: async () => {
+      g.calls.push("rebase");
+      g.current = g.bases.shift() ?? g.current;
+      return g.conflicts-- > 0 ? { ok: false, conflict: "x/helpers/index.ts" } : { ok: true };
+    },
+    rebaseInProgress: async () => g.rebasing,
+    changed: async () => g.changedFiles,
+    changedOnMain: async () => g.mainFiles,
+    fastForward: async (_r, branch) => {
+      g.calls.push(`ff ${branch}`);
+      if (g.ffFailures-- > 0) throw new Error("not a fast-forward");
+      return "abc1234567";
+    },
+    removeWorktree: async (_r, wt) => void g.calls.push(`remove ${wt}`),
+  };
+  return g;
+};
+
+const passed = (op = "candidate:merge"): Verified => ({
+  op,
+  ok: true,
+  runs: [{ input: { keep: "C-1" }, exitCode: 0, ok: true }],
+  signedOut: false,
+  noExamples: false,
+});
+const failed = (error: string, op = "candidate:merge"): Verified => ({
+  op,
+  ok: false,
+  runs: [{ input: { keep: "C-1" }, exitCode: 1, ok: false, error }],
+  signedOut: false,
+  noExamples: false,
+});
+
+const deps = (): Deps => ({
+  git,
+  verify: async (_wt, _r, op) => {
+    verified.push(op);
+    return verifies.shift() ?? passed(op);
+  },
+  checks: async (_wt, scope) => {
+    checked.push(scope);
+    return checks.shift() ?? { ok: true, output: "" };
+  },
+  closeSessions: async (_wt, _r, sessions) => void closed.push(sessions),
+  signIn: async (r) => {
+    signIns.push(r.context);
+    return credentials;
+  },
+  sandbox: async (_r, worktree, paths) => {
+    sandboxed.push(worktree);
+    for (const dir of [worktree, paths.home]) mkdirSync(dir, { recursive: true });
+    return { write: [worktree, paths.home], srt: {} };
+  },
+  ledger: () => requests,
+});
+
+const domain = () => ({ name: "x", root: "/repo", dir: "/repo/x", home });
+
+const file = (over: Partial<RequestRecord> = {}): RequestRecord =>
+  requests.file({
+    kind: "new",
+    op: "candidate:merge",
+    text: "merge two duplicate candidates",
+    context: "acme",
+    domain: domain(),
+    call: { op: "candidate:merge", argv: ["candidate:merge", "--keep", "C-1", "--drop", "C-2"] },
+    ...over,
+  });
+
+const planned = { kind: "build", op: "candidate:merge", change: false, summary: "merge two candidates" } as const;
+const done = (summary: string) => answer(DONE, { kind: "done", summary });
+const planning = () => [answer(INTAKE, planned), done("spec written")];
+const explored = answer(EXPLORED, { kind: "done", summary: "explored" });
+const building = () => [explored, done("written")];
+const approve = answer(REVIEW, { findings: [] });
+/** Stages a continue reuses, as an earlier attempt recorded them up to `upTo`. */
+const recordedUpTo = (upTo: "intake" | "explore" | "spec" | "write" | "check") => {
+  const all = {
+    intake: planned,
+    explore: { kind: "done", summary: "explored" },
+    spec: { summary: "spec written" },
+    write: { summary: "written" },
+    check: { revisions: 0, by: "builder", base: "base0" },
+  };
+  const order = Object.keys(all);
+  return Object.fromEntries(Object.entries(all).filter(([k]) => order.indexOf(k) <= order.indexOf(upTo)));
+};
+
+beforeEach(() => {
+  home = mkdtempSync(join(tmpdir(), "wd-wf-"));
+  requests = new Requests(home);
+  git = fakeGit();
+  verifies = [];
+  checks = [];
+  checked = [];
+  sandboxed = [];
+  credentials = false;
+  signIns = [];
+  verified = [];
+  closed = [];
+});
+afterEach(() => rmSync(home, { recursive: true, force: true }));
+
+// ── build ─────────────────────────────────────────────────────────────────────────────────────────
+
+test("a new op goes through every stage, is merged, and the request ends done", async () => {
+  const r = file();
+  requests.update(r.id, () => ({ state: "building" }));
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    { agents: { planner: planning(), builder: building(), checker: approve } },
+  );
+  expect(run.value).toEqual({ state: "done", summary: "built candidate:merge (0 revision(s)): merge two candidates" });
+  expect(requests.get(r.id)).toMatchObject({
+    state: "done",
+    result: { commit: "abc1234567", command: "x candidate:merge --keep C-1 --drop C-2" },
+  });
+  expect(git.calls).toEqual([
+    `worktree ${home}/worktrees/${r.id}`,
+    `squash ${r.id} build candidate:merge`,
+    "rebase",
+    `ff req/${r.id}`,
+    `remove ${home}/worktrees/${r.id}`,
+  ]);
+  expect(closed).toEqual([[r.id, `${r.id}-check`]]);
+  expect(requests.lockOp("candidate:merge", "R-9999")).toBeUndefined();
+  // Every stage after intake carries the whole brief, since a builder may start fresh at any of them.
+  for (const turn of run.turnsOf("builder").slice(1)) {
+    expect(turn.prompt).toContain("merge two duplicate candidates");
+    expect(turn.prompt).toContain(`${home}/sessions/${r.id}/trace.jsonl`);
+  }
+  // Agents call the worktree's CLI in the request's home, filing nothing.
+  expect(run.agentOf("builder").instructions).toContain(
+    `env XCLI_HOME=${home} XCLI_NO_REPAIRS=1 XCLI_NO_WORKER=1 bun ${home}/worktrees/${r.id}/x/main.ts`,
+  );
+  // The planner drives no browser, and writes the spec from what explore found.
+  expect(run.agentOf("planner").instructions).not.toContain("--session");
+  expect(run.turnsOf("planner")[1]!.prompt).toContain("<explored>\nexplored\n</explored>");
+  expect(run.agentOf("checker").execution).toMatchObject({ harness: "codex" });
+  expect(run.agentOf("checker").instructions).toContain(`--session ${r.id}-check`);
+  // The checker tries an input of its own, and reads what the builder says it ran.
+  expect(run.turnsOf("checker")[0]!.prompt).toContain("an input of your own");
+  expect(run.turnsOf("checker")[0]!.prompt).toContain("<builder>\nwritten\n</builder>");
+});
+
+test.each([
+  ["duplicate", answer(INTAKE, { kind: "duplicate", command: "x candidate:create --help", reason: "candidate:create does it" })],
+  ["deferred", answer(INTAKE, { kind: "deferred", reason: "needs the Merge task, which this tenant hides" })],
+  ["declined", answer(INTAKE, { kind: "declined", reason: "too vague" })],
+] as const)("intake ends a %s request without a build, and cleans up", async (state, intake) => {
+  const r = file({ kind: "intake", op: undefined, call: undefined });
+  const run = await testWorkflow(defineBuild(deps()), { id: r.id, home }, { agents: { planner: intake } });
+  expect(run.value.state).toBe(state);
+  expect(requests.get(r.id)!.state).toBe(state);
+  expect(run.turnsOf("planner")).toHaveLength(1);
+  expect(git.calls.at(-1)).toStartWith("remove");
+});
+
+test("a retry over a recorded ending records it again instead of leaving the request building", async () => {
+  const r = file({ kind: "intake", op: undefined });
+  requests.update(r.id, () => ({ state: "building" }));
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    {
+      recorded: { intake: { kind: "ended", state: "deferred", reason: "later" } },
+      agents: {},
+    },
+  );
+  expect(run.value).toEqual({ state: "deferred", summary: "later" });
+  expect(requests.get(r.id)!.state).toBe("deferred");
+});
+
+test("an op name that isn't noun:verb stops intake", async () => {
+  const r = file();
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    {
+      agents: { planner: answer(INTAKE, { ...planned, op: "job-req:create" }) },
+    },
+  );
+  expect(run.stopped).toMatchObject({ stage: "intake" });
+});
+
+test("agents run unsandboxed on the default models when there is no workflows.json", async () => {
+  const r = file();
+  requests.update(r.id, () => ({ state: "building" }));
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    { agents: { planner: planning(), builder: building(), checker: approve } },
+  );
+  expect(run.agentOf("builder").sandbox).toBeUndefined();
+  expect(run.agentOf("planner").execution).toMatchObject({ harness: "claude", model: "claude-opus-5-5" });
+  expect(run.agentOf("builder").execution).toMatchObject({ harness: "claude", model: "claude-sonnet-5-5" });
+  expect(run.agentOf("checker").execution).toMatchObject({ harness: "codex", model: "gpt-6-sol" });
+  expect(sandboxed).toEqual([]);
+});
+
+test("workflows.json puts the team in one sandbox, on the models it names", async () => {
+  const root = join(home, "checkout");
+  mkdirSync(root, { recursive: true });
+  mkdirSync(join(home, "shared"));
+  writeFileSync(
+    join(root, "workflows.json"),
+    JSON.stringify({
+      sandbox: { network: ["docs.playwright.dev"], read: ["../shared"] },
+      agents: { builder: { harness: "codex", model: "gpt-cheap", placement: "headless" } },
+    }),
+  );
+  const r = file({ domain: { ...domain(), root, dir: join(root, "x") } });
+  requests.update(r.id, () => ({ state: "building" }));
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    { agents: { planner: planning(), builder: building(), checker: approve } },
+  );
+  expect(run.value).toMatchObject({ state: "done" });
+  expect(run.agentOf("builder").execution).toMatchObject({ harness: "codex", model: "gpt-cheap" });
+  expect(run.agentOf("checker").execution).toMatchObject({ harness: "codex", model: "gpt-6-sol" });
+  expect(run.agentOf("planner").execution).toMatchObject({ harness: "claude", model: "claude-opus-5-5" });
+  expect(run.agentOf("planner").sandbox).toEqual(run.agentOf("builder").sandbox);
+  const box = run.agentOf("builder").sandbox!;
+  expect(box).toMatchObject({ key: "agents", provider: "srt" });
+  expect(run.agentOf("checker").sandbox).toEqual(box);
+  // What workflows.json adds, its paths from the checkout's root.
+  expect(box.spec.network).toContain("docs.playwright.dev");
+  expect(box.spec.read).toContain(realpathSync(join(home, "shared")));
+  expect(sandboxed).toEqual([`${home}/worktrees/${r.id}`]);
+  // Their CLI keeps its state in the request's own home and reaches the host's browser by socket.
+  const sockets = join(realpathSync("/tmp"), `wd-${r.id}`);
+  expect(run.agentOf("builder").instructions).toContain(
+    `env XCLI_HOME=${home}/sandboxes/${r.id} XCLI_NO_REPAIRS=1 XCLI_NO_WORKER=1 XCLI_CONTEXTS_DIR=${home}/contexts XCLI_BROWSER=ws+unix://${sockets}/browser.sock:/browser TMPDIR=${sockets} bun`,
+  );
+  expect(run.turnsOf("builder")[0]!.prompt).toContain(`${home}/sandboxes/${r.id}/sessions/${r.id}/trace.jsonl`);
+});
+
+test("a question stops the run blocked on it, at the stage that asked", async () => {
+  const r = file();
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    {
+      agents: {
+        planner: [answer(INTAKE, planned)],
+        builder: [answer(EXPLORED, { kind: "question", question: "Which source should test candidates use?" })],
+      },
+    },
+  );
+  expect(run.stopped?.stage).toBe("explore");
+  expect(requests.get(r.id)).toMatchObject({ state: "blocked", question: "Which source should test candidates use?", stage: "explore" });
+  // A blocked request keeps its op and its worktree for the answer.
+  expect(requests.lockOp("candidate:merge", "R-9999")).toBe(r.id);
+  expect(git.calls.some((c) => c.startsWith("remove"))).toBe(false);
+});
+
+test("an answered question reaches the stage that asked, and the checker, on the continue", async () => {
+  const r = file();
+  requests.update(r.id, () => ({ state: "blocked", question: "Which source?" }));
+  requests.answer(r.id, "Referral");
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    {
+      recorded: recordedUpTo("intake"),
+      agents: { planner: done("spec written"), builder: building(), checker: approve },
+    },
+  );
+  expect(run.turnsOf("builder")[0]!.prompt).toContain("A: Referral");
+  expect(run.turnsOf("checker")[0]!.prompt).toContain("A: Referral");
+  expect(run.value.state).toBe("done");
+});
+
+test("a failed verify goes back to the builder, and so does a finding", async () => {
+  verifies = [failed("timeout at fill name"), passed()];
+  const r = file();
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    {
+      agents: {
+        planner: planning(),
+        builder: [...building(), done("fixed the wait"), done("made the source an input")],
+        checker: [
+          answer(REVIEW, { findings: [{ where: "op.ts:12", problem: "'Referral' is a constant", severity: "blocking" }] }),
+          approve,
+        ],
+      },
+    },
+  );
+  const revisions = run.turnsOf("builder").slice(2);
+  expect(revisions[0]!.prompt).toContain("timeout at fill name");
+  expect(revisions[1]!.prompt).toContain("op.ts:12: 'Referral' is a constant");
+  // Each review reads the builder's latest answer.
+  expect(run.turnsOf("checker")[0]!.prompt).toContain("<builder>\nfixed the wait\n</builder>");
+  expect(run.turnsOf("checker")[1]!.prompt).toContain("<builder>\nmade the source an input\n</builder>");
+  expect(run.value.summary).toContain("(2 revision(s))");
+});
+
+test("failing repository checks go back to the builder before the checker sees it", async () => {
+  checks = [{ ok: false, output: "x/helpers/index.ts: Code style issues found" }];
+  const r = file();
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    { agents: { planner: planning(), builder: [...building(), done("formatted it")], checker: approve } },
+  );
+  expect(run.turnsOf("builder")[2]!.prompt).toContain("bun run ci:fast");
+  expect(run.turnsOf("builder")[2]!.prompt).toContain("Code style issues found");
+  expect(run.turnsOf("checker")).toHaveLength(1);
+  expect(run.value.summary).toContain("(1 revision(s))");
+});
+
+test("minor findings are fixed without another review, and the full checks run once before approval", async () => {
+  const r = file();
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    {
+      agents: {
+        planner: planning(),
+        builder: [...building(), done("reworded the spec")],
+        checker: answer(REVIEW, { findings: [{ where: "spec.md:3", problem: "names the wrong task path", severity: "minor" }] }),
+      },
+    },
+  );
+  expect(run.turnsOf("checker")).toHaveLength(1);
+  expect(run.turnsOf("builder")[2]!.prompt).toContain("spec.md:3: names the wrong task path");
+  expect(checked).toEqual(["fast", "full"]);
+  // The polish changed code, so verify ran again before approval.
+  expect(verified).toEqual(["candidate:merge", "candidate:merge"]);
+  expect(run.value.summary).toContain("(0 revision(s))");
+});
+
+test("the full checks failing at approval go back to the builder as a round", async () => {
+  checks = [
+    { ok: true, output: "" },
+    { ok: false, output: "(fail) e2e > a call prints what it read back" },
+  ];
+  const r = file();
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    { agents: { planner: planning(), builder: [...building(), done("fixed the e2e")], checker: [approve, approve] } },
+  );
+  expect(run.turnsOf("builder")[2]!.prompt).toContain("bun run ci:check");
+  expect(run.turnsOf("builder")[2]!.prompt).toContain("a call prints what it read back");
+  expect(checked).toEqual(["fast", "full", "fast", "full"]);
+  expect(run.value.summary).toContain("(1 revision(s))");
+});
+
+test("the builder keeps its rounds while each gets further", async () => {
+  verifies = [failed("first"), passed(), passed(), passed()];
+  const blocking = (n: number) =>
+    answer(REVIEW, {
+      findings: Array.from({ length: n }, (_, i) => ({ where: `op.ts:${i}`, problem: "wrong", severity: "blocking" as const })),
+    });
+  const r = file();
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    {
+      agents: {
+        planner: planning(),
+        builder: [...building(), done("1"), done("2"), done("3")],
+        checker: [blocking(2), blocking(1), approve],
+      },
+    },
+  );
+  expect(run.turnsOf("troubleshooter")).toHaveLength(0);
+  expect(run.value.summary).toContain("(3 revision(s))");
+});
+
+test("a review after the full checks failed is a fresh look, not a round that got no further", async () => {
+  checks = [
+    { ok: true, output: "" },
+    { ok: false, output: "(fail) e2e > a call prints what it read back" },
+  ];
+  const r = file();
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    {
+      agents: {
+        planner: planning(),
+        builder: [...building(), done("fixed the e2e"), done("named the step")],
+        checker: [approve, answer(REVIEW, { findings: [{ where: "op.ts:3", problem: "unnamed step", severity: "blocking" }] }), approve],
+      },
+    },
+  );
+  expect(run.turnsOf("troubleshooter")).toHaveLength(0);
+  expect(run.value.summary).toContain("(2 revision(s))");
+});
+
+test("a builder round that gets no further hands it to the troubleshooter with every round's problem", async () => {
+  verifies = [failed("first"), failed("second"), passed()];
+  const r = file();
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    {
+      agents: {
+        planner: planning(),
+        builder: [...building(), done("1")],
+        troubleshooter: done("2"),
+        checker: approve,
+      },
+    },
+  );
+  const prompt = run.turnsOf("troubleshooter")[0]!.prompt;
+  expect(prompt).toContain("You are taking over");
+  for (const problem of ["first", "second"]) expect(prompt).toContain(problem);
+  expect(run.value.summary).toContain("(2 revision(s))");
+});
+
+test("a troubleshooter round that gets no further asks a person one question", async () => {
+  verifies = Array.from({ length: 3 }, (_, i) => failed(`attempt ${i}`));
+  const r = file();
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    {
+      agents: {
+        planner: planning(),
+        builder: [...building(), done("1")],
+        troubleshooter: [done("2"), answer(QUESTION, { kind: "question", question: "Is the Merge task enabled for this tenant?" })],
+      },
+    },
+  );
+  expect(run.stopped?.stage).toBe("check");
+  expect(requests.get(r.id)).toMatchObject({ state: "blocked", question: "Is the Merge task enabled for this tenant?" });
+});
+
+test("explore finding no way in the app ends the request deferred, with no spec written", async () => {
+  const r = file();
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    {
+      agents: {
+        planner: [answer(INTAKE, planned)],
+        builder: answer(EXPLORED, { kind: "missing", reason: "no merge task, no related action, searched both" }),
+      },
+    },
+  );
+  expect(run.value.state).toBe("deferred");
+  expect(requests.get(r.id)).toMatchObject({ state: "deferred" });
+  expect(run.turnsOf("planner")).toHaveLength(1);
+});
+
+test("a signed-out session blocks on signing in, without spending a round", async () => {
+  verifies = [{ ...failed("signed out"), signedOut: true }];
+  const r = file();
+  const run = await testWorkflow(defineBuild(deps()), { id: r.id, home }, { agents: { planner: planning(), builder: building() } });
+  expect(run.stopped?.stage).toBe("check");
+  expect(signIns).toEqual(["acme"]);
+  expect(requests.get(r.id)).toMatchObject({ state: "blocked", question: "sign in again: x context:login acme" });
+});
+
+test("with the context's sign-in in the checkout, verify signs in again and goes on", async () => {
+  credentials = true;
+  verifies = [{ ...failed("signed out"), signedOut: true }];
+  const r = file();
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    { agents: { planner: planning(), builder: building(), checker: approve } },
+  );
+  expect(run.value.state).toBe("done");
+  expect(signIns).toEqual(["acme"]);
+  expect(verified.slice(0, 2)).toEqual(["candidate:merge", "candidate:merge"]);
+});
+
+test("an agent that finds the session signed out goes on in the same turn once the run signs in again", async () => {
+  credentials = true;
+  const r = file();
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    {
+      agents: {
+        planner: planning(),
+        builder: [answer(EXPLORED, { kind: "question", question: "sign in again: x context:login acme" }), ...building()],
+        checker: approve,
+      },
+    },
+  );
+  expect(run.value.state).toBe("done");
+  expect(signIns).toEqual(["acme"]);
+  expect(run.turnsOf("builder")[1]!.prompt).toContain('Context "acme" is signed in again');
+});
+
+test("signing in that keeps failing to hold blocks after two tries", async () => {
+  credentials = true;
+  const signedOut = answer(EXPLORED, { kind: "question", question: "sign in again: x context:login acme" });
+  const r = file();
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    { agents: { planner: [answer(INTAKE, planned)], builder: [signedOut, signedOut, signedOut] } },
+  );
+  expect(run.stopped?.stage).toBe("explore");
+  expect(signIns).toEqual(["acme", "acme"]);
+  expect(requests.get(r.id)).toMatchObject({ state: "blocked", question: "sign in again: x context:login acme" });
+});
+
+test("a helper change re-verifies every other op with examples for the context", async () => {
+  git.changedFiles = ["x/helpers/index.ts"];
+  const opsDir = join(home, "worktrees", "R-0001", "x", "ops");
+  for (const [folder, context] of [
+    ["candidate-create", "acme"],
+    ["application-move", "other"],
+  ] as const) {
+    mkdirSync(join(opsDir, folder), { recursive: true });
+    writeFileSync(join(opsDir, folder, "examples.json"), JSON.stringify([{ context, input: {} }]));
+  }
+  verifies = [passed(), failed("Given Name not found", "candidate:create")];
+  const r = file();
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    { agents: { planner: planning(), builder: [...building(), done("kept the helper compatible")], checker: approve } },
+  );
+  expect(verified.slice(0, 2)).toEqual(["candidate:merge", "candidate:create"]);
+  expect(run.turnsOf("builder")[2]!.prompt).toContain("candidate:create");
+  expect(run.value.state).toBe("done");
+});
+
+test("a turn stuck on a permission prompt blocks the request instead of failing it", async () => {
+  const r = file();
+  await testWorkflow(defineBuild(deps()), { id: r.id, home }, { agents: { planner: reply.blocked() } });
+  expect(requests.get(r.id)!.state).toBe("blocked");
+  expect(requests.get(r.id)!.question).toContain("prompt only a person can answer");
+});
+
+test("a turn that times out stops the run and leaves the request for the worker to settle", async () => {
+  const r = file();
+  requests.update(r.id, () => ({ state: "building" }));
+  const run = await testWorkflow(defineBuild(deps()), { id: r.id, home }, { agents: { planner: reply.timedOut() } });
+  expect(run.stopped?.stage).toBe("intake");
+  expect(requests.get(r.id)!.state).toBe("building");
+});
+
+// ── locks ─────────────────────────────────────────────────────────────────────────────────────────
+
+test("a second request for an op waits for the one holding it", async () => {
+  const first = file();
+  requests.update(first.id, () => ({ state: "building" }));
+  requests.lockOp("candidate:merge", first.id);
+  const second = file();
+  await testWorkflow(defineBuild(deps()), { id: second.id, home }, { agents: { planner: [answer(INTAKE, planned)] } });
+  expect(requests.get(second.id)).toMatchObject({ state: "received", waitingFor: first.id });
+});
+
+test("a continue takes the lock again, so a retry can't build beside a newer request", async () => {
+  const older = file();
+  const newer = file();
+  requests.update(newer.id, () => ({ state: "building" }));
+  requests.lockOp("candidate:merge", newer.id);
+  const run = await testWorkflow(defineBuild(deps()), { id: older.id, home }, { recorded: recordedUpTo("explore"), agents: {} });
+  expect(run.turns).toHaveLength(0);
+  expect(requests.get(older.id)).toMatchObject({ state: "received", waitingFor: newer.id });
+});
+
+test("a request that waits before building anything drops its worktree and starts again at intake", async () => {
+  git.changedFiles = [];
+  const first = file();
+  requests.update(first.id, () => ({ state: "building" }));
+  requests.lockOp("candidate:merge", first.id);
+  const second = file();
+  await testWorkflow(defineBuild(deps()), { id: second.id, home }, { agents: { planner: [answer(INTAKE, planned)] } });
+  expect(requests.get(second.id)).toMatchObject({ state: "received", waitingFor: first.id, redo: true });
+  expect(git.calls.at(-1)).toBe(`remove ${home}/worktrees/${second.id}`);
+});
+
+test("intake sees the open requests, and one it finds the same ends as its duplicate", async () => {
+  const first = file({ op: "candidate:merge" });
+  requests.update(first.id, () => ({ state: "building" }));
+  const second = file({ op: undefined, call: undefined, text: "combine two candidates into one" });
+  const same = answer(INTAKE, { kind: "same", request: first.id, reason: "it merges candidates too" });
+  const run = await testWorkflow(defineBuild(deps()), { id: second.id, home }, { agents: { planner: [same] } });
+  expect(run.turnsOf("planner")[0]!.prompt).toContain(`- ${first.id} (building, candidate:merge): merge two duplicate candidates`);
+  expect(requests.get(second.id)).toMatchObject({
+    state: "duplicate",
+    reason: "it merges candidates too",
+    result: { of: first.id },
+  });
+  expect(git.calls.at(-1)).toBe(`remove ${home}/worktrees/${second.id}`);
+});
+
+test("intake can't name a request it wasn't shown", async () => {
+  const r = file();
+  requests.update(r.id, () => ({ state: "building" }));
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    { agents: { planner: [answer(INTAKE, { kind: "same", request: "R-9999", reason: "the same" })] } },
+  );
+  expect(run.stopped).toMatchObject({ stage: "intake" });
+  expect(requests.get(r.id)!.state).toBe("building");
+});
+
+// ── merge ─────────────────────────────────────────────────────────────────────────────────────────
+
+test("when main moved, the op is checked again before it lands", async () => {
+  git.bases = ["moved"];
+  git.mainFiles = ["x/helpers/index.ts"];
+  const r = file();
+  const run = await testWorkflow(defineBuild(deps()), { id: r.id, home }, { recorded: recordedUpTo("check") });
+  // Verify and the repository's checks pass on the new main, so no agent is asked again.
+  expect(verified).toEqual(["candidate:merge"]);
+  expect(run.turnsOf("checker")).toHaveLength(0);
+  expect(run.value.state).toBe("done");
+});
+
+test("a fix made while re-checking after a rebase is committed before it lands", async () => {
+  git.bases = ["moved"];
+  verifies = [failed("broke on the new main"), passed()];
+  const r = file();
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    {
+      recorded: recordedUpTo("check"),
+      agents: { builder: done("fixed for the new main"), checker: approve },
+    },
+  );
+  // squash, rebase, re-check with a fix, then squash and rebase again before the fast-forward.
+  expect(git.calls.filter((c) => c.startsWith("squash"))).toHaveLength(2);
+  expect(git.calls.indexOf(`ff req/${r.id}`)).toBeGreaterThan(git.calls.lastIndexOf(`squash ${r.id} build candidate:merge`));
+  expect(run.value.state).toBe("done");
+});
+
+test("a merge redone after a block checks again against what was approved", async () => {
+  const r = file();
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    {
+      recorded: { ...recordedUpTo("check"), check: { revisions: 0, by: "builder", base: "approved-on-old-main" } },
+    },
+  );
+  expect(verified).toEqual(["candidate:merge"]);
+  expect(run.value.state).toBe("done");
+});
+
+test("a merge that landed before the run died is found on main", async () => {
+  git.empty = true;
+  git.landedAs = "f00d";
+  const r = file();
+  const run = await testWorkflow(defineBuild(deps()), { id: r.id, home }, { recorded: recordedUpTo("check"), agents: {} });
+  expect(run.value.state).toBe("done");
+  expect(requests.get(r.id)!.result!.commit).toBe("f00d");
+});
+
+test("another op that fails on main too is not this change's to fix", async () => {
+  git.changedFiles = ["x/helpers/index.ts"];
+  const opsDir = join(home, "worktrees", "R-0001", "x", "ops", "candidate-create");
+  mkdirSync(opsDir, { recursive: true });
+  writeFileSync(join(opsDir, "examples.json"), JSON.stringify([{ context: "acme", input: {} }]));
+  verifies = [passed(), failed("already broken", "candidate:create"), failed("already broken", "candidate:create")];
+  const r = file();
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    { agents: { planner: planning(), builder: building(), checker: approve } },
+  );
+  expect(verified).toEqual(["candidate:merge", "candidate:create", "candidate:create"]);
+  expect(run.value.state).toBe("done");
+});
+
+test("a retry's redo flag is cleared once a stage starts again", async () => {
+  const r = file();
+  requests.update(r.id, () => ({ state: "building", redo: true }));
+  await testWorkflow(defineBuild(deps()), { id: r.id, home }, { agents: { planner: planning(), builder: building(), checker: approve } });
+  expect(requests.get(r.id)!.redo).toBeUndefined();
+});
+
+test("a conflicting rebase goes to the builder", async () => {
+  git.conflicts = 1;
+  const r = file();
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    { recorded: recordedUpTo("check"), agents: { builder: done("resolved") } },
+  );
+  expect(run.turnsOf("builder")[0]!.prompt).toContain("x/helpers/index.ts");
+  expect(run.value.state).toBe("done");
+});
+
+test("a rebase the builder left unfinished stops the merge", async () => {
+  git.conflicts = 1;
+  git.rebasing = true;
+  const r = file();
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    { recorded: recordedUpTo("check"), agents: { builder: done("resolved") } },
+  );
+  expect(run.stopped).toMatchObject({ stage: "merge", reason: "the rebase on main was left unfinished" });
+});
+
+test("a fast-forward that loses a race rebases once more", async () => {
+  git.ffFailures = 1;
+  const r = file();
+  const run = await testWorkflow(defineBuild(deps()), { id: r.id, home }, { recorded: recordedUpTo("check"), agents: {} });
+  expect(git.calls.filter((c) => c === "rebase")).toHaveLength(2);
+  expect(run.value.state).toBe("done");
+});
+
+// ── repair ────────────────────────────────────────────────────────────────────────────────────────
+
+const repairOf = () => file({ kind: "repair", op: "candidate:create", failure: { step: "fill name", error: "Timeout", bundle: "/b/1" } });
+
+test("a repair that reproduces is patched, checked and merged", async () => {
+  const r = repairOf();
+  const run = await testWorkflow(
+    defineRepair(deps()),
+    { id: r.id, home },
+    {
+      agents: {
+        builder: [answer(DIAGNOSIS, { kind: "reproduced", diagnosis: "First Name is now Given Name" }), done("relabelled")],
+        checker: approve,
+      },
+    },
+  );
+  const [diagnose, patch] = run.turnsOf("builder");
+  expect(diagnose!.prompt).toContain("/b/1");
+  expect(diagnose!.prompt).toContain("never on the failed input's own records");
+  expect(patch!.prompt).toContain("goes through the step that failed");
+  expect(run.value).toEqual({ state: "done", summary: "repaired candidate:create (0 revision(s)): First Name is now Given Name" });
+  expect(git.calls).toContain(`squash ${r.id} repair candidate:create`);
+});
+
+test("a repair of a direct way is diagnosed from its calls, not a screenshot", async () => {
+  const r = file({
+    kind: "repair",
+    op: "candidate:create",
+    failure: { step: "search", error: "the direct way failed", bundle: "/b/2", fellBack: true },
+  });
+  const run = await testWorkflow(
+    defineRepair(deps()),
+    { id: r.id, home },
+    { agents: { builder: answer(DIAGNOSIS, { kind: "flaky", reason: "worked 5 of 5" }) } },
+  );
+  expect(run.turnsOf("builder")[0]!.prompt).toContain("without `--browser`");
+});
+
+test("a repair that can't be reproduced ends failed as flaky, freeing the op", async () => {
+  const r = repairOf();
+  const run = await testWorkflow(
+    defineRepair(deps()),
+    { id: r.id, home },
+    { agents: { builder: answer(DIAGNOSIS, { kind: "flaky", reason: "worked 5 of 5" }) } },
+  );
+  expect(run.value.state).toBe("failed");
+  expect(requests.get(r.id)!.reason).toContain("flaky");
+  expect(requests.lockOp("candidate:create", "R-9999")).toBeUndefined();
+  expect(git.calls.at(-1)).toStartWith("remove");
+});
+
+test("a repair waits for another request holding its op", async () => {
+  const holder = file({ op: "candidate:create" });
+  requests.update(holder.id, () => ({ state: "building" }));
+  requests.lockOp("candidate:create", holder.id);
+  const r = repairOf();
+  const run = await testWorkflow(defineRepair(deps()), { id: r.id, home }, { agents: {} });
+  expect(run.turns).toHaveLength(0);
+  expect(requests.get(r.id)).toMatchObject({ state: "received", waitingFor: holder.id });
+});
