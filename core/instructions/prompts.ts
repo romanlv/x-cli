@@ -106,7 +106,7 @@ const workspace = ({ request, paths }: PromptRun, role: string): string => md`
   - ${coreAuthoring(paths)}: how any op is written
   - ${paths.domainDir}/authoring.md: what is particular to ${request.domain.name}, which wins where the two differ, and which op is the reference
   - ${paths.domainDir}/knowledge/${request.domain.name}.md
-  - ${paths.domainDir}/knowledge/contexts/${request.context}.md, what is particular to this context (the account it signs in as), if it exists
+  - ${paths.domainDir}/knowledge/contexts/${request.context}.md, what is particular to this context (the account or tenant it signs in as), if it exists
 `;
 
 export const plannerInstructions = (run: PromptRun): string => md`
@@ -304,7 +304,10 @@ export const review = (run: PromptRun, op: string, summary: string, verified: Ve
        - an example in examples.json that isn't test data as authoring.md defines it
        - an op that reads every record and matches them itself: look in the app yourself for a search or filter that would do it, even when spec.md or notes.md says there is none; blocking unless notes.md shows each way tried
 
-    Each finding says where and what is wrong, and its severity: the builder fixes a minor one with nobody looking again. No findings approves it.${answers(request)}
+    Each finding says where and what is wrong, and how severe it is:
+    - blocking: the op is wrong, unsafe, or breaks the spec, the authoring rules or another op; it needs another look.
+    - minor: wording, a doc line, a name; the builder fixes it and nobody looks again.
+    No findings approves it.${answers(request)}
   `;
 };
 

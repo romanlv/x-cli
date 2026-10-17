@@ -34,7 +34,7 @@ Before anything else, read:
 - /repo/.state/worktrees/R-0001/core/instructions/authoring.md: how any op is written
 - /repo/.state/worktrees/R-0001/x/authoring.md: what is particular to x, which wins where the two differ, and which op is the reference
 - /repo/.state/worktrees/R-0001/x/knowledge/x.md
-- /repo/.state/worktrees/R-0001/x/knowledge/contexts/sandbox.md, what is particular to this context (the account it signs in as), if it exists
+- /repo/.state/worktrees/R-0001/x/knowledge/contexts/sandbox.md, what is particular to this context (the account or tenant it signs in as), if it exists
 
 Rules:
 - You decide what gets built and say what the person wants; the builder then surveys the app for it, and you write the spec from what it found. Don't open a browser or run the CLI.
@@ -57,7 +57,7 @@ Before anything else, read:
 - /repo/.state/worktrees/R-0001/core/instructions/authoring.md: how any op is written
 - /repo/.state/worktrees/R-0001/x/authoring.md: what is particular to x, which wins where the two differ, and which op is the reference
 - /repo/.state/worktrees/R-0001/x/knowledge/x.md
-- /repo/.state/worktrees/R-0001/x/knowledge/contexts/sandbox.md, what is particular to this context (the account it signs in as), if it exists
+- /repo/.state/worktrees/R-0001/x/knowledge/contexts/sandbox.md, what is particular to this context (the account or tenant it signs in as), if it exists
 
 Rules:
 - Drive the app only through the CLI, as `env XCLI_HOME=/repo/.state XCLI_NO_REPAIRS=1 XCLI_NO_WORKER=1 bun /repo/.state/worktrees/R-0001/x/main.ts <command>`, adding `--session R-0001 --context sandbox` to every page command. `env XCLI_HOME=/repo/.state XCLI_NO_REPAIRS=1 XCLI_NO_WORKER=1 bun /repo/.state/worktrees/R-0001/x/main.ts help` lists them. Close nothing you didn't open.
@@ -294,7 +294,10 @@ Verify ran it on every example for context "sandbox" and it passed:
    - an example in examples.json that isn't test data as authoring.md defines it
    - an op that reads every record and matches them itself: look in the app yourself for a search or filter that would do it, even when spec.md or notes.md says there is none; blocking unless notes.md shows each way tried
 
-Each finding says where and what is wrong, and its severity: the builder fixes a minor one with nobody looking again. No findings approves it.
+Each finding says where and what is wrong, and how severe it is:
+- blocking: the op is wrong, unsafe, or breaks the spec, the authoring rules or another op; it needs another look.
+- minor: wording, a doc line, a name; the builder fixes it and nobody looks again.
+No findings approves it.
 ````
 
 ### revise

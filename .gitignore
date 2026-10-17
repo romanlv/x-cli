@@ -5,3 +5,4 @@ node_modules
 .state/
 # A person's sign-in per context (.env.<context>), for context:login; never committed.
 .env*
+.claude/worktrees/
