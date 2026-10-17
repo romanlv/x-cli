@@ -3,10 +3,11 @@
 // FAKE_AWF says — "done", "crash" (dies without a word, as a killed run does) or "slow".
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
+import { envValue } from "../../core/env";
 import { Requests } from "../../core/requests";
 
 const args = process.argv.slice(2);
-const home = process.env.XCLI_HOME!;
+const home = envValue("HOME")!;
 const id = args.includes("--continue") ? args[args.indexOf("--continue") + 1]! : args.at(-1)!;
 appendFileSync(join(home, "awf-calls.jsonl"), `${JSON.stringify({ id, args, at: Date.now() })}\n`);
 const mode = process.env.FAKE_AWF ?? "done";

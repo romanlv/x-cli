@@ -9,6 +9,7 @@ import { existsSync, rmSync } from "node:fs";
 import { join, relative } from "node:path";
 import { type AgentRef, isAnswered, type JsonValue, type RuntimeSelection, type SandboxRef, type WorkflowContext } from "agentswf/workflow";
 import Type from "typebox";
+import { envName, envValue } from "../env";
 import * as prompts from "../instructions/prompts";
 import { opFromFolder } from "../names";
 import { isSignInQuestion, isTerminal, type RequestRecord, signInQuestion } from "../requests";
@@ -131,8 +132,8 @@ export type RunArgs = {
 export const prepareArgs = ({ argv }: { argv: readonly string[] }): RunArgs => {
   const id = argv[0];
   if (!id || !/^R-\d+$/.test(id)) throw new Error("usage: awf run <workflow> -- R-0012");
-  const home = process.env.XCLI_HOME;
-  if (!home) throw new Error("XCLI_HOME is not set: the worker starts these runs");
+  const home = envValue("HOME");
+  if (!home) throw new Error(`${envName("HOME")} is not set: the worker starts these runs`);
   return { id, home };
 };
 

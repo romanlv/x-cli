@@ -23,7 +23,7 @@ export default defineOp({
   async direct({ http, step, context }, input) {
     // plain HTTP on the saved cookies: no browser, no page
   },
-  async run({ wd, page, step }, input) {
+  async run({ app, page, step }, input) {
     // the browser way, as before
   },
 });

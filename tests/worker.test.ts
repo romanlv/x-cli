@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { envName } from "../core/env";
 import { Requests } from "../core/requests";
 import { runWorker } from "../core/worker";
 import { ROOT, tempHome } from "./helpers";
@@ -18,7 +19,7 @@ const calls = () =>
 beforeEach(() => {
   t = tempHome();
   requests = new Requests(t.home);
-  process.env.XCLI_HOME = t.home;
+  process.env[envName("HOME")] = t.home;
 });
 afterEach(() => {
   delete process.env.FAKE_AWF;

@@ -1,4 +1,6 @@
+import { dirname, join } from "node:path";
 import type { BrowserContext, Page } from "playwright";
+import { envValue } from "./env";
 
 export type SignInState = "signed-in" | "signed-out" | "elsewhere" | "unknown";
 
@@ -17,16 +19,16 @@ export interface Domain<Helpers = unknown> {
   name: string;
   /** The domain folder: `authoring.md`, `knowledge/`, `ops/`, `helpers/`. */
   dir: string;
-  /** The tool's checkout, the parent of `core/` and the domain folder. */
+  /** The tool's checkout, the parent of `core/` and the domain folder; `defineDomain` defaults it. */
   root: string;
   /**
    * Whether `root` is a build's worktree, where the CLI files no requests and starts no repairs.
    * Unset, a `.git` file (not folder) at `root` says so; the tests' fixture sets false.
    */
   worktree?: boolean;
-  /** Where contexts, sessions, requests and failures live; `<repo>/.state` for `x`. */
+  /** Where contexts, sessions, requests and failures live: `<root>/.state` unless HOME is set. */
   home: string;
-  /** The helper library ops get as `wd`. */
+  /** The helper library ops get as `app`. */
   helpers(page: Page, options: { contextUrl: string; dryRun: boolean }): Helpers;
   /**
    * Is the page signed in as this context? Called on a page that has loaded the context's
@@ -54,6 +56,28 @@ export interface Domain<Helpers = unknown> {
    * missing permission)? Returns that message, or undefined when it shows nothing of the kind.
    */
   refusal?(page: Page): Promise<string | undefined>;
+  /** An installed browser to run instead of Playwright's Chromium, such as "chrome", for an app that tells them apart. */
+  browserChannel?: string;
+  /** How many requests the worker builds at once (2); one for an app that limits each account. */
+  maxRunning?: number;
+  /**
+   * For an app that signs out an idle session: open pages are nudged every `pageEveryMs`, and while
+   * requests run the worker opens the app every `signInEveryMs` and saves the fresh cookies. Unset,
+   * neither happens.
+   */
+  keepAlive?: { pageEveryMs: number; signInEveryMs: number };
+  /** The attribute the app marks its controls with ("data-testid"): snapshots show it, and locators prefer it. */
+  testIdAttribute?: string;
+  /** False when ops may have no direct way, for an app that tells its own calls from anyone else's. */
+  directCalls?: boolean;
   /** Extra `page:<name>` commands the domain offers agents, such as `page:search` for X. */
   pageCommands?: Record<string, { usage: string; run(ctx: PageCommandContext, args: string[]): Promise<string | undefined> }>;
 }
+
+/** A domain with what core can work out filled in: its checkout is the domain folder's parent. */
+export const defineDomain = <Helpers>(
+  domain: Omit<Domain<Helpers>, "root" | "home"> & Partial<Pick<Domain<Helpers>, "root" | "home">>,
+): Domain<Helpers> => {
+  const root = domain.root ?? dirname(domain.dir);
+  return { ...domain, root, home: domain.home ?? envValue("HOME") ?? join(root, ".state") };
+};

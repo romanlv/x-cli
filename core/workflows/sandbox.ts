@@ -9,6 +9,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { InlineSandboxSpec } from "agentswf/workflow";
 import { browserEndpoint } from "../browser-server";
+import { envName } from "../env";
 import type { RequestRecord } from "../requests";
 import type { SandboxReach } from "./config";
 
@@ -22,7 +23,7 @@ export interface SandboxPaths {
 
 /** What the checks an agent runs need: the host's browser for the tests, and a temp directory it can write. */
 export const shellEnv = (paths: SandboxPaths): Record<string, string> => ({
-  XCLI_BROWSER: browserEndpoint(paths.browserSocket),
+  [envName("BROWSER")]: browserEndpoint(paths.browserSocket),
   TMPDIR: paths.sockets,
 });
 

@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { answer, reply, testWorkflow } from "agentswf/testing";
+import { ENV_PREFIX as P } from "../env";
 import { type RequestRecord, Requests } from "../requests";
 import { defineBuild } from "./build";
 import type { Deps, Git, Verified } from "./deps";
@@ -189,7 +190,7 @@ test("a new op goes through every stage, is merged, and the request ends done", 
   }
   // Agents call the worktree's CLI in the request's home, filing nothing.
   expect(run.agentOf("builder").instructions).toContain(
-    `env XCLI_HOME=${home} XCLI_NO_REPAIRS=1 XCLI_NO_WORKER=1 bun ${home}/worktrees/${r.id}/x/main.ts`,
+    `env ${P}HOME=${home} ${P}NO_REPAIRS=1 ${P}NO_WORKER=1 bun ${home}/worktrees/${r.id}/x/main.ts`,
   );
   // The planner drives no browser, and writes the spec from what explore found.
   expect(run.agentOf("planner").instructions).not.toContain("--session");
@@ -289,7 +290,7 @@ test("workflows.json puts the team in one sandbox, on the models it names", asyn
   // Their CLI keeps its state in the request's own home and reaches the host's browser by socket.
   const sockets = join(realpathSync("/tmp"), `wd-${r.id}`);
   expect(run.agentOf("builder").instructions).toContain(
-    `env XCLI_HOME=${home}/sandboxes/${r.id} XCLI_NO_REPAIRS=1 XCLI_NO_WORKER=1 XCLI_CONTEXTS_DIR=${home}/contexts XCLI_BROWSER=ws+unix://${sockets}/browser.sock:/browser TMPDIR=${sockets} bun`,
+    `env ${P}HOME=${home}/sandboxes/${r.id} ${P}NO_REPAIRS=1 ${P}NO_WORKER=1 ${P}CONTEXTS_DIR=${home}/contexts ${P}BROWSER=ws+unix://${sockets}/browser.sock:/browser TMPDIR=${sockets} bun`,
   );
   expect(run.turnsOf("builder")[0]!.prompt).toContain(`${home}/sandboxes/${r.id}/sessions/${r.id}/trace.jsonl`);
 });

@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import type { Page } from "playwright";
-import type { Domain, SignInState } from "../core/domain";
+import { type Domain, defineDomain, type SignInState } from "../core/domain";
+import { envNumber } from "../core/env";
 import { readPosts, SEL, type Xh, xHelpers } from "./helpers";
 
 const ORIGIN = "https://x.com";
@@ -57,7 +58,7 @@ const signInState = async (page: Page, contextUrl: string): Promise<SignInState>
   const switcher = page.locator(SEL.accountSwitcher).first();
   const signInButtons = page.locator(SEL.signInButtons).first();
   const password = page.locator('input[type="password"]').first();
-  const deadline = Date.now() + Number(process.env.XCLI_SIGNIN_WAIT_MS ?? 15_000);
+  const deadline = Date.now() + envNumber("SIGNIN_WAIT_MS", 15_000);
   for (;;) {
     const at = accountOf(page.url());
     if (await switcher.isVisible().catch(() => false)) {
@@ -74,14 +75,20 @@ const signInState = async (page: Page, contextUrl: string): Promise<SignInState>
   }
 };
 
-export const xDomain = (overrides: Partial<Domain<Xh>> = {}): Domain<Xh> => {
-  const root = join(import.meta.dir, "..");
-  return {
+const TABS = ["top", "latest", "people", "media"] as const;
+
+export const xDomain = (overrides: Partial<Domain<Xh>> = {}): Domain<Xh> =>
+  defineDomain({
     name: "x",
-    root,
     dir: import.meta.dir,
-    home: process.env.XCLI_HOME ?? join(root, ".state"),
+    root: join(import.meta.dir, ".."),
     helpers: (page) => xHelpers(page),
+    // X watches for automation and limits each account (knowledge/bot-detection.md): the installed
+    // Chrome, one request at a time, no calls of the ops' own, and no keep-alive nudges.
+    browserChannel: "chrome",
+    maxRunning: 1,
+    directCalls: false,
+    testIdAttribute: "data-testid",
     signInState,
     // No submitSignIn: X challenges automated logins, so a person always signs in in the window.
     appUrl(_signedInUrl, contextUrl) {
@@ -98,8 +105,8 @@ export const xDomain = (overrides: Partial<Domain<Xh>> = {}): Domain<Xh> => {
         usage: '"<query>" [top|latest|people|media]  open X search for a query (X\'s operators work: from:, since:, filter:)',
         async run({ page }, args) {
           if (!args[0]) throw new Error('give the query, such as "from:jack bitcoin"');
-          const tab = (args[1] ?? "latest") as "top" | "latest" | "people" | "media";
-          if (!["top", "latest", "people", "media"].includes(tab)) throw new Error(`no tab "${tab}" (tabs: top, latest, people, media)`);
+          const tab = (args[1] ?? "latest") as (typeof TABS)[number];
+          if (!TABS.includes(tab)) throw new Error(`no tab "${tab}" (tabs: ${TABS.join(", ")})`);
           await xHelpers(page).search(args[0], tab);
           return undefined;
         },
@@ -113,5 +120,4 @@ export const xDomain = (overrides: Partial<Domain<Xh>> = {}): Domain<Xh> => {
       },
     },
     ...overrides,
-  };
-};
+  });

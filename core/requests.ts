@@ -3,7 +3,8 @@
 // and the workflows all read and write it, so every change happens under one lock.
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { EXIT, raise } from "./output";
+import { raise } from "./errors";
+import { EXIT } from "./output";
 import { appendJsonLine, readJson, readJsonLines, timestamp, withLock, writeJson } from "./store";
 
 export type RequestKind = "intake" | "new" | "change" | "repair";

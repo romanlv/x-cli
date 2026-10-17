@@ -1,4 +1,4 @@
-// Playwright moves every X page shares. Ops call these as `wd`; an op that needs a move that isn't
+// Playwright moves every X page shares. Ops call these as `app`; an op that needs a move that isn't
 // here yet adds it here once it holds for every page, not in its own op.ts.
 //
 // X marks its controls with data-testid, which these target first. The ids here are a seed from

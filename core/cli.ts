@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { keepSignedIn, signIn } from "./browser";
 import { Contexts, savedCredentials } from "./contexts";
 import type { Domain } from "./domain";
-import { OpError } from "./errors";
+import { envName, envNumber, envValue } from "./env";
+import { OpError, outcomeOf, raise } from "./errors";
 import {
   commandLine,
   domainRef,
@@ -21,7 +22,7 @@ import {
   type RunEnv,
   runOp,
 } from "./ops";
-import { EXIT, fail, finish, guardStdout, type NextHint, type Outcome, OutcomeError, ok } from "./output";
+import { EXIT, fail, finish, guardStdout, type NextHint, type Outcome, ok } from "./output";
 import { isTerminal, type RequestRecord, type RequestState, Requests } from "./requests";
 import { CORE_PAGE_COMMANDS, pageCommand, runSessionDaemon, sessionContext } from "./session";
 import { ago, alive } from "./store";
@@ -126,7 +127,7 @@ const usage = (env: Env, ops: Map<string, OpEntry>): string => {
     `  ${cli} context:use <name>`,
     `  ${cli} context:remove <name>`,
     "",
-    "Exploring: a named session (--session or XCLI_SESSION) stays open between calls.",
+    `Exploring: a named session (--session or ${envName("SESSION")}) stays open between calls.`,
     ...pageLines,
     "",
     "--json prints { ok, data, error, next }. Exit: 0 done, 1 error, 2 bad input, 3 precondition,",
@@ -136,20 +137,21 @@ const usage = (env: Env, ops: Map<string, OpEntry>): string => {
 
 export const main = async (domain: Domain, argv = process.argv.slice(2)): Promise<never> => {
   guardStdout();
+  // The worker, its runs and their browser server are other processes: they read the browser from here.
+  if (domain.browserChannel) process.env[envName("BROWSER_CHANNEL")] ??= domain.browserChannel;
   const json = argv.includes("--json");
   const env: Env = {
     domain,
     cli: domain.name,
     contexts: new Contexts(domain.home, domain.name),
     requests: new Requests(domain.home),
-    fileRepairs: !isWorktree(domain) && !process.env.XCLI_NO_REPAIRS,
+    fileRepairs: !isWorktree(domain) && !envValue("NO_REPAIRS"),
     entry: [process.execPath, process.argv[1]!],
   };
   try {
     return await finish(await dispatch(env, argv), { json });
   } catch (err) {
-    if (err instanceof OutcomeError) return finish(err.outcome, { json });
-    if (err instanceof OpError) return finish(fail(err.message, err.exitCode, err.next), { json });
+    if (err instanceof OpError) return finish(outcomeOf(err), { json });
     const error = err instanceof Error ? err : new Error(String(err));
     return finish(fail(`${error.message}\n${(error.stack ?? "").split("\n").slice(1, 6).join("\n")}`), { json });
   }
@@ -208,11 +210,11 @@ const dispatch = async (env: Env, argv: string[]): Promise<Outcome> => {
       const username = (args.flags.username as string | undefined) ?? saved?.username;
       const password = (args.flags.password as string | undefined) ?? saved?.password;
       if (password !== undefined && username === undefined) raiseUsage("give --username with the password");
-      if (username !== undefined && !password) raiseUsage(`give the password: --password, or XCLI_PASSWORD in .env.${ctx.name}`);
+      if (username !== undefined && !password) raiseUsage(`give the password: --password, or PASSWORD in .env.${ctx.name}`);
       // Agents work in worktrees and never sign in; a person's credentials stay with the person.
       if (username !== undefined) refuseInWorktree(env, "a person signs in with a password");
       const credentials = username !== undefined ? { username, password: password! } : undefined;
-      await signIn(env.domain, contexts, ctx, { timeoutMs, headless: !!process.env.XCLI_HEADLESS_LOGIN, credentials });
+      await signIn(env.domain, contexts, ctx, { timeoutMs, headless: !!envValue("HEADLESS_LOGIN"), credentials });
       const continued = requests.signedIn(cli, ctx.name);
       if (continued.length === 0) return ok(`signed in to ${ctx.name}`);
       startWorker(env);
@@ -294,6 +296,7 @@ const dispatch = async (env: Env, argv: string[]): Promise<Outcome> => {
     }
     case "request:worker":
       await runWorker(env.domain.home, env.domain.root, {
+        maxRunning: envNumber("MAX_RUNNING", env.domain.maxRunning ?? 2),
         keepSignedIn: async (name) => {
           const ctx = contexts.list().contexts.find((c) => c.name === name);
           if (!ctx) return;
@@ -313,7 +316,7 @@ const dispatch = async (env: Env, argv: string[]): Promise<Outcome> => {
   if (command === "page" || command.startsWith("page:")) {
     const known = command in CORE_PAGE_COMMANDS || env.domain.pageCommands?.[command.slice(5)] !== undefined;
     if (!known) return fail(`unknown page command ${command}; see ${cli} help`, EXIT.USAGE);
-    const session = (args.global.session as string | undefined) ?? process.env.XCLI_SESSION ?? "default";
+    const session = (args.global.session as string | undefined) ?? envValue("SESSION") ?? "default";
     // A running session keeps its context; only an explicit --context can disagree with it.
     const ctx = contexts.resolve((args.global.context as string | undefined) ?? sessionContext(env.domain.home, session));
     return pageCommand(env.domain, env.entry, { session, context: ctx, headed: args.global.headed === true }, command, args.positionals);
@@ -322,9 +325,7 @@ const dispatch = async (env: Env, argv: string[]): Promise<Outcome> => {
   return fail(`unknown command "${command}"; ops are noun:verb, such as posts:search. See ${cli} help`, EXIT.USAGE);
 };
 
-const raiseUsage = (message: string): never => {
-  throw new OutcomeError(fail(message, EXIT.USAGE));
-};
+const raiseUsage = (message: string): never => raise(message, EXIT.USAGE);
 
 const firstLine = (text: string, max = 70): string => {
   const line = text.split("\n")[0]!;
@@ -334,7 +335,7 @@ const firstLine = (text: string, max = 70): string => {
 const getRequest = (env: Env, id: string | undefined): RequestRecord => {
   if (!id) raiseUsage("give a request id, such as R-0012");
   const record = env.requests.get(id!);
-  if (!record) throw new OutcomeError(fail(`no request ${id}`, EXIT.PRECONDITION, [{ hint: "list them", cmd: `${env.cli} requests` }]));
+  if (!record) return raise(`no request ${id}`, EXIT.PRECONDITION, [{ hint: "list them", cmd: `${env.cli} requests` }]);
   return record;
 };
 
@@ -640,7 +641,7 @@ const waitFor = async (env: Env, id: string, seconds: number, again?: string[]):
       }
       // A worker that died is started again by whoever is waiting on it.
       startWorker(env);
-      await new Promise((resolve) => setTimeout(resolve, Number(process.env.XCLI_POLL_MS ?? 2000)));
+      await new Promise((resolve) => setTimeout(resolve, envNumber("POLL_MS", 2000)));
     }
   } finally {
     clearInterval(ticker);

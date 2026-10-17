@@ -1,7 +1,9 @@
 // Failures that are not the op's fault. Triage files a repair for anything else an op throws, so
 // helpers throw these when they know better: a value the app doesn't offer is bad input, not a bug.
-import { EXIT, type NextHint } from "./output";
+// Commands end the same way: anything below one may throw an OpError, and the CLI prints it.
+import { EXIT, fail, type NextHint, type Outcome } from "./output";
 
+/** A failure with its exit code and what to run next. */
 export class OpError extends Error {
   constructor(
     message: string,
@@ -12,6 +14,13 @@ export class OpError extends Error {
     this.name = new.target.name;
   }
 }
+
+/** End the command (or op) with this failure. */
+export const raise = (message: string, exitCode: number = EXIT.ERROR, next?: NextHint[]): never => {
+  throw new OpError(message, exitCode, next);
+};
+
+export const outcomeOf = (err: OpError): Outcome => fail(err.message, err.exitCode, err.next);
 
 /** The caller asked for something that can't be: a value the app doesn't offer. Exit 2. */
 export class InputError extends OpError {

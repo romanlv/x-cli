@@ -5,6 +5,7 @@ import { dirname } from "node:path";
 import { type APIRequestContext, type Browser, type BrowserContext, chromium, type Page, request } from "playwright";
 import { type Context, type Contexts, loginHint, savedCredentials } from "./contexts";
 import type { Domain } from "./domain";
+import { envNumber, envValue } from "./env";
 import { BrowserError, InputError, PreconditionError } from "./errors";
 import { type NetworkEntry, recordNetwork } from "./network";
 import { progress } from "./output";
@@ -28,7 +29,7 @@ const VIEWPORT = { width: 1440, height: 900 };
  * out from the host's browser server, as the pages do: a sandbox reaches no network of its own.
  */
 export const openHttp = async (ctx: Context, timeout: number): Promise<{ http: APIRequestContext; close(): Promise<void> }> => {
-  if (!process.env.XCLI_BROWSER) {
+  if (!envValue("BROWSER")) {
     const http = await request.newContext({ storageState: ctx.authFile, timeout });
     return { http, close: () => http.dispose() };
   }
@@ -56,14 +57,14 @@ export const saveSession = async (context: Pick<BrowserContext, "storageState">,
  * "chrome", for an app that tells the two apart. Headless, it runs Chrome's own headless mode.
  */
 export const launchOptions = (headed: boolean): { headless: boolean; channel?: string } => {
-  const channel = process.env.XCLI_BROWSER_CHANNEL;
+  const channel = envValue("BROWSER_CHANNEL");
   return { headless: !headed, ...(channel ? { channel } : {}) };
 };
 
 /** XCLI_BROWSER: a browser on the host, for a sandboxed build, where Chromium can't start. */
 export const launch = async (headed: boolean): Promise<Browser> => {
   try {
-    const endpoint = process.env.XCLI_BROWSER;
+    const endpoint = envValue("BROWSER");
     if (endpoint) return await chromium.connect(endpoint);
     const options = launchOptions(headed);
     return await chromium.launch(options).catch(async (err: Error) => {
@@ -175,7 +176,7 @@ export const signIn = async (
     } else progress(`sign in to ${ctx.url} in the browser window; waiting up to ${Math.round(wait / 60_000)} minutes`);
     const deadline = Date.now() + wait;
     // A form still asking for the password well after it was sent turned it down.
-    const refusedBy = Date.now() + Number(process.env.XCLI_SIGNIN_WAIT_MS ?? 20_000);
+    const refusedBy = Date.now() + envNumber("SIGNIN_WAIT_MS", 20_000);
     const password = page.locator('input[type="password"]').first();
     for (;;) {
       if (page.isClosed()) throw new PreconditionError("the sign-in window was closed before signing in");

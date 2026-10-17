@@ -2,14 +2,13 @@
 // two at a time. Filing a request starts it if none is running; it exits once nothing is running.
 import { existsSync, mkdirSync, openSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { envName, envNumber, envValue } from "./env";
 import { isSignInQuestion, isTerminal, type RequestRecord, Requests } from "./requests";
 import { alive, readJson, withLock, writeJson } from "./store";
 
-/** XCLI_MAX_RUNNING: a domain whose app limits each account may want one. */
-export const MAX_RUNNING = Number(process.env.XCLI_MAX_RUNNING ?? 2);
 // An attempt's whole budget. Each turn has its own timeout and revise rounds are capped, so this only
 // stops a run that hangs; a build that explores, writes and revises runs past an hour.
-export const RUN_TIMEOUT = process.env.XCLI_RUN_TIMEOUT ?? "3h";
+export const RUN_TIMEOUT = envValue("RUN_TIMEOUT") ?? "3h";
 
 export const workflowFile = (root: string, request: Pick<RequestRecord, "kind">): string =>
   join(root, "core", "workflows", request.kind === "repair" ? "repair.ts" : "build.ts");
@@ -161,7 +160,7 @@ export const describeRun = (view: RunView, turns: TurnLine[], now = Date.now()):
 export const runActivity = async (
   home: string,
   id: string,
-  awf = process.env.XCLI_AWF ?? "awf",
+  awf = envValue("AWF") ?? "awf",
 ): Promise<{ text: string; key: string }[] | undefined> => {
   try {
     const dir = runDir(home, id);
@@ -208,7 +207,7 @@ const claudeToken = (root: string): Record<string, string> => {
 
 /** Start a worker in the background unless one is running. `entry` re-invokes this CLI. */
 export const ensureWorker = (home: string, entry: string[]): void => {
-  if (process.env.XCLI_NO_WORKER) return;
+  if (envValue("NO_WORKER")) return;
   mkdirSync(home, { recursive: true });
   const pidFile = join(home, "worker.json");
   withLock(join(home, "worker.lock"), () => {
@@ -218,7 +217,7 @@ export const ensureWorker = (home: string, entry: string[]): void => {
     const child = Bun.spawn([...entry, "request:worker"], {
       detached: true,
       stdio: ["ignore", log, log],
-      env: { ...process.env, XCLI_HOME: home },
+      env: { ...process.env, [envName("HOME")]: home },
     });
     child.unref();
     writeJson(pidFile, { pid: child.pid, startedAt: new Date().toISOString() });
@@ -242,18 +241,21 @@ const ready = (requests: Requests, request: RequestRecord): boolean => {
 };
 
 /** How often the worker keeps the sign-in of a context with a running request alive. */
-export const KEEP_SIGNED_IN_MS = Number(process.env.XCLI_KEEP_SIGNED_IN_MS ?? 5 * 60_000);
+export const KEEP_SIGNED_IN_MS = envNumber("KEEP_SIGNED_IN_MS", 5 * 60_000);
 
 export const runWorker = async (
   home: string,
   root: string,
   {
     pollMs = 2000,
-    awf = process.env.XCLI_AWF ?? "awf",
+    awf = envValue("AWF") ?? "awf",
     keepSignedIn,
     keepSignedInMs = KEEP_SIGNED_IN_MS,
+    maxRunning = 2,
   }: {
     pollMs?: number;
+    /** Runs at once: the domain's `maxRunning`, or MAX_RUNNING from the environment. */
+    maxRunning?: number;
     awf?: string;
     /** Touch a context's session so an app's idle timeout doesn't sign it out mid-run. */
     keepSignedIn?: (context: string) => Promise<unknown>;
@@ -280,7 +282,7 @@ export const runWorker = async (
       child = Bun.spawn([awf, ...args], {
         cwd: root,
         stdio: ["ignore", "inherit", "inherit"],
-        env: { ...process.env, ...claudeToken(root), XCLI_HOME: home },
+        env: { ...process.env, ...claudeToken(root), [envName("HOME")]: home },
         onExit: (_, code) => {
           running.delete(request.id);
           settle(requests, home, request.id, code);
@@ -344,7 +346,7 @@ export const runWorker = async (
     let started = busy;
     let intaking = requests.list({ state: "building" }).some(inIntake);
     for (const request of queue()) {
-      if (started >= MAX_RUNNING) break;
+      if (started >= maxRunning) break;
       const intake = startsAtIntake(home, request);
       if (intake && intaking) continue;
       start(request);

@@ -32,9 +32,9 @@ export default defineOp({
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200, description: "at most this many posts (20)" })),
   }),
   output: Type.Array(Type.Object({ url: Type.String(), handle: Type.String(), time: Type.String(), text: Type.String() })),
-  async run({ wd, step }, input) {
-    await step("open search", () => wd.search(input.query, "latest"));
-    const posts = await step("read posts", () => wd.posts({ limit: input.limit ?? 20 }));
+  async run({ app, step }, input) {
+    await step("open search", () => app.search(input.query, "latest"));
+    const posts = await step("read posts", () => app.posts({ limit: input.limit ?? 20 }));
     return posts.map(({ url, handle, time, text }) => ({ url, handle, time: time ?? "", text }));
   },
 });
@@ -46,22 +46,22 @@ This is a sketch, not a built op: the first real one replaces it here.
 
 - **Bound every read.** A timeline never ends, so every op that scrolls takes a `limit` (with a
   default) or a stopping point (`--since`, a post id), and the help says which.
-- **The helpers** (`wd`) are `open`, `search`, `profile`, `posts`, `graphql` and `errors`.
+- **The helpers** (`app`) are `open`, `search`, `profile`, `posts`, `graphql` and `errors`.
 - **Target `data-testid`**, then role and name, then text. X's class names change with every release.
 - **Errors**: `InputError` for a bad handle or a limit out of range; `PreconditionError` for an
   account or post that isn't there, or a protected account; `RefusedError` for a rate limit or a
-  locked account. `wd.open()` already turns X's rate-limit and lock messages into `RefusedError`.
+  locked account. `app.open()` already turns X's rate-limit and lock messages into `RefusedError`.
 - **Find with X's own search** and its operators (`from:`, `to:`, `since:`, `until:`, `filter:`,
   `min_faves:`).
 - **No `direct` way: read what the page's own calls returned.** X tells its own app's calls from
   anyone else's (a per-call signature, query ids that change with every release, Chrome's TLS
   fingerprint), so an op never makes calls of its own and never writes a `direct` function: a
   separate HTTP client is the riskiest thing this tool could do to the account. Instead `run` reads
-  the GraphQL responses the page fetches: `wd.graphql("SearchTimeline", () => wd.search(q))` returns
+  the GraphQL responses the page fetches: `app.graphql("SearchTimeline", () => app.search(q))` returns
   the JSON the screen is drawn from, which carries more than the DOM (exact counts, ids, full text).
   Scrolling fetches the next page of it. Find the operation with `page:requests` while exploring, as
   the `direct-calls` skill says, and write its shape in notes.md. Where the DOM has all the op needs,
-  reading the DOM (`wd.posts`) is fine.
+  reading the DOM (`app.posts`) is fine.
 
 ## Pace and limits
 
@@ -70,7 +70,7 @@ X limits each account, not each op, and a locked account stops every op. So:
 - One page at a time per account: no parallel calls, no parallel pages.
 - Scroll and fetch at a person's pace (the helpers' `posts` already does); never tighten it.
 - A rate limit is `RefusedError`, with when it resets when X says so. Never retry in a loop.
-  `wd.graphql` does this for X's error codes 88 (rate limited) and 326 (locked).
+  `app.graphql` does this for X's error codes 88 (rate limited) and 326 (locked).
 - A challenge, a captcha or the login page mid-run is the person's to clear, by hand: stop, never
   try to get past it.
 

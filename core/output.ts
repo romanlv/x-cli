@@ -1,3 +1,4 @@
+import { envValue } from "./env";
 /** Exit codes, as DESIGN.md's Interface table lists them. 0 to 4 and 6 match airkit; 5 is new. */
 export const EXIT = {
   OK: 0,
@@ -37,17 +38,6 @@ export const fail = (error: string, exitCode: number = EXIT.ERROR, next?: NextHi
 
 export const ok = (data: unknown, next?: NextHint[]): Outcome => ({ ok: true, data, next });
 
-/** Thrown anywhere below a command to end it with this outcome. */
-export class OutcomeError extends Error {
-  constructor(readonly outcome: Outcome) {
-    super(outcome.error ?? "failed");
-  }
-}
-
-export const raise = (error: string, exitCode: number = EXIT.ERROR, next?: NextHint[]): never => {
-  throw new OutcomeError(fail(error, exitCode, next));
-};
-
 type Writer = (text: string, cb: () => void) => unknown;
 
 // Captured before `guardStdout` diverts the stream, so the result still reaches the real stdout.
@@ -62,7 +52,7 @@ export const guardStdout = (): void => {
 
 /** Progress for a person watching; never part of the result. */
 export const progress = (line: string): void => {
-  if (!process.env.XCLI_QUIET) stderr(`${line}\n`, () => {});
+  if (!envValue("QUIET")) stderr(`${line}\n`, () => {});
 };
 
 const write = (writer: Writer, text: string): Promise<void> => new Promise((resolve) => void writer(text, resolve));

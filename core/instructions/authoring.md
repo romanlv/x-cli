@@ -28,14 +28,14 @@ export default defineOp({
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200, description: "at most this many (20)" })),
   }),
   output: Type.Array(Type.Object({ id: Type.String(), name: Type.String(), url: Type.String() })),
-  async run({ wd, step }, input) {
-    await step("search", () => wd.search(input.query));
-    return step("read results", () => wd.results({ limit: input.limit ?? 20 }));
+  async run({ app, step }, input) {
+    await step("search", () => app.search(input.query));
+    return step("read results", () => app.results({ limit: input.limit ?? 20 }));
   },
 });
 ```
 
-`wd` is the domain's helper library; the reference op shows the real calls.
+`app` is the domain's helper library; the reference op shows the real calls.
 
 - **Name every step.** A failure says `failed at "read results"`, and its bundle holds a screenshot
   and the page's controls at that moment.
@@ -44,7 +44,7 @@ export default defineOp({
 - **Inputs are flags.** Each property of `input` is a `--flag` (camelCase becomes kebab-case), and
   its `description` is the help text. Values that differ between contexts are inputs or come from
   `knowledge/contexts/<context>.md`, never constants in `op.ts`.
-- **Use the helpers** in `helpers/` (`wd`). When a move holds for every screen of the app and isn't
+- **Use the helpers** in `helpers/` (`app`). When a move holds for every screen of the app and isn't
   there, add it there, not in the op. A move written out in two ops is a helper.
 - **Target what the app keeps stable**: its test ids or automation ids first, then a field's label,
   then role and name. Never generated class names. The exploring trace (`page:trace`) has the

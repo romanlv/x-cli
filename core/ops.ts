@@ -11,7 +11,8 @@ import type { Domain } from "./domain";
 
 export { OP_NAME, opFolder } from "./names";
 
-import { DryRunReached, InputError, isBrowserFailure, OpError } from "./errors";
+import { envNumber } from "./env";
+import { DryRunReached, InputError, isBrowserFailure, OpError, outcomeOf } from "./errors";
 import { OP_NAME, opFolder } from "./names";
 import { formatNetwork, type NetworkEntry } from "./network";
 import { EXIT, fail, type Outcome, progress, shellQuote } from "./output";
@@ -21,7 +22,7 @@ import { appendJsonLine, readJson, readJsonLines, timestamp, writeJson } from ".
 
 export interface OpContext<Helpers> {
   /** The domain's helper library. */
-  wd: Helpers;
+  app: Helpers;
   page: Page;
   /** A named step: progress while it runs, and a failure names it. */
   step<T>(name: string, fn: () => Promise<T>): Promise<T>;
@@ -187,7 +188,7 @@ export const callArgv = (op: string, input: Record<string, unknown>): string[] =
 export const commandLine = (cli: string, argv: string[]): string => [cli, ...argv.map(shellQuote)].join(" ");
 
 /** How long one Playwright action waits before the step fails. */
-const STEP_TIMEOUT_MS = Number(process.env.XCLI_STEP_TIMEOUT_MS ?? 15_000);
+const STEP_TIMEOUT_MS = envNumber("STEP_TIMEOUT_MS", 15_000);
 
 /** Playwright colours its call logs; the ledger and bundles are read as plain text. */
 // biome-ignore lint/suspicious/noControlCharactersInRegex: the escape character is what an ANSI colour code starts with.
@@ -308,7 +309,7 @@ export const runOp = async (
     } catch (err) {
       if (err instanceof OpError) {
         history({ ok: false, step: current, error: err.message.split("\n")[0], exit: err.exitCode, direct: true });
-        return fail(err.message, err.exitCode, err.next);
+        return outcomeOf(err);
       }
       const message = plain(err instanceof Error ? err.message : String(err));
       fellBack = { step: current ?? "direct", error: new Error(`the direct way failed${current ? ` at "${current}"` : ""}: ${message}`) };
@@ -325,7 +326,7 @@ export const runOp = async (
     open = await openSignedIn(domain, env.contexts, ctx, { headed });
   } catch (err) {
     // No op code has run yet: a sign-in or a browser that won't start is never the op's fault.
-    if (err instanceof OpError) return fail(err.message, err.exitCode, err.next);
+    if (err instanceof OpError) return outcomeOf(err);
     throw err;
   }
   // The direct way met a session that had ended, not a changed call: it runs again, signed in.
@@ -341,10 +342,10 @@ export const runOp = async (
   if (fellBack) progress(`› ${fellBack.error.message.split("\n")[0]}; in the browser`);
 
   open.page.setDefaultTimeout(STEP_TIMEOUT_MS);
-  const wd = domain.helpers(open.page, { contextUrl: ctx.appUrl, dryRun });
+  const app = domain.helpers(open.page, { contextUrl: ctx.appUrl, dryRun });
 
   try {
-    const outcome = checked(await entry.definition.run({ wd, page: open.page, step, context, dryRun }, input));
+    const outcome = checked(await entry.definition.run({ app, page: open.page, step, context, dryRun }, input));
     history({ ok: true, ...(fellBack ? { fellBack: fellBack.step } : {}) });
     if (fellBack) {
       const { step: at, error } = fellBack;
@@ -385,7 +386,7 @@ export const runOp = async (
 export const triage = async (env: RunEnv, ctx: Context, open: OpenBrowser, err: unknown): Promise<Outcome | undefined> => {
   const { domain } = env;
   const { page } = open;
-  if (err instanceof OpError) return fail(err.message, err.exitCode, err.next);
+  if (err instanceof OpError) return outcomeOf(err);
   if (isBrowserFailure(err)) return fail(`the browser failed: ${(err as Error).message.split("\n")[0]}`, EXIT.ERROR);
   const refused = domain.refusal && !page.isClosed() ? await domain.refusal(page).catch(() => undefined) : undefined;
   if (refused) return fail(`${domain.name} refused it: ${refused}`, EXIT.REFUSED);

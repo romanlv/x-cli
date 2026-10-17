@@ -2,7 +2,9 @@
 // account or tenant of it) and a saved sign-in.
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { EXIT, raise } from "./output";
+import { envValue } from "./env";
+import { raise } from "./errors";
+import { EXIT } from "./output";
 import { readJson, withLock, writeJson } from "./store";
 
 export interface ContextEntry {
@@ -32,19 +34,19 @@ export interface Context extends ContextEntry {
 const NAME = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 
 /**
- * A person's username and password for a context, from `.env.<context>` in the checkout (or
- * XCLI_CREDENTIALS_DIR): XCLI_USERNAME and XCLI_PASSWORD. The file is gitignored, so a
+ * A person's username and password for a context, from `.env.<context>` in the checkout (or the
+ * CREDENTIALS_DIR setting): USERNAME and PASSWORD. The file is gitignored, so a
  * build's worktree never has one, and agents never sign in.
  */
 export const savedCredentials = (root: string, context: string): { username: string; password: string } | undefined => {
-  const file = join(process.env.XCLI_CREDENTIALS_DIR ?? root, `.env.${context}`);
+  const file = join(envValue("CREDENTIALS_DIR") ?? root, `.env.${context}`);
   if (!existsSync(file)) return undefined;
   const vars: Record<string, string> = {};
   for (const line of readFileSync(file, "utf8").split("\n")) {
     const m = /^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line);
     if (m) vars[m[1]!] = m[2]!.replace(/^(["'])(.*)\1$/, "$2");
   }
-  const { XCLI_USERNAME: username, XCLI_PASSWORD: password } = vars;
+  const { USERNAME: username, PASSWORD: password } = vars;
   return username && password ? { username, password } : undefined;
 };
 
@@ -56,7 +58,7 @@ export class Contexts {
 
   /** XCLI_CONTEXTS_DIR: a sandboxed build reads its context's sign-in where it is, read-only. */
   private get dir(): string {
-    return process.env.XCLI_CONTEXTS_DIR ?? join(this.home, "contexts");
+    return envValue("CONTEXTS_DIR") ?? join(this.home, "contexts");
   }
 
   private get file(): string {

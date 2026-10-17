@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { envName } from "../core/env";
 import { Requests } from "../core/requests";
 import { ROOT, tempHome } from "./helpers";
 
@@ -23,7 +24,7 @@ beforeEach(() => {
 afterEach(() => t.cleanup());
 
 const run = async (args: string[]) => {
-  const child = Bun.spawn(["bun", entry, ...args], { env: { ...process.env, XCLI_HOME: t.home }, stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn(["bun", entry, ...args], { env: { ...process.env, [envName("HOME")]: t.home }, stdout: "pipe", stderr: "pipe" });
   const [stderr, code] = await Promise.all([new Response(child.stderr).text(), child.exited]);
   return { code, stderr };
 };

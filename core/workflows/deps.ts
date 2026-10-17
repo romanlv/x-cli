@@ -8,6 +8,7 @@ import type { SandboxSpec } from "agentswf/workflow";
 import { $ } from "bun";
 import { browserEndpoint } from "../browser-server";
 import { savedCredentials } from "../contexts";
+import { ENV_PREFIX, envName } from "../env";
 import { opFolder } from "../names";
 import { type RequestRecord, Requests } from "../requests";
 import { type SandboxPaths, sandboxSpec } from "./sandbox";
@@ -146,12 +147,12 @@ export const entryIn = (worktree: string, request: RequestRecord): string =>
  * filed or worker started from a build.
  */
 export const cliEnv = (request: RequestRecord, sandbox?: SandboxPaths): Record<string, string> => ({
-  XCLI_HOME: sandbox?.home ?? request.domain.home,
-  XCLI_NO_REPAIRS: "1",
-  XCLI_NO_WORKER: "1",
+  [envName("HOME")]: sandbox?.home ?? request.domain.home,
+  [envName("NO_REPAIRS")]: "1",
+  [envName("NO_WORKER")]: "1",
   ...(sandbox && {
-    XCLI_CONTEXTS_DIR: join(request.domain.home, "contexts"),
-    XCLI_BROWSER: browserEndpoint(sandbox.browserSocket),
+    [envName("CONTEXTS_DIR")]: join(request.domain.home, "contexts"),
+    [envName("BROWSER")]: browserEndpoint(sandbox.browserSocket),
     TMPDIR: sandbox.sockets,
   }),
 });
@@ -159,7 +160,7 @@ export const cliEnv = (request: RequestRecord, sandbox?: SandboxPaths): Record<s
 const runCli = async (worktree: string, request: RequestRecord, args: string[], sandbox?: SandboxPaths) => {
   const child = Bun.spawn(["bun", entryIn(worktree, request), ...args], {
     cwd: worktree,
-    env: { ...process.env, ...cliEnv(request, sandbox), XCLI_QUIET: "1" },
+    env: { ...process.env, ...cliEnv(request, sandbox), [envName("QUIET")]: "1" },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -252,7 +253,7 @@ export const realChecks = async (worktree: string, scope: CheckScope = "full"): 
     await $`rsync -a --exclude .git --exclude node_modules --exclude .state --exclude .awf ${`${worktree}/`} ${`${copy}/`}`.quiet();
     symlinkSync(join(worktree, "node_modules"), join(copy, "node_modules"));
     // The checks set up their own homes and switches; the run's must not leak into them.
-    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("XCLI_")));
+    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith(ENV_PREFIX)));
     const result = await $`bun run ${script}`.cwd(copy).env(env).quiet().nothrow();
     const output = checkFailures(`${result.stdout.toString()}\n${result.stderr.toString()}`.trim()).replaceAll(copy, worktree);
     return { ok: result.exitCode === 0, output };
@@ -298,7 +299,7 @@ export const realDeps: Deps = {
     // From the checkout, not a worktree: only there does the CLI take credentials.
     const child = Bun.spawn(["bun", entryIn(request.domain.root, request), "context:login", request.context], {
       cwd: request.domain.root,
-      env: { ...process.env, ...cliEnv(request), XCLI_QUIET: "1" },
+      env: { ...process.env, ...cliEnv(request), [envName("QUIET")]: "1" },
       stdout: "ignore",
       stderr: "ignore",
     });

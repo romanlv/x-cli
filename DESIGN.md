@@ -19,7 +19,7 @@ The tool talks to X through the browser on the person's own sign-in. Once signed
 
 ## Core and domain
 
-`core/` never imports from `x/`. It is the template's machinery, unchanged but for names (`XCLI_*` environment variables) and one hook: a domain's `appUrl` is also given the context's URL.
+`core/` never imports from `x/`. It is the template's machinery, unchanged but for names (`XCLI_*` environment variables, all named in `core/env.ts`) and one hook: a domain's `appUrl` is also given the context's URL.
 
 ```
 core/                       the reusable part: knows nothing of X
@@ -174,7 +174,7 @@ An op exports one `defineOp` with a typed input, a typed output and a `run` func
 
 - **Steps are named** so a failure points at one (`failed at "read posts"`), and each step leaves a screenshot and an accessibility snapshot when it fails.
 - **Output is read from X**, never echoed from input.
-- **`wd` is the helper library** (`x/helpers/`), for moves every X page shares: open a page, run a search, open a profile, scroll a timeline collecting posts, read X's refusals. X marks controls with `data-testid`, which the helpers target first.
+- **`app` is the helper library** (`x/helpers/`), for moves every X page shares: open a page, run a search, open a profile, scroll a timeline collecting posts, read X's refusals. X marks controls with `data-testid`, which the helpers target first.
 - **Every read is bounded**: a `limit` with a default, or a stopping point, since a timeline never ends.
 - **Ops are the same for every account.** What differs (a list id, the account's own handle) comes in as input or from the account's knowledge file.
 
@@ -216,8 +216,8 @@ Playwright does all the browser work, behind the CLI.
 | `x page:fetch <url> [Name: value ...] [body]` | one call on the session's sign-in, as an op's direct way would make it; prints status, content type and body |
 
 - **Exploring leaves a trace.** Every `page` command is logged with the locator Playwright used, to `trace.jsonl` in the run. Writing `op.ts` starts from what worked, not from the agent's memory of it.
-- **The page's own calls, not direct ones.** core lets an op have a `direct` way, plain HTTP on the saved cookies with no browser. X ops don't use it: X signs each call, rotates its query ids and sits behind Cloudflare's fingerprinting, so a separate client is what it flags (`x/knowledge/bot-detection.md`). Instead an op reads the GraphQL responses the page fetches (`wd.graphql`), which carry more than the screen shows. The builder finds them with `page:requests`, as the `direct-calls` skill says.
-- **Installed Chrome, one request at a time.** `x/main.ts` sets `XCLI_BROWSER_CHANNEL=chrome` (core falls back to Playwright's Chromium when Chrome isn't installed) and `XCLI_MAX_RUNNING=1`, so one request's browsers use the account at a time.
+- **The page's own calls, not direct ones.** core lets an op have a `direct` way, plain HTTP on the saved cookies with no browser. X ops don't use it: X signs each call, rotates its query ids and sits behind Cloudflare's fingerprinting, so a separate client is what it flags (`x/knowledge/bot-detection.md`). Instead an op reads the GraphQL responses the page fetches (`app.graphql`), which carry more than the screen shows. The builder finds them with `page:requests`, as the `direct-calls` skill says.
+- **Installed Chrome, one request at a time.** `x/domain.ts` sets `browserChannel: "chrome"` (core falls back to Playwright's Chromium when Chrome isn't installed) and `maxRunning: 1`, so one request's browsers use the account at a time.
 - **Signed in for as long as runs need it.** While a request runs, the worker opens the app every five minutes and saves the fresh cookies, and open sessions nudge their page (template behaviour; whether X needs it is an open question).
 - **A sign-in check runs before every op:** is the context's session still signed in to its URL. If not, it exits 3 with how to sign in again, and no request is filed, because no agent can fix a login.
 
@@ -314,7 +314,7 @@ The tool should get faster at building with every op, because what one op learns
 | All of X | `knowledge/x.md` | "a post's permalink is the link around its `time`" |
 | Detection and limits | `knowledge/bot-detection.md` | what X watches for, rate-limit headers, what keeps a low profile |
 | One account | `knowledge/contexts/<context>.md` | its lists, its own handle |
-| Code | `helpers/` | `wd.posts({ limit })`, written once and used by every op |
+| Code | `helpers/` | `app.posts({ limit })`, written once and used by every op |
 
 Promotion moves knowledge up a level, as in the template: a note not specific to its op goes into `x.md` too; a move written out in two ops becomes a helper; a person's answer is written where it belongs.
 

@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { envName } from "../core/env";
 
 export const ROOT = join(import.meta.dir, "..");
 /** The real CLI over the test ops in tests/fixtures/x/ops. */
@@ -25,12 +26,12 @@ export const cli = async (home: string, args: string[], env: Record<string, stri
     cwd: ROOT,
     env: {
       ...process.env,
-      XCLI_HOME: home,
-      XCLI_NO_WORKER: "1",
-      XCLI_HEADLESS_LOGIN: "1",
-      XCLI_SIGNIN_WAIT_MS: "2000",
-      XCLI_STEP_TIMEOUT_MS: "2000",
-      XCLI_POLL_MS: "100",
+      [envName("HOME")]: home,
+      [envName("NO_WORKER")]: "1",
+      [envName("HEADLESS_LOGIN")]: "1",
+      [envName("SIGNIN_WAIT_MS")]: "2000",
+      [envName("STEP_TIMEOUT_MS")]: "2000",
+      [envName("POLL_MS")]: "100",
       ...env,
     },
     stdout: "pipe",

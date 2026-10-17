@@ -9,7 +9,8 @@ import { join } from "node:path";
 import { type OpenBrowser, openSignedIn } from "./browser";
 import type { Context, Contexts } from "./contexts";
 import type { Domain } from "./domain";
-import { OpError } from "./errors";
+import { envName, envNumber } from "./env";
+import { OpError, outcomeOf } from "./errors";
 import { formatCall, formatNetwork } from "./network";
 import { plain } from "./ops";
 import { EXIT, fail, type Outcome } from "./output";
@@ -17,9 +18,9 @@ import { formatNode, formatSnapshot, refLocator, type Snapshot, type SnapshotNod
 import { alive, appendJsonLine, readJson, timestamp, writeJson } from "./store";
 
 export const SESSION_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
-const IDLE_MS = Number(process.env.XCLI_SESSION_IDLE_MS ?? 30 * 60_000);
+const IDLE_MS = envNumber("SESSION_IDLE_MS", 30 * 60_000);
 /** How often an open session nudges its page, so the app's own idle timer never fires. */
-const STAY_ACTIVE_MS = Number(process.env.XCLI_STAY_ACTIVE_MS ?? 4 * 60_000);
+const STAY_ACTIVE_MS = envNumber("STAY_ACTIVE_MS", 4 * 60_000);
 
 export interface SessionState {
   pid: number;
@@ -156,7 +157,7 @@ const startSession = async (
     const child = Bun.spawn([...entry, "page:daemon", "--session", session, "--context", context.name, ...(headed ? ["--headed"] : [])], {
       detached: true,
       stdio: ["ignore", log, log],
-      env: { ...process.env, XCLI_HOME: home },
+      env: { ...process.env, [envName("HOME")]: home },
     });
     child.unref();
     return await waitForStart(home, session, child);
@@ -200,7 +201,7 @@ export const runSessionDaemon = async (
   try {
     open = await openSignedIn(domain, contexts, context, { headed, network: { bodies: true, during: () => during } });
   } catch (err) {
-    const outcome = err instanceof OpError ? fail(err.message, err.exitCode, err.next) : fail((err as Error).message);
+    const outcome = err instanceof OpError ? outcomeOf(err) : fail((err as Error).message);
     writeJson(stateFile(home, session), { ...base, error: JSON.stringify(outcome) });
     // The CLI that started it has its answer; a daemon with no browser has nothing left to serve.
     process.exit(1);

@@ -7,9 +7,8 @@ import { launch } from "../core/browser";
 import { callOf, parseArgs } from "../core/cli";
 import { Contexts } from "../core/contexts";
 import type { Domain } from "../core/domain";
-import { InputError } from "../core/errors";
+import { InputError, OpError } from "../core/errors";
 import { callArgv, loadOps, type OpEntry, opHelp, parseInput } from "../core/ops";
-import { OutcomeError } from "../core/output";
 import { Requests } from "../core/requests";
 import { formatSnapshot, suggestLocator, takeSnapshot } from "../core/snapshot";
 import { awfArgs, describeRun, formatCost, formatDuration, RUN_TIMEOUT, runUsage } from "../core/worker";
@@ -129,8 +128,8 @@ describe("contexts", () => {
     expect(contexts.resolve(undefined).name).toBe("acme");
     expect(contexts.resolve(undefined).url).toBe("https://x.com/acme");
     expect(contexts.use("beta").name).toBe("beta");
-    expect(() => contexts.add("Bad Name", "https://x")).toThrow(OutcomeError);
-    expect(() => contexts.add("ok", "not a url")).toThrow(OutcomeError);
+    expect(() => contexts.add("Bad Name", "https://x")).toThrow(OpError);
+    expect(() => contexts.add("ok", "not a url")).toThrow(OpError);
     expect(() => contexts.resolve("nope")).toThrow('no context "nope" (contexts: acme, beta)');
   });
 
@@ -138,7 +137,7 @@ describe("contexts", () => {
     try {
       new Contexts(t.home, "x").resolve(undefined);
     } catch (err) {
-      expect((err as OutcomeError).outcome.exitCode).toBe(3);
+      expect((err as OpError).exitCode).toBe(3);
       return;
     }
     throw new Error("expected a failure");
