@@ -44,6 +44,9 @@ export default defineOp({
 - **Inputs are flags.** Each property of `input` is a `--flag` (camelCase becomes kebab-case), and
   its `description` is the help text. Values that differ between contexts are inputs or come from
   `knowledge/contexts/<context>.md`, never constants in `op.ts`.
+  An input can't take a name every command already takes for itself (`context`, `request`,
+  `timeout`, `json`, `help`, `wait`, `headed`, `dry-run`, `browser`, `input-json`): the CLI refuses
+  such an op.
 - **Use the helpers** in `helpers/` (`app`). When a move holds for every screen of the app and isn't
   there, add it there, not in the op. A move written out in two ops is a helper.
 - **Target what the app keeps stable**: its test ids or automation ids first, then a field's label,

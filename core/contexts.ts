@@ -7,9 +7,6 @@ import { raise } from "./errors";
 import { EXIT } from "./output";
 import { readJson, withLock, writeJson } from "./store";
 
-// cli.ts and the workflows read a context's credentials from here.
-export { savedCredentials } from "./credentials";
-
 export interface ContextEntry {
   /** What the person gave: the app's URL for this context, or its sign-in page. */
   url: string;

@@ -10,15 +10,12 @@ import { type Context, type Contexts, loginHint } from "./contexts";
 import { type DirectContext, type FellBack, tryDirect } from "./direct";
 import type { Domain } from "./domain";
 import { DryRunReached, InputError, isBrowserFailure, OpError, outcomeOf } from "./errors";
-import { OP_NAME, opFolder } from "./names";
+import { isCliNoun, kebab, OP_NAME, opFolder } from "./names";
 import { formatNetwork, type NetworkEntry } from "./network";
 import { EXIT, fail, firstLine, type Outcome, plain, progress, shellQuote } from "./output";
 import type { DomainRef, Requests } from "./requests";
 import { formatSnapshot, takeSnapshot } from "./snapshot";
 import { appendJsonLine, readJson, readJsonLines, timestamp, writeJson } from "./store";
-
-// cli.ts reads op names from here.
-export { OP_NAME, opFolder } from "./names";
 
 export interface OpContext<Helpers> {
   /** The domain's helper library. */
@@ -52,9 +49,6 @@ export const defineOpFor =
   <I extends TObject, O extends TSchema>(definition: OpDefinition<I, O, Helpers>): OpDefinition<I, O, Helpers> =>
     definition;
 
-/** The CLI's own commands use these nouns, so no op can. */
-export const RESERVED_NOUNS = ["context", "request", "page", "op"];
-
 export interface OpEntry {
   name: string;
   dir: string;
@@ -85,7 +79,7 @@ export const loadOps = async (domain: Domain): Promise<{ ops: Map<string, OpEntr
       if (!definition?.name || !OP_NAME.test(definition.name) || opFolder(definition.name) !== folder) {
         throw new Error(`op.ts must export defineOp({ name: "<noun>:<verb>" }) matching its folder ${folder}`);
       }
-      if (RESERVED_NOUNS.includes(definition.name.split(":")[0]!)) throw new Error(`the noun of ${definition.name} is the CLI's own`);
+      if (isCliNoun(definition.name)) throw new Error(`the noun of ${definition.name} is the CLI's own`);
       if (definition.direct && domain.directCalls === false) {
         throw new Error(`${definition.name} has a direct way, but ${domain.name} ops make no calls of their own (directCalls: false)`);
       }
@@ -96,8 +90,6 @@ export const loadOps = async (domain: Domain): Promise<{ ops: Map<string, OpEntr
   }
   return { ops, broken };
 };
-
-const kebab = (key: string): string => key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 
 const allowedValues = (schema: TSchema): string[] | undefined => {
   const s = schema as { enum?: unknown[]; anyOf?: { const?: unknown }[]; const?: unknown };

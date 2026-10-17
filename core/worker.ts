@@ -7,8 +7,6 @@ import { envName, envValue } from "./env";
 import { isSignInQuestion, isTerminal, type RequestRecord, Requests } from "./requests";
 import { alive, readJson, timestamp, withLock, writeJson } from "./store";
 
-export { FIRST_STAGE } from "./awf";
-
 /**
  * Record the worker's pid under the lock, unless another worker alive has it: `start` returns the
  * pid to record. A worker `ensureWorker` started finds its own pid there.

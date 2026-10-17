@@ -12,9 +12,9 @@
 // The worktree and the op's lock are taken between stages, so every attempt has them.
 
 import { existsSync } from "node:fs";
+import { WORKFLOWS } from "../awf";
 import * as prompts from "../instructions/prompts";
 import { OP_NAME } from "../names";
-import { FIRST_STAGE } from "../worker";
 import { opDirIn, realDeps } from "./deps";
 import { ask, DONE, defineRequestWorkflow, EXPLORED, INTAKE, LIMITS, land } from "./shared";
 
@@ -25,7 +25,7 @@ export const defineBuild = defineRequestWorkflow(
 
     // Intake decides whether there is anything to build; a duplicate costs one short turn.
     const plan = await run.stage(
-      FIRST_STAGE.build,
+      WORKFLOWS.build.firstStage,
       INTAKE,
       (p) => (p.kind === "build" ? `${p.change ? "change" : "new"} ${p.op}` : `${p.kind}: ${p.reason}`),
       async () => {

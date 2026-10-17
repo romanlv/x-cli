@@ -18,8 +18,6 @@ export const WORKFLOWS = {
   repair: { file: "repair.ts", firstStage: "diagnose", intake: false },
 } as const;
 
-export const FIRST_STAGE = { build: WORKFLOWS.build.firstStage, repair: WORKFLOWS.repair.firstStage } as const;
-
 export const workflowOf = (request: Pick<RequestRecord, "kind">): (typeof WORKFLOWS)[keyof typeof WORKFLOWS] =>
   WORKFLOWS[request.kind === "repair" ? "repair" : "build"];
 

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import type { SandboxSpec } from "agentswf/workflow";
 import { $ } from "bun";
-import { savedCredentials } from "../contexts";
+import { savedCredentials } from "../credentials";
 import { ENV_PREFIX, envName } from "../env";
 import { opFolder } from "../names";
 import type { RequestRecord } from "../requests";

@@ -7,8 +7,9 @@
 // diagnose ─┬─ flaky ─▶ failed
 //           └─ reproduced ─▶ patch ─▶ check ⟲ ─▶ merge ─▶ done
 // The worktree and the op's lock are taken between stages, so every attempt has them.
+
+import { WORKFLOWS } from "../awf";
 import * as prompts from "../instructions/prompts";
-import { FIRST_STAGE } from "../worker";
 import { realDeps } from "./deps";
 import { ask, DIAGNOSIS, DONE, defineRequestWorkflow, LIMITS, land } from "./shared";
 
@@ -20,7 +21,7 @@ export const defineRepair = defineRequestWorkflow(
     await run.lock(op);
 
     const diagnosed = await run.stage(
-      FIRST_STAGE.repair,
+      WORKFLOWS.repair.firstStage,
       DIAGNOSIS,
       (d) => (d.kind === "reproduced" ? d.diagnosis : `flaky: ${d.reason}`),
       async () => ask(run, await team.builder(), DIAGNOSIS, "diagnose", prompts.diagnose(run, op, failure), LIMITS.longTurnMs),
