@@ -1,17 +1,16 @@
-// What a build or repair run does outside its agents: git, running the CLI to verify an op, and the
-// request ledger. Injected, so a workflow test swaps them for fakes and no repository or browser is
-// touched.
+// What a build or repair run does outside its agents: git, running the CLI to verify an op, the
+// repository's checks, signing in and the sandbox. Injected, so a workflow test swaps them for fakes
+// and no repository or browser is touched.
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { join, relative } from "node:path";
 import type { SandboxSpec } from "agentswf/workflow";
 import { $ } from "bun";
-import { browserEndpoint } from "../browser-server";
 import { savedCredentials } from "../contexts";
 import { ENV_PREFIX, envName } from "../env";
 import { opFolder } from "../names";
-import { type RequestRecord, Requests } from "../requests";
-import { type SandboxPaths, sandboxSpec } from "./sandbox";
+import type { RequestRecord } from "../requests";
+import { type SandboxPaths, sandboxSpec, shellEnv } from "./sandbox";
 
 export interface VerifyRun {
   input: Record<string, unknown>;
@@ -56,7 +55,8 @@ export interface Git {
 
 /** The fast checks run every round; the full ones (the slow e2e suite too) once before approval. */
 export type CheckScope = "fast" | "full";
-export const CHECK_SCRIPT: Record<CheckScope, string> = { fast: "ci:fast", full: "ci:check" };
+/** The repository's scripts the workflows run or point agents to: the checks, the sandbox's, the fixer. */
+export const SCRIPTS = { fast: "ci:fast", full: "ci:check", sandbox: "ci:sandbox", fix: "lint:fix" } as const;
 
 export interface Deps {
   git: Git;
@@ -73,7 +73,6 @@ export interface Deps {
   signIn(request: RequestRecord): Promise<boolean>;
   /** Ready the agents' sandbox: their home and socket directory, and the host's browser. Safe to repeat. */
   sandbox(request: RequestRecord, worktree: string, paths: SandboxPaths): Promise<SandboxSpec>;
-  ledger(home: string): Pick<Requests, "get" | "list" | "update" | "lockOp" | "unlockOp">;
 }
 
 const git = async (cwd: string, ...args: string[]): Promise<string> => {
@@ -138,9 +137,25 @@ export const realGit: Git = {
   },
 };
 
-/** The domain's entry point inside the worktree: `<worktree>/x/main.ts`. */
-export const entryIn = (worktree: string, request: RequestRecord): string =>
-  join(worktree, relative(request.domain.root, request.domain.dir), "main.ts");
+/** The domain folder inside a worktree, or inside the checkout itself: `<worktree>/x`. */
+export const domainIn = (worktree: string, request: RequestRecord): string =>
+  join(worktree, relative(request.domain.root, request.domain.dir));
+
+/** The domain's entry point inside a worktree: `<worktree>/x/main.ts`. */
+export const entryIn = (worktree: string, request: RequestRecord): string => join(domainIn(worktree, request), "main.ts");
+
+export const opDirIn = (domainDir: string, op: string): string => join(domainDir, "ops", opFolder(op));
+
+export interface Example {
+  context: string;
+  input: Record<string, unknown>;
+}
+
+/** An op's examples.json; none when it has no such file yet. */
+export const examplesIn = (opDir: string): Example[] => {
+  const file = join(opDir, "examples.json");
+  return existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Example[]) : [];
+};
 
 /**
  * The environment the CLI runs in for a run and its agents: the request's home, and no requests
@@ -150,11 +165,7 @@ export const cliEnv = (request: RequestRecord, sandbox?: SandboxPaths): Record<s
   [envName("HOME")]: sandbox?.home ?? request.domain.home,
   [envName("NO_REPAIRS")]: "1",
   [envName("NO_WORKER")]: "1",
-  ...(sandbox && {
-    [envName("CONTEXTS_DIR")]: join(request.domain.home, "contexts"),
-    [envName("BROWSER")]: browserEndpoint(sandbox.browserSocket),
-    TMPDIR: sandbox.sockets,
-  }),
+  ...(sandbox && { [envName("CONTEXTS_DIR")]: join(request.domain.home, "contexts"), ...shellEnv(sandbox) }),
 });
 
 const runCli = async (worktree: string, request: RequestRecord, args: string[], sandbox?: SandboxPaths) => {
@@ -174,16 +185,13 @@ const stable = (value: unknown): string =>
     v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b))) : v,
   ) ?? "";
 
-export const realVerify = async (worktree: string, request: RequestRecord, op: string): Promise<Verified> => {
-  const file = join(worktree, relative(request.domain.root, request.domain.dir), "ops", opFolder(op), "examples.json");
-  const examples = existsSync(file)
-    ? (JSON.parse(readFileSync(file, "utf8")) as { context: string; input: Record<string, unknown> }[])
-    : [];
-  const mine = examples.filter((e) => e.context === request.context);
+const verify = async (worktree: string, request: RequestRecord, op: string): Promise<Verified> => {
+  const dir = opDirIn(domainIn(worktree, request), op);
+  const mine = examplesIn(dir).filter((e) => e.context === request.context);
   const runs: VerifyRun[] = [];
   let signedOut = false;
   // An op with a direct way runs each example both ways, so the browser way it falls back to works too.
-  const opFile = join(dirname(file), "op.ts");
+  const opFile = join(dir, "op.ts");
   const direct = existsSync(opFile) && /^\s*(async\s+)?direct\s*[(:]/m.test(readFileSync(opFile, "utf8"));
   const ways = direct ? [false, true] : [false];
   for (const [example, browser] of mine.flatMap((e) => ways.map((b) => [e, b] as const))) {
@@ -223,7 +231,7 @@ export const realVerify = async (worktree: string, request: RequestRecord, op: s
 };
 
 /** The lines of a failed check run worth reading: each failure and error with what follows it, then the end. */
-export const checkFailures = (output: string): string => {
+const checkFailures = (output: string): string => {
   const all = output.split("\n");
   const keep = new Set<number>();
   all.forEach((line, i) => {
@@ -242,11 +250,11 @@ export const checkFailures = (output: string): string => {
  * The repository's own checks (its `ci:check` script), on a copy of the worktree without its git
  * link: the tool behaves differently inside a worktree, and its tests should see a plain checkout.
  */
-export const realChecks = async (worktree: string, scope: CheckScope = "full"): Promise<{ ok: boolean; output: string }> => {
+const checks = async (worktree: string, scope: CheckScope): Promise<{ ok: boolean; output: string }> => {
   const pkg = join(worktree, "package.json");
   const scripts = existsSync(pkg) ? ((JSON.parse(readFileSync(pkg, "utf8")) as { scripts?: Record<string, string> }).scripts ?? {}) : {};
   // A repository without fast checks runs its full ones every round.
-  const script = scripts[CHECK_SCRIPT[scope]] ? CHECK_SCRIPT[scope] : scripts["ci:check"] ? "ci:check" : undefined;
+  const script = scripts[SCRIPTS[scope]] ? SCRIPTS[scope] : scripts[SCRIPTS.full] ? SCRIPTS.full : undefined;
   if (!script) return { ok: true, output: "" };
   const copy = mkdtempSync(join(tmpdir(), "checks-"));
   try {
@@ -287,8 +295,8 @@ const ensureBrowser = async (socket: string): Promise<void> => {
 
 export const realDeps: Deps = {
   git: realGit,
-  verify: realVerify,
-  checks: realChecks,
+  verify,
+  checks,
   async closeSessions(worktree, request, sessions, sandbox) {
     if (!existsSync(entryIn(worktree, request))) return;
     for (const session of sessions)
@@ -317,5 +325,4 @@ export const realDeps: Deps = {
     await ensureBrowser(paths.browserSocket);
     return sandboxSpec(request, worktree, paths);
   },
-  ledger: (home) => new Requests(home),
 };

@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { RuntimeSelection } from "agentswf/workflow";
 
-export const CONFIG_FILE = "workflows.json";
+const CONFIG_FILE = "workflows.json";
 
 export const ROLES = ["planner", "builder", "checker", "troubleshooter"] as const;
 export type Role = (typeof ROLES)[number];

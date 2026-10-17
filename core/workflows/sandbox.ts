@@ -28,7 +28,8 @@ export const shellEnv = (paths: SandboxPaths): Record<string, string> => ({
 });
 
 export const sandboxPaths = (request: RequestRecord): SandboxPaths => {
-  const sockets = join(realpathSync("/tmp"), `wd-${request.id}`);
+  // Named for the CLI, cut short: a session's socket path goes under it.
+  const sockets = join(realpathSync("/tmp"), `${request.domain.name.slice(0, 8)}-${request.id}`);
   return { home: join(request.domain.home, "sandboxes", request.id), sockets, browserSocket: join(sockets, "browser.sock") };
 };
 

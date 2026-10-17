@@ -5,24 +5,48 @@
 // So what must hold on every attempt sits between stages: the worktree, the op's lock, recording how
 // the request ended. And each prompt carries the whole brief, since agents start fresh each attempt;
 // prompts.ts writes them.
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join, relative } from "node:path";
-import { type AgentRef, isAnswered, type JsonValue, type RuntimeSelection, type SandboxRef, type WorkflowContext } from "agentswf/workflow";
+import {
+  type AgentRef,
+  defineExecutableWorkflow,
+  isAnswered,
+  type JsonValue,
+  type SandboxRef,
+  type WorkflowContext,
+  type WorkflowMeta,
+} from "agentswf/workflow";
 import Type from "typebox";
 import { envName, envValue } from "../env";
 import * as prompts from "../instructions/prompts";
 import { opFromFolder } from "../names";
-import { isSignInQuestion, isTerminal, type RequestRecord, signInQuestion } from "../requests";
-import { loadConfig, type WorkflowConfig } from "./config";
-import { type CheckScope, cliEnv, type Deps, entryIn, type Verified } from "./deps";
+import { isSignInQuestion, isTerminal, type RequestRecord, Requests, signInQuestion } from "../requests";
+import { loadConfig, type Role, type WorkflowConfig } from "./config";
+import { type CheckScope, cliEnv, type Deps, domainIn, entryIn, examplesIn, type Verified } from "./deps";
 import { type SandboxPaths, sandboxPaths, shellEnv, widen } from "./sandbox";
 
-/** Revise rounds at most, whoever has them, so a run that keeps finding something new still ends. */
-export const MAX_ROUNDS = 8;
+const MINUTE = 60_000;
 
-/** Where a round's check stopped: 0 verify, 1 fast checks, 2 review, 3 full checks; and how many problems there. */
+/** What bounds a run, so one that keeps finding something new, or failing the same way, still ends. */
+export const LIMITS = {
+  /** Revise rounds at most, whoever has them. */
+  rounds: 8,
+  /** Sign-ins from the checkout's .env file, so a wrong password doesn't loop. */
+  signIns: 2,
+  /** Merge attempts while main keeps moving under the rebase or the fast-forward. */
+  merges: 4,
+  /** A turn: intake, which only reads; most turns; and those that drive the app at length (explore, write, diagnose). */
+  shortTurnMs: 10 * MINUTE,
+  turnMs: 30 * MINUTE,
+  longTurnMs: 40 * MINUTE,
+};
+
+/** How far a round's check got, in the order it runs them; fast and full are the checks' scopes. */
+const AT = { verify: 0, fast: 1, review: 2, full: 3 } as const;
+
+/** Where a round's check stopped, and how many problems there. */
 interface Standing {
-  at: number;
+  at: (typeof AT)[keyof typeof AT];
   count: number;
 }
 /**
@@ -30,25 +54,20 @@ interface Standing {
  * afresh, so reaching the review again counts.
  */
 const progressed = (now: Standing, before: Standing): boolean =>
-  now.at > before.at || (now.at === before.at && now.count < before.count) || (before.at === 3 && now.at === 2);
+  now.at > before.at || (now.at === before.at && now.count < before.count) || (before.at === AT.full && now.at === AT.review);
 
-const MINUTE = 60_000;
-
-// ── Answers ───────────────────────────────────────────────────────────────────────────────────────
+// ── Answers, which are also the stages' results ───────────────────────────────────────────────────
 const strict = { additionalProperties: false } as const;
-/** Any turn may end with the one question only a person can answer. */
+/** The one question only a person can answer, which `ask` lets any turn end with. */
 export const QUESTION = Type.Object({ kind: Type.Literal("question"), question: Type.String() }, strict);
 
 export const INTAKE = Type.Union([
   Type.Object(
     {
       kind: Type.Literal("build"),
-      op: Type.String({ description: "noun:verb, lowercase, no hyphen in the noun: candidate:merge" }),
+      op: Type.String({ description: "noun:verb, lowercase, no hyphen in the noun" }),
       change: Type.Boolean({ description: "true when the op exists and this changes it" }),
-      summary: Type.String({
-        description:
-          "the intent, in a few sentences: what the person wants and why, what they expect back, what is unclear; nothing about which screens, since nobody has opened the app",
-      }),
+      summary: Type.String({ description: "the intent, in a few sentences" }),
     },
     strict,
   ),
@@ -63,21 +82,16 @@ export const INTAKE = Type.Union([
   ),
   Type.Object({ kind: Type.Literal("deferred"), reason: Type.String() }, strict),
   Type.Object({ kind: Type.Literal("declined"), reason: Type.String() }, strict),
-  QUESTION,
 ]);
-export const DONE = Type.Union([Type.Object({ kind: Type.Literal("done"), summary: Type.String() }, strict), QUESTION]);
-const EXPLORE_DONE = Type.Object({ kind: Type.Literal("done"), summary: Type.String() }, strict);
-const MISSING = Type.Object(
-  { kind: Type.Literal("missing"), reason: Type.String({ description: "what was tried, and why none serves" }) },
-  strict,
-);
-/** The explore stage's result: the way picked, or none serves. */
-export const EXPLORE_RESULT = Type.Union([EXPLORE_DONE, MISSING]);
-export const EXPLORED = Type.Union([EXPLORE_DONE, MISSING, QUESTION]);
+export const DONE = Type.Object({ kind: Type.Literal("done"), summary: Type.String() }, strict);
+/** The way explore picked, or that none serves. */
+export const EXPLORED = Type.Union([
+  DONE,
+  Type.Object({ kind: Type.Literal("missing"), reason: Type.String({ description: "what was tried, and why none serves" }) }, strict),
+]);
 export const DIAGNOSIS = Type.Union([
   Type.Object({ kind: Type.Literal("reproduced"), diagnosis: Type.String() }, strict),
   Type.Object({ kind: Type.Literal("flaky"), reason: Type.String() }, strict),
-  QUESTION,
 ]);
 /** A review: no blocking finding approves; minor ones are fixed without another review. */
 export const REVIEW = Type.Object(
@@ -98,38 +112,27 @@ export const REVIEW = Type.Object(
   },
   strict,
 );
+export type Finding = Type.Static<typeof REVIEW>["findings"][number];
 
-export type Answer<S extends Type.TSchema> = Extract<Type.Static<S>, JsonValue>;
+/** The schema `ask` sends: its answers, and the question beside them. */
+export const orQuestion = <S extends Type.TSchema>(schema: S): Type.TUnion<[S, typeof QUESTION]> =>
+  Type.Union([...(Type.IsUnion(schema) ? schema.anyOf : [schema]), QUESTION]) as unknown as Type.TUnion<[S, typeof QUESTION]>;
 
-// Stage results: what a continue reuses.
-export const INTAKE_RESULT = Type.Union([
-  Type.Object({ kind: Type.Literal("build"), op: Type.String(), change: Type.Boolean(), summary: Type.String() }, strict),
-  Type.Object(
-    {
-      kind: Type.Literal("ended"),
-      state: Type.Union([Type.Literal("duplicate"), Type.Literal("deferred"), Type.Literal("declined")]),
-      reason: Type.String(),
-      command: Type.Optional(Type.String()),
-      of: Type.Optional(Type.String()),
-    },
-    strict,
-  ),
-]);
-export const SUMMARY = Type.Object({ summary: Type.String() }, strict);
+type Answer<S extends Type.TSchema> = Extract<Type.Static<S>, JsonValue>;
+
 /** `base` is the main commit the approval was given on: merge checks again when main has moved past it. */
-export const CHECKED = Type.Object({ revisions: Type.Number(), by: Type.String(), base: Type.String() }, strict);
+const CHECKED = Type.Object({ revisions: Type.Number(), by: Type.String(), base: Type.String() }, strict);
 type Approval = Omit<Type.Static<typeof CHECKED>, "base">;
-export const MERGED = Type.Object({ commit: Type.String() }, strict);
-export const RESULT = Type.Object({ state: Type.String(), summary: Type.String() }, strict);
-export type Result = Type.Static<typeof RESULT>;
+const MERGED = Type.Object({ commit: Type.String() }, strict);
+export type Result = { state: string; summary: string };
 
 // ── The run ───────────────────────────────────────────────────────────────────────────────────────
-export type RunArgs = {
+type RunArgs = {
   id: string;
   home: string;
 };
 
-export const prepareArgs = ({ argv }: { argv: readonly string[] }): RunArgs => {
+const prepareArgs = ({ argv }: { argv: readonly string[] }): RunArgs => {
   const id = argv[0];
   if (!id || !/^R-\d+$/.test(id)) throw new Error("usage: awf run <workflow> -- R-0012");
   const home = envValue("HOME");
@@ -164,12 +167,11 @@ const envLine = (env: Record<string, string>): string =>
 export const pathsFor = (request: RequestRecord, config: WorkflowConfig): Paths => {
   const worktree = join(request.domain.home, "worktrees", request.id);
   const sandbox = config.sandbox ? sandboxPaths(request) : undefined;
-  const env = envLine(cliEnv(request, sandbox));
   return {
     worktree,
     branch: `req/${request.id}`,
-    domainDir: join(worktree, relative(request.domain.root, request.domain.dir)),
-    cli: `env ${env} bun ${entryIn(worktree, request)}`,
+    domainDir: domainIn(worktree, request),
+    cli: `env ${envLine(cliEnv(request, sandbox))} bun ${entryIn(worktree, request)}`,
     session: request.id,
     trace: join(sandbox?.home ?? request.domain.home, "sessions", request.id, "trace.jsonl"),
     ...(sandbox && { sandbox }),
@@ -177,16 +179,21 @@ export const pathsFor = (request: RequestRecord, config: WorkflowConfig): Paths 
   };
 };
 
-export type Ledger = ReturnType<Deps["ledger"]>;
-
 /** One request's run: its stages keep the ledger's stage current, and a block or an end records itself. */
 export class RequestRun {
+  readonly ledger: Requests;
+  #config?: WorkflowConfig;
+  #paths?: Paths;
+  #signIns = 0;
+
   constructor(
     readonly workflow: WorkflowContext,
     readonly deps: Deps,
-    readonly ledger: Ledger,
     readonly id: string,
-  ) {}
+    home: string,
+  ) {
+    this.ledger = new Requests(home);
+  }
 
   get request(): RequestRecord {
     const request = this.ledger.get(this.id);
@@ -194,16 +201,16 @@ export class RequestRun {
     return request;
   }
 
-  #config?: WorkflowConfig;
-
   /** workflows.json, as it was when the run first asked: one run never changes models or sandbox midway. */
   get config(): WorkflowConfig {
     this.#config ??= loadConfig(this.request.domain.root);
     return this.#config;
   }
 
+  /** From the request's id, domain and context, which a run never changes. */
   get paths(): Paths {
-    return pathsFor(this.request, this.config);
+    this.#paths ??= pathsFor(this.request, this.config);
+    return this.#paths;
   }
 
   stage<S extends Type.TSchema>(
@@ -218,16 +225,14 @@ export class RequestRun {
     }) as Promise<Type.Static<S>>;
   }
 
-  /** Stop the run blocked on one question; `request:answer` continues it from this stage. */
-  #signIns = 0;
-
-  /** Sign the context in again from its .env file, twice a run at most, so a wrong password doesn't loop. */
+  /** Sign the context in again from its .env file, a few times a run at most. */
   async signInAgain(): Promise<boolean> {
-    if (this.#signIns >= 2) return false;
+    if (this.#signIns >= LIMITS.signIns) return false;
     this.#signIns++;
     return this.deps.signIn(this.request);
   }
 
+  /** Stop the run blocked on one question; `request:answer` continues it from this stage. */
   block(question: string): never {
     this.ledger.update(this.id, () => ({ state: "blocked", question }));
     return this.workflow.stop(`blocked: ${question}`);
@@ -259,13 +264,17 @@ export class RequestRun {
       .filter((r) => r.id !== this.id && !isTerminal(r.state));
   }
 
-  /** End the request without building: deferred, declined, duplicate, or failed. Safe to repeat. */
-  async end(state: "deferred" | "declined" | "duplicate" | "failed", reason: string, result?: RequestRecord["result"]): Promise<Result> {
+  /** End the request, built or not: record how, free its op, and clean up. Safe to repeat. */
+  async end(
+    state: "done" | "deferred" | "declined" | "duplicate" | "failed",
+    summary: string,
+    result?: RequestRecord["result"],
+  ): Promise<Result> {
     const { op } = this.request;
-    this.ledger.update(this.id, () => ({ state, reason, result, pid: undefined, stage: undefined }));
+    this.ledger.update(this.id, () => ({ state, reason: summary, result, pid: undefined, stage: undefined }));
     if (op) this.ledger.unlockOp(op, this.id);
     await this.cleanUp();
-    return { state, summary: reason };
+    return { state, summary };
   }
 
   async cleanUp(): Promise<void> {
@@ -282,27 +291,38 @@ export const cleanUpAfter = async (deps: Deps, request: RequestRecord, config: W
 };
 
 /**
- * Ask, and return the answer. A question blocks the request on it; so does a turn stuck on a
- * permission prompt or a missing login, which only a person can clear. Any other turn without an
- * answer stops the run, which the worker records failed and `request:retry` continues.
+ * A workflow over one request, as the worker starts it: `awf run <file> --id R-0012 -- R-0012`, the
+ * run's id the request's. The worktree is there on every attempt before `body` runs.
  */
-export const ask = async <S extends Type.TSchema>(
+export const defineRequestWorkflow = (meta: WorkflowMeta, body: (run: RequestRun, team: Team) => Promise<Result>) => (deps: Deps) =>
+  defineExecutableWorkflow<RunArgs, Result>({
+    definition: {
+      meta,
+      run: async (workflow, { id, home }) => {
+        const run = new RequestRun(workflow, deps, id, home);
+        await deps.git.ensureWorktree(run.request.domain.root, run.paths.worktree, run.paths.branch);
+        return body(run, openTeam(run));
+      },
+    },
+    prepare: prepareArgs,
+    present: (result) => `${result.state}: ${result.summary}`,
+  });
+
+/**
+ * One turn's answer. A turn stuck on a permission prompt or a missing login blocks the request, since
+ * only a person can clear it; any other turn without an answer stops the run, which the worker
+ * records failed and `request:retry` continues.
+ */
+const turn = async <S extends Type.TSchema>(
   run: RequestRun,
   agent: AgentRef,
   schema: S,
   label: string,
   prompt: string,
-  timeoutMs = 30 * MINUTE,
+  timeoutMs: number,
 ): Promise<Answer<S>> => {
   const { outcome } = await agent.run<Answer<S>>({ prompt, schema, label, timeoutMs });
-  if (isAnswered(outcome)) {
-    const value = outcome.value as { kind?: string; question?: string };
-    // Signed out mid-turn: when the checkout has the context's sign-in, the run signs in and the agent goes on.
-    if (value.kind === "question" && isSignInQuestion(value.question) && (await run.signInAgain()))
-      return ask(run, agent, schema, label, prompts.signedInAgain(run.request), timeoutMs);
-    if (value.kind === "question") run.block(value.question!);
-    return outcome.value;
-  }
+  if (isAnswered(outcome)) return outcome.value;
   if (outcome.kind === "failed" && outcome.login)
     return run.block(`the ${label} agent has no login: ${outcome.login.run}, then answer this request to go on`);
   if (outcome.kind === "blocked") {
@@ -313,18 +333,32 @@ export const ask = async <S extends Type.TSchema>(
   return run.workflow.stop(`${label}: ${outcome.kind}: ${outcome.reason}`);
 };
 
+/**
+ * Ask, and return the answer. The agent may answer with a question instead, which blocks the request
+ * on it; asked to sign in again, the run does so from the checkout when it can, and the agent goes on.
+ */
+export const ask = async <S extends Type.TSchema>(
+  run: RequestRun,
+  agent: AgentRef,
+  schema: S,
+  label: string,
+  prompt: string,
+  timeoutMs = LIMITS.turnMs,
+): Promise<Answer<S>> => {
+  const value = await turn(run, agent, orQuestion(schema), label, prompt, timeoutMs);
+  const asked = value as { kind?: unknown; question: string };
+  if (asked.kind !== "question") return value as Answer<S>;
+  if (isSignInQuestion(asked.question) && (await run.signInAgain()))
+    return ask(run, agent, schema, label, prompts.signedInAgain(run.request), timeoutMs);
+  return run.block(asked.question);
+};
+
 // ── The team ──────────────────────────────────────────────────────────────────────────────────────
-export interface Team {
-  planner(): Promise<AgentRef>;
-  builder(): Promise<AgentRef>;
-  checker(): Promise<AgentRef>;
-  troubleshooter(): Promise<AgentRef>;
-}
+export type Team = Record<Role, () => Promise<AgentRef>>;
 
 /** The team, each on the model workflows.json names; sandboxed, they share one sandbox, so the checker reads the builder's trace. */
-export const openTeam = (run: RequestRun): Team => {
+const openTeam = (run: RequestRun): Team => {
   const { workflow, request, paths, config } = run;
-  const instructions = prompts.builderInstructions(run);
   let box: Promise<SandboxRef> | undefined;
   const sandbox = async () => {
     if (!paths.sandbox) return {};
@@ -335,46 +369,20 @@ export const openTeam = (run: RequestRun): Team => {
       .then((spec) => workflow.sandboxes.open({ key: "agents", cwd: paths.worktree, ...spec }));
     return { sandbox: await box };
   };
-  // A pane agent's pane stays open when it fails, for a look; a headless one has none, and awf
-  // doesn't keep a sandboxed one's, whose pane is in the sandbox's own Herdr.
-  const keep = (runtime: RuntimeSelection) =>
-    paths.sandbox || (typeof runtime === "object" && runtime.placement === "headless") ? {} : { keepPane: "on-failure" as const };
+  const open = (role: Role, instructions: string) => async () => {
+    const runtime = config.agents[role];
+    // A pane agent's pane stays open when it fails, for a look; a headless one has none, and awf
+    // doesn't keep a sandboxed one's, whose pane is in the sandbox's own Herdr.
+    const keep =
+      paths.sandbox || (typeof runtime === "object" && runtime.placement === "headless") ? {} : { keepPane: "on-failure" as const };
+    return workflow.agents.open({ key: role, runtime, cwd: paths.worktree, instructions, ...keep, ...(await sandbox()) });
+  };
+  const builder = prompts.builderInstructions(run);
   return {
-    planner: async () =>
-      workflow.agents.open({
-        key: "planner",
-        runtime: config.agents.planner,
-        cwd: paths.worktree,
-        instructions: prompts.plannerInstructions(run),
-        ...keep(config.agents.planner),
-        ...(await sandbox()),
-      }),
-    builder: async () =>
-      workflow.agents.open({
-        key: "builder",
-        runtime: config.agents.builder,
-        cwd: paths.worktree,
-        instructions,
-        ...keep(config.agents.builder),
-        ...(await sandbox()),
-      }),
-    checker: async () =>
-      workflow.agents.open({
-        key: "checker",
-        runtime: config.agents.checker,
-        ...(await sandbox()),
-        cwd: paths.worktree,
-        instructions: prompts.checkerInstructions(run),
-      }),
-    troubleshooter: async () =>
-      workflow.agents.open({
-        key: "troubleshooter",
-        runtime: config.agents.troubleshooter,
-        cwd: paths.worktree,
-        instructions,
-        ...keep(config.agents.troubleshooter),
-        ...(await sandbox()),
-      }),
+    planner: open("planner", prompts.plannerInstructions(run)),
+    builder: open("builder", builder),
+    checker: open("checker", prompts.checkerInstructions(run)),
+    troubleshooter: open("troubleshooter", builder),
   };
 };
 
@@ -383,21 +391,19 @@ const helpersIn = (paths: Paths, files: string[]): boolean =>
   files.some((f) => f.startsWith(`${relative(paths.worktree, paths.domainDir)}/helpers/`));
 
 /** Every op with an example for this context, as the worktree has them now. */
-const opsWithExamples = async (paths: Paths, context: string): Promise<string[]> => {
-  const ops: string[] = [];
-  if (!existsSync(join(paths.domainDir, "ops"))) return ops;
-  for await (const file of new Bun.Glob("ops/*/examples.json").scan({ cwd: paths.domainDir })) {
-    const examples = (await Bun.file(join(paths.domainDir, file)).json()) as { context: string }[];
-    if (examples.some((e) => e.context === context)) ops.push(opFromFolder(file.split("/")[1]!));
-  }
-  return ops;
+const opsWithExamples = (paths: Paths, context: string): string[] => {
+  const ops = join(paths.domainDir, "ops");
+  if (!existsSync(ops)) return [];
+  return readdirSync(ops)
+    .filter((folder) => examplesIn(join(ops, folder)).some((e) => e.context === context))
+    .map(opFromFolder);
 };
 
 /**
  * Verify the op on every example for the context, and every other op too when helpers changed (on
  * the branch, or on main since `mainSince`): a helper another op uses may have broken under it.
  */
-export const verifyAll = async (
+const verifyAll = async (
   run: RequestRun,
   op: string,
   mainSince?: string,
@@ -409,7 +415,7 @@ export const verifyAll = async (
     ...(mainSince ? await deps.git.changedOnMain(paths.worktree, mainSince) : []),
   ];
   if (helpersIn(paths, changed)) {
-    for (const other of (await opsWithExamples(paths, request.context)).filter((o) => o !== op)) {
+    for (const other of opsWithExamples(paths, request.context).filter((o) => o !== op)) {
       const result = await deps.verify(paths.worktree, request, other);
       // Only a regression counts: an op that fails on main as well is not this change's to fix.
       if (!result.ok && !result.signedOut && !(await deps.verify(request.domain.root, request, other)).ok) continue;
@@ -419,149 +425,112 @@ export const verifyAll = async (
   return { ok: results.every((v) => v.ok), signedOut: results.some((v) => v.signedOut), results };
 };
 
+/** What a round's check found, for the next revise, and where it stopped. */
+interface Found {
+  problem: string;
+  standing: Standing;
+}
+
+const checksFound = async (run: RequestRun, scope: CheckScope): Promise<Found | undefined> => {
+  const checks = await run.deps.checks(run.paths.worktree, scope);
+  return checks.ok ? undefined : { problem: prompts.checksFailed(run, scope, checks.output), standing: { at: AT[scope], count: 1 } };
+};
+
 /**
- * Verify the ops, then run the repository's checks: what went wrong, for the builder, or what verify
- * ran when both passed. A signed-out session is signed in again from the checkout's .env file, or
- * blocks the run: no round can fix it.
+ * Verify the ops, then run the repository's checks: what verify ran, and what went wrong first, if
+ * anything. A signed-out session is signed in again from the checkout's .env file, or blocks the
+ * run: no round can fix it.
  */
-const verifyProblem = async (
+const verifyAndCheck = async (
   run: RequestRun,
   op: string,
   mainSince: string | undefined,
   scope: CheckScope,
-  { verify = true }: { verify?: boolean } = {},
-): Promise<{ problem: string; standing: Standing } | { problem?: undefined; results: Verified[] }> => {
-  const { request, paths } = run;
-  let verified = verify ? await verifyAll(run, op, mainSince) : { ok: true, signedOut: false, results: [] };
+): Promise<{ results: Verified[]; found?: Found }> => {
+  const { request } = run;
+  let verified = await verifyAll(run, op, mainSince);
   if (verified.signedOut && (await run.signInAgain())) verified = await verifyAll(run, op, mainSince);
   if (verified.signedOut) run.block(signInQuestion(request.domain.name, request.context));
-  if (!verified.ok)
-    return {
-      problem: prompts.verifyFailed(request, verified.results),
-      standing: { at: 0, count: Math.max(1, verified.results.flatMap((v) => v.runs).filter((r) => !r.ok).length) },
-    };
-  const checks = await run.deps.checks(paths.worktree, scope);
-  if (!checks.ok)
-    return {
-      problem: prompts.checksFailed(run, scope, checks.output),
-      standing: { at: scope === "full" ? 3 : 1, count: 1 },
-    };
-  return { results: verified.results };
+  const { results } = verified;
+  if (!verified.ok) {
+    const failed = Math.max(1, results.flatMap((v) => v.runs).filter((r) => !r.ok).length);
+    return { results, found: { problem: prompts.verifyFailed(request, results), standing: { at: AT.verify, count: failed } } };
+  }
+  return { results, found: await checksFound(run, scope) };
 };
 
 /**
  * Verify, then the checker reviews. A failure or a finding goes back to the builder for as long as each
  * round gets further than the one before (a later check, or fewer problems); the first that doesn't hands
  * it to the troubleshooter with every round's problem, and the troubleshooter's first that doesn't, or
- * MAX_ROUNDS, to a person as one question. A `problem` already found starts it at the first revision.
+ * the last round, to a person as one question. A `problem` already found starts it at the first revision.
  * `said` is the builder's last answer, which the checker reads with what it claims it ran.
  */
-export const checkUntilApproved = async (
+const checkUntilApproved = async (
   run: RequestRun,
   team: Team,
   op: string,
   summary: string,
-  { mainSince, problem, said }: { mainSince?: string; problem?: string; said?: string } = {},
+  { mainSince, problem, said }: { mainSince?: string; problem?: string; said?: string },
 ): Promise<Approval> => {
   const problems: string[] = problem ? [problem] : [];
   let last = said;
-  // Set once the troubleshooter takes over: how many rounds the builder had.
-  let builderRounds: number | undefined;
+  // Who has the rounds; once the troubleshooter does, the round it took over after.
+  let by: "builder" | "troubleshooter" = "builder";
+  let handedOverAt = 0;
   let before: Standing | undefined;
   for (let revisions = problem ? 1 : 0; ; revisions++) {
-    if (revisions > 0) last = await revise(run, team, op, summary, revisions, problems, builderRounds);
-    const by = builderRounds === undefined ? "builder" : "troubleshooter";
+    if (revisions > 0) {
+      if (by === "troubleshooter") run.workflow.log(`revise ${revisions}: troubleshooter`);
+      // The troubleshooter's first round carries the whole record.
+      const takingOverAfter = by === "troubleshooter" && revisions === handedOverAt + 1 ? handedOverAt : undefined;
+      const prompt = prompts.revise(run, op, summary, problems, takingOverAfter);
+      last = (await ask(run, await team[by](), DONE, `revise ${revisions}`, prompt)).summary;
+    }
 
     // Rounds run the fast checks; the slow suite runs once, before approval.
     let now: Standing;
-    const verified = await verifyProblem(run, op, mainSince, "fast");
-    if (verified.problem !== undefined) {
-      problems.push(verified.problem);
-      now = verified.standing;
+    const { results, found } = await verifyAndCheck(run, op, mainSince, "fast");
+    if (found) {
+      problems.push(found.problem);
+      now = found.standing;
     } else {
-      const review = await ask(
+      const review = await turn(
         run,
         await team.checker(),
         REVIEW,
         `review ${revisions + 1}`,
-        prompts.review(run, op, summary, verified.results, last),
+        prompts.review(run, op, summary, results, last),
+        LIMITS.turnMs,
       );
       const blocking = review.findings.filter((f) => f.severity === "blocking");
       const minor = review.findings.filter((f) => f.severity === "minor");
       if (blocking.length === 0) {
-        if (minor.length > 0) await polish(run, team, op, summary, revisions, minor, builderRounds !== undefined);
+        // Minor findings are fixed with no review after.
+        if (minor.length > 0) await ask(run, await team[by](), DONE, `polish ${revisions + 1}`, prompts.polish(run, op, summary, minor));
         // The slow suite runs here either way; verify again only if a polish changed the code.
-        const final = await verifyProblem(run, op, mainSince, "full", { verify: minor.length > 0 });
-        if (final.problem === undefined) return { revisions, by };
+        const final = minor.length > 0 ? (await verifyAndCheck(run, op, mainSince, "full")).found : await checksFound(run, "full");
+        if (!final) return { revisions, by };
         problems.push(final.problem);
         now = final.standing;
       } else {
         problems.push(prompts.reviewFound([...blocking, ...minor]));
-        now = { at: 2, count: blocking.length };
+        now = { at: AT.review, count: blocking.length };
       }
     }
 
     const stalled = before !== undefined && !progressed(now, before);
     before = now;
-    if (revisions >= MAX_ROUNDS || (stalled && builderRounds !== undefined)) {
-      const asked = await ask(run, await team.troubleshooter(), QUESTION, "question", prompts.stuck(run, op, summary, problems));
-      return run.block(asked.question);
+    if (revisions >= LIMITS.rounds || (stalled && by === "troubleshooter")) {
+      const prompt = prompts.stuck(run, op, summary, problems);
+      const { question } = await turn(run, await team.troubleshooter(), QUESTION, "question", prompt, LIMITS.turnMs);
+      return run.block(question);
     }
-    if (stalled) builderRounds = revisions;
+    if (stalled) {
+      by = "troubleshooter";
+      handedOverAt = revisions;
+    }
   }
-};
-
-/** Minor findings, fixed by whoever has the rounds now, with no review after. */
-const polish = async (
-  run: RequestRun,
-  team: Team,
-  op: string,
-  summary: string,
-  round: number,
-  findings: { where: string; problem: string }[],
-  troubleshooting: boolean,
-): Promise<void> => {
-  await ask(
-    run,
-    troubleshooting ? await team.troubleshooter() : await team.builder(),
-    DONE,
-    `polish ${round + 1}`,
-    prompts.polish(run, op, summary, findings),
-  );
-};
-
-/** One revise round: the builder's, or once it stalled the troubleshooter's, whose first carries the whole record. */
-const revise = async (
-  run: RequestRun,
-  team: Team,
-  op: string,
-  summary: string,
-  round: number,
-  problems: string[],
-  builderRounds: number | undefined,
-): Promise<string> => {
-  const troubleshooting = builderRounds !== undefined;
-  if (troubleshooting) run.workflow.log(`revise ${round}: troubleshooter`);
-  const answered = await ask(
-    run,
-    troubleshooting ? await team.troubleshooter() : await team.builder(),
-    DONE,
-    `revise ${round}`,
-    prompts.revise(run, op, summary, problems, round === (builderRounds ?? -1) + 1 ? builderRounds : undefined),
-  );
-  return answered.kind === "done" ? answered.summary : "";
-};
-
-/** Check until approved, and note the main commit the approval holds for. */
-export const approve = async (
-  run: RequestRun,
-  team: Team,
-  op: string,
-  summary: string,
-  said: string,
-): Promise<Type.Static<typeof CHECKED>> => {
-  const approval = await checkUntilApproved(run, team, op, summary, { said });
-  return { ...approval, base: await run.deps.git.base(run.paths.worktree) };
 };
 
 /**
@@ -570,7 +539,7 @@ export const approve = async (
  * any fix that made is committed and rebased before it lands. A fast-forward that loses a race with
  * another merge goes round too.
  */
-export const mergeToMain = async (
+const mergeToMain = async (
   run: RequestRun,
   team: Team,
   op: string,
@@ -581,7 +550,7 @@ export const mergeToMain = async (
   const { git } = run.deps;
   const { request, paths } = run;
   let approved = approvedOn;
-  for (let attempt = 1; attempt <= 4; attempt++) {
+  for (let attempt = 1; attempt <= LIMITS.merges; attempt++) {
     if (!(await git.squash(paths.worktree, message))) {
       // A merge that landed before the run died leaves nothing to squash: main already has it.
       const landed = await git.landed(request.domain.root, message);
@@ -596,8 +565,8 @@ export const mergeToMain = async (
     const base = await git.base(paths.worktree);
     if (base !== approved) {
       // What main brought is checked again; only a change that broke something goes back to review.
-      const { problem } = await verifyProblem(run, op, approved, "full");
-      if (problem !== undefined) await checkUntilApproved(run, team, op, summary, { mainSince: approved, problem });
+      const { found } = await verifyAndCheck(run, op, approved, "full");
+      if (found) await checkUntilApproved(run, team, op, summary, { mainSince: approved, problem: found.problem });
       approved = base;
       continue;
     }
@@ -607,20 +576,36 @@ export const mergeToMain = async (
       run.workflow.log("fast-forward failed; going round again", { error: (err as Error).message });
     }
   }
-  return run.workflow.stop("main kept moving: could not land the change after four tries");
+  return run.workflow.stop(`main kept moving: could not land the change after ${LIMITS.merges} tries`);
 };
 
-/** The request is done: record it, free the op, and clean up. */
-export const finish = async (run: RequestRun, op: string, merged: { commit: string }, summary: string): Promise<Result> => {
+const PAST = { build: "built", change: "changed", repair: "repaired" } as const;
+
+/**
+ * Check the op until approved, merge it, and end the request done. `summary` is the brief's, `said`
+ * the builder's last answer, and `what` what the request's result says was done.
+ */
+export const land = async (
+  run: RequestRun,
+  team: Team,
+  op: string,
+  kind: keyof typeof PAST,
+  { summary, said, what }: { summary: string; said: string; what: string },
+): Promise<Result> => {
+  const checked = await run.stage(
+    "check",
+    CHECKED,
+    (c) => `approved after ${c.revisions} revision(s), ${c.by}`,
+    async () => ({ ...(await checkUntilApproved(run, team, op, summary, { said })), base: await run.deps.git.base(run.paths.worktree) }),
+  );
+  const merged = await run.stage(
+    "merge",
+    MERGED,
+    (m) => m.commit.slice(0, 10),
+    () => mergeToMain(run, team, op, summary, `${run.id} ${kind} ${op}`, checked.base),
+  );
   const { request } = run;
   const command = request.call ? `${request.domain.name} ${request.call.argv.join(" ")}` : `${request.domain.name} ${op} --help`;
-  run.ledger.update(run.id, () => ({
-    state: "done",
-    result: { summary, command, commit: merged.commit },
-    pid: undefined,
-    stage: undefined,
-  }));
-  run.ledger.unlockOp(op, run.id);
-  await run.cleanUp();
-  return { state: "done", summary };
+  const done = `${PAST[kind]} ${op} (${checked.revisions} revision(s)): ${what}`;
+  return run.end("done", done, { summary: done, command, commit: merged.commit });
 };

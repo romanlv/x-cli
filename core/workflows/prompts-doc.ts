@@ -8,7 +8,7 @@ import * as prompts from "../instructions/prompts";
 import type { RequestRecord } from "../requests";
 import { loadConfig, type Role, type WorkflowConfig } from "./config";
 import type { Verified } from "./deps";
-import { MAX_ROUNDS, pathsFor } from "./shared";
+import { LIMITS, pathsFor } from "./shared";
 
 const ROOT = "/repo";
 
@@ -149,7 +149,7 @@ export const renderPrompts = (cli: string, domainFolder: string, config: Workflo
     ),
     section(
       "question",
-      `The troubleshooter, once one of its rounds got no further, or after round ${MAX_ROUNDS}; the run blocks on its answer.`,
+      `The troubleshooter, once one of its rounds got no further, or after round ${LIMITS.rounds}; the run blocks on its answer.`,
       prompts.stuck(run, op, plan, problems),
     ),
     "## Merge",

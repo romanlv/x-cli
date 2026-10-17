@@ -11,7 +11,7 @@
 import { join } from "node:path";
 import { opFolder } from "../names";
 import { type RequestRecord, signInQuestion } from "../requests";
-import { CHECK_SCRIPT, type CheckScope, type Verified } from "../workflows/deps";
+import { type CheckScope, SCRIPTS, type Verified } from "../workflows/deps";
 import type { Paths } from "../workflows/shared";
 
 /** What a prompt reads: the request, and where its run works. A RequestRun is one. */
@@ -321,7 +321,7 @@ export const checksFailed = ({ paths }: PromptRun, scope: CheckScope, output: st
   const rerun = paths.sandbox
     ? `; rerun them with \`${paths.run("bun run ci:sandbox")}\`, which leaves out the workflow and e2e tests: those can't run in your sandbox, so read their failures here`
     : "";
-  return `The repository's checks (\`bun run ${CHECK_SCRIPT[scope]}\` in ${paths.worktree}) failed${rerun}:\n${tag("output", output)}`;
+  return `The repository's checks (\`bun run ${SCRIPTS[scope]}\` in ${paths.worktree}) failed${rerun}:\n${tag("output", output)}`;
 };
 
 const listFindings = (findings: Finding[]): string =>

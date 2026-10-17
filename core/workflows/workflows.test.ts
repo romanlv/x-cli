@@ -8,7 +8,13 @@ import { type RequestRecord, Requests } from "../requests";
 import { defineBuild } from "./build";
 import type { Deps, Git, Verified } from "./deps";
 import { defineRepair } from "./repair";
-import { DIAGNOSIS, DONE, EXPLORED, INTAKE, QUESTION, REVIEW } from "./shared";
+import { INTAKE as DECIDED, DIAGNOSIS as DIAGNOSED, DONE as FINISHED, orQuestion, QUESTION, REVIEW, EXPLORED as SURVEYED } from "./shared";
+
+// What the agents are asked for: each answer, or the question.
+const INTAKE = orQuestion(DECIDED);
+const EXPLORED = orQuestion(SURVEYED);
+const DONE = orQuestion(FINISHED);
+const DIAGNOSIS = orQuestion(DIAGNOSED);
 
 let home: string;
 let requests: Requests;
@@ -109,7 +115,6 @@ const deps = (): Deps => ({
     for (const dir of [worktree, paths.home]) mkdirSync(dir, { recursive: true });
     return { write: [worktree, paths.home], srt: {} };
   },
-  ledger: () => requests,
 });
 
 const domain = () => ({ name: "x", root: "/repo", dir: "/repo/x", home });
@@ -136,8 +141,8 @@ const recordedUpTo = (upTo: "intake" | "explore" | "spec" | "write" | "check") =
   const all = {
     intake: planned,
     explore: { kind: "done", summary: "explored" },
-    spec: { summary: "spec written" },
-    write: { summary: "written" },
+    spec: { kind: "done", summary: "spec written" },
+    write: { kind: "done", summary: "written" },
     check: { revisions: 0, by: "builder", base: "base0" },
   };
   const order = Object.keys(all);
@@ -222,7 +227,7 @@ test("a retry over a recorded ending records it again instead of leaving the req
     defineBuild(deps()),
     { id: r.id, home },
     {
-      recorded: { intake: { kind: "ended", state: "deferred", reason: "later" } },
+      recorded: { intake: { kind: "deferred", reason: "later" } },
       agents: {},
     },
   );
@@ -288,7 +293,7 @@ test("workflows.json puts the team in one sandbox, on the models it names", asyn
   expect(box.spec.read).toContain(realpathSync(join(home, "shared")));
   expect(sandboxed).toEqual([`${home}/worktrees/${r.id}`]);
   // Their CLI keeps its state in the request's own home and reaches the host's browser by socket.
-  const sockets = join(realpathSync("/tmp"), `wd-${r.id}`);
+  const sockets = join(realpathSync("/tmp"), `x-${r.id}`);
   expect(run.agentOf("builder").instructions).toContain(
     `env ${P}HOME=${home}/sandboxes/${r.id} ${P}NO_REPAIRS=1 ${P}NO_WORKER=1 ${P}CONTEXTS_DIR=${home}/contexts ${P}BROWSER=ws+unix://${sockets}/browser.sock:/browser TMPDIR=${sockets} bun`,
   );
