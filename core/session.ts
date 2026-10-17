@@ -12,8 +12,7 @@ import type { Domain } from "./domain";
 import { envName, envNumber } from "./env";
 import { OpError, outcomeOf } from "./errors";
 import { formatCall, formatNetwork } from "./network";
-import { plain } from "./ops";
-import { EXIT, fail, type Outcome } from "./output";
+import { EXIT, fail, type Outcome, plain } from "./output";
 import { formatNode, formatSnapshot, refLocator, type Snapshot, type SnapshotNode, suggestLocator, takeSnapshot } from "./snapshot";
 import { alive, appendJsonLine, readJson, timestamp, writeJson } from "./store";
 

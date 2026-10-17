@@ -94,3 +94,13 @@ export const finish = async (outcome: Outcome, { json }: { json: boolean }): Pro
 
 /** Quote an argument for a command a person or agent will paste. */
 export const shellQuote = (arg: string): string => (/^[\w@%+=:,./-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, `'\\''`)}'`);
+
+/** Playwright colours its call logs; the ledger and bundles are read as plain text. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: the escape character is what an ANSI colour code starts with.
+export const plain = (text: string): string => text.replace(/\u001b\[[0-9;]*m/g, "");
+
+/** A message's first line, cut to `max` characters. */
+export const firstLine = (text: string, max = Number.POSITIVE_INFINITY): string => {
+  const line = text.split("\n")[0]!;
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+};

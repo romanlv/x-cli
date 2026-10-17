@@ -15,7 +15,7 @@ import { envNumber } from "./env";
 import { DryRunReached, InputError, isBrowserFailure, OpError, outcomeOf } from "./errors";
 import { OP_NAME, opFolder } from "./names";
 import { formatNetwork, type NetworkEntry } from "./network";
-import { EXIT, fail, type Outcome, progress, shellQuote } from "./output";
+import { EXIT, fail, type Outcome, plain, progress, shellQuote } from "./output";
 import type { DomainRef, Requests } from "./requests";
 import { formatSnapshot, takeSnapshot } from "./snapshot";
 import { appendJsonLine, readJson, readJsonLines, timestamp, writeJson } from "./store";
@@ -189,10 +189,6 @@ export const commandLine = (cli: string, argv: string[]): string => [cli, ...arg
 
 /** How long one Playwright action waits before the step fails. */
 const STEP_TIMEOUT_MS = envNumber("STEP_TIMEOUT_MS", 15_000);
-
-/** Playwright colours its call logs; the ledger and bundles are read as plain text. */
-// biome-ignore lint/suspicious/noControlCharactersInRegex: the escape character is what an ANSI colour code starts with.
-export const plain = (text: string): string => text.replace(/\u001b\[[0-9;]*m/g, "");
 
 export interface HistoryLine {
   at: string;

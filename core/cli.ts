@@ -22,7 +22,7 @@ import {
   type RunEnv,
   runOp,
 } from "./ops";
-import { EXIT, fail, finish, guardStdout, type NextHint, type Outcome, ok } from "./output";
+import { EXIT, fail, finish, firstLine, guardStdout, type NextHint, type Outcome, ok } from "./output";
 import { isTerminal, type RequestRecord, type RequestState, Requests } from "./requests";
 import { CORE_PAGE_COMMANDS, pageCommand, runSessionDaemon, sessionContext } from "./session";
 import { ago, alive } from "./store";
@@ -246,7 +246,7 @@ const dispatch = async (env: Env, argv: string[]): Promise<Outcome> => {
       const rows = list.map((r) => {
         const u = usage.get(r.id);
         const took = u ? `${formatCost(u).padStart(7)} ${formatDuration(u.ms).padStart(6)}` : " ".repeat(14);
-        return `${r.id}  ${r.state.padEnd(9)} ${(r.op ?? r.kind).padEnd(22)} ${took}  ${ago(r.updatedAt).padEnd(8)} ${firstLine(r.text)}`;
+        return `${r.id}  ${r.state.padEnd(9)} ${(r.op ?? r.kind).padEnd(22)} ${took}  ${ago(r.updatedAt).padEnd(8)} ${firstLine(r.text, 70)}`;
       });
       return ok(
         [...rows, `total ${formatCost({ usd: total.usd, partial: false })} at list prices, ${formatDuration(total.ms)} of runs`].join("\n"),
@@ -326,11 +326,6 @@ const dispatch = async (env: Env, argv: string[]): Promise<Outcome> => {
 };
 
 const raiseUsage = (message: string): never => raise(message, EXIT.USAGE);
-
-const firstLine = (text: string, max = 70): string => {
-  const line = text.split("\n")[0]!;
-  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
-};
 
 const getRequest = (env: Env, id: string | undefined): RequestRecord => {
   if (!id) raiseUsage("give a request id, such as R-0012");
