@@ -7,8 +7,8 @@ import { keepSignedIn, signIn } from "./browser";
 import { Contexts } from "./contexts";
 import { savedCredentials } from "./credentials";
 import type { Domain } from "./domain";
-import { envName, envNumber, envValue } from "./env";
-import { OpError, outcomeOf, raise } from "./errors";
+import { envName, envNumber, envOverride, envValue } from "./env";
+import { InputError, OpError, outcomeOf, PreconditionError, raise } from "./errors";
 import { isCliNoun, kebab, OP_NAME, opFolder } from "./names";
 import { commandLine, domainRef, type HistoryLine, lastRun, loadOps, type OpEntry, opHelp, parseInput, type RunEnv, runOp } from "./ops";
 import { ago, EXIT, fail, finish, firstLine, formatDuration, guardStdout, type NextHint, type Outcome, ok } from "./output";
@@ -24,7 +24,7 @@ import { ensureWorker, runWorker } from "./worker";
 const GLOBAL_BOOLEANS = new Set(["json", "headed", "dry-run", "wait", "help", "browser"]);
 const GLOBAL_VALUES = new Set(["context", "request", "timeout", "input-json"]);
 
-export interface ParsedArgs {
+interface ParsedArgs {
   positionals: string[];
   global: Record<string, string | boolean>;
   flags: Record<string, string | boolean | string[]>;
@@ -147,7 +147,7 @@ const dispatch = async (env: Env, argv: string[]): Promise<Outcome> => {
 
   const args = parseArgs(rest);
   const found = Object.hasOwn(COMMANDS, command) ? COMMANDS[command] : undefined;
-  if (found?.help && args.global.help) return ok(["Usage:", ...found.help.lines.map((line) => `  ${cli} ${line}`)].join("\n"));
+  if (found?.help && args.global.help) return ok(["Usage:", ...helpLines(found, env.domain).map((line) => `  ${cli} ${line}`)].join("\n"));
   if (found) return found.run(env, args);
 
   if (command === "page" || command.startsWith("page:")) {
@@ -163,7 +163,7 @@ const dispatch = async (env: Env, argv: string[]): Promise<Outcome> => {
 
 interface Command {
   /** Where `help` lists it, and its lines there after the CLI's name; unset for one the CLI runs itself. */
-  help?: { section: keyof typeof SECTIONS; lines: string[] };
+  help?: { section: keyof typeof SECTIONS; lines: string[] | ((domain: Domain) => string[]) };
   run(env: Env, args: ParsedArgs): Promise<Outcome> | Outcome;
 }
 
@@ -180,6 +180,10 @@ const SECTIONS = {
   },
 };
 
+/** A command's lines in `help`; some depend on what the domain offers. */
+const helpLines = (command: Command, domain: Domain): string[] =>
+  typeof command.help?.lines === "function" ? command.help.lines(domain) : (command.help?.lines ?? []);
+
 const usage = (env: Env, ops: Map<string, OpEntry>): string => {
   const cli = env.domain.name;
   const byNoun = new Map<string, OpEntry[]>();
@@ -193,7 +197,9 @@ const usage = (env: Env, ops: Map<string, OpEntry>): string => {
   ]);
   const sections = Object.entries(SECTIONS).flatMap(([section, { heading, lines }]) => [
     heading,
-    ...[...lines, ...Object.values(COMMANDS).flatMap((c) => (c.help?.section === section ? c.help.lines : []))].map((l) => `  ${cli} ${l}`),
+    ...[...lines, ...Object.values(COMMANDS).flatMap((c) => (c.help?.section === section ? helpLines(c, env.domain) : []))].map(
+      (l) => `  ${cli} ${l}`,
+    ),
     "",
   ]);
   const pageLines = Object.entries(pageCommandsOf(env.domain)).map(([name, c]) => `  ${name.padEnd(30)} ${c.usage}`);
@@ -212,8 +218,7 @@ const usage = (env: Env, ops: Map<string, OpEntry>): string => {
   ].join("\n");
 };
 
-const raiseUsage = (message: string): never => raise(message, EXIT.USAGE);
-const need = (value: string | undefined, what: string): string => value ?? raiseUsage(`give ${what}`);
+const need = (value: string | undefined, what: string): string => value ?? raise(new InputError(`give ${what}`));
 const flag = (args: ParsedArgs, name: string): string | undefined => (typeof args.flags[name] === "string" ? args.flags[name] : undefined);
 const contextFlag = (args: ParsedArgs): string | undefined => args.global.context as string | undefined;
 
@@ -234,7 +239,7 @@ const listContexts = (env: Env): Outcome => {
 
 const addContext = (env: Env, args: ParsedArgs): Outcome => {
   const name = need(args.positionals[0], "a context name");
-  const added = env.contexts.add(name, flag(args, "url") ?? raiseUsage("give --url <url>"));
+  const added = env.contexts.add(name, flag(args, "url") ?? raise(new InputError("give --url <url>")));
   return ok(`context ${added.name}: ${added.url}`, [{ hint: "sign in", cmd: `${env.domain.name} context:login ${added.name}` }]);
 };
 
@@ -242,11 +247,12 @@ const login = async (env: Env, args: ParsedArgs): Promise<Outcome> => {
   const cli = env.domain.name;
   const ctx = env.contexts.resolve(args.positionals[0] ?? contextFlag(args));
   const timeoutMs = args.global.timeout === undefined ? undefined : seconds(args.global.timeout) * 1000;
-  const saved = savedCredentials(env.domain.root, ctx.name);
+  // Only a domain that can submit its sign-in form takes a username and password.
+  const saved = env.domain.submitSignIn ? savedCredentials(env.domain.root, ctx.name) : undefined;
   const username = flag(args, "username") ?? saved?.username;
   const password = flag(args, "password") ?? saved?.password;
-  if (password !== undefined && username === undefined) raiseUsage("give --username with the password");
-  if (username !== undefined && !password) raiseUsage(`give the password: --password, or PASSWORD in .env.${ctx.name}`);
+  if (password !== undefined && username === undefined) throw new InputError("give --username with the password");
+  if (username !== undefined && !password) throw new InputError(`give the password: --password, or PASSWORD in .env.${ctx.name}`);
   // Agents work in worktrees and never sign in; a person's credentials stay with the person.
   if (username !== undefined) refuseInWorktree(env, "a person signs in with a password");
   const credentials = username !== undefined ? { username, password: password! } : undefined;
@@ -264,7 +270,7 @@ const login = async (env: Env, args: ParsedArgs): Promise<Outcome> => {
 
 const fileRequest = (env: Env, args: ParsedArgs): Promise<Outcome> => {
   const text = need(args.positionals[0], `what you need, in quotes: ${env.domain.name} request "the replies under a post"`);
-  if (text.startsWith("-")) raiseUsage(`"${text}" looks like a flag, not a request; say what you need in quotes`);
+  if (text.startsWith("-")) throw new InputError(`"${text}" looks like a flag, not a request; say what you need in quotes`);
   const ctx = env.contexts.resolve(contextFlag(args));
   const wait = waitSeconds(args.global);
   refuseInWorktree(env);
@@ -320,11 +326,10 @@ const cancelRequest = async (env: Env, args: ParsedArgs): Promise<Outcome> => {
 
 const work = async (env: Env): Promise<Outcome> => {
   const { domain, contexts } = env;
-  const signInEvery = envValue("KEEP_SIGNED_IN_MS");
   await runWorker(domain.home, domain.root, {
     maxRunning: envNumber("MAX_RUNNING", domain.maxRunning ?? 2),
     runTimeout: envValue("RUN_TIMEOUT"),
-    keepSignedInMs: signInEvery === undefined ? domain.keepAlive?.signInEveryMs : Number(signInEvery),
+    keepSignedInMs: envOverride("KEEP_ALIVE_SIGN_IN_MS", domain.keepAlive?.signInEveryMs),
     // Signed out, a person who left their sign-in in .env.<context> needn't come back for it.
     keepSignedIn: async (name) => {
       const ctx = contexts.list().contexts.find((c) => c.name === name);
@@ -366,9 +371,9 @@ const COMMANDS: Record<string, Command> = {
   "context:login": {
     help: {
       section: "contexts",
-      lines: [
+      lines: (domain) => [
         "context:login <name>        a person signs in, in a browser window",
-        "context:login <name> --username <u> --password <p>   or headless; .env.<name> can hold both",
+        ...(domain.submitSignIn ? ["context:login <name> --username <u> --password <p>   or headless; .env.<name> can hold both"] : []),
       ],
     },
     run: login,
@@ -397,7 +402,7 @@ const COMMANDS: Record<string, Command> = {
 
 const getRequest = (env: Env, id: string | undefined): RequestRecord => {
   const record = env.requests.get(need(id, "a request id, such as R-0012"));
-  return record ?? raise(`no request ${id}`, EXIT.PRECONDITION, [{ hint: "list them", cmd: `${env.domain.name} requests` }]);
+  return record ?? raise(new PreconditionError(`no request ${id}`, [{ hint: "list them", cmd: `${env.domain.name} requests` }]));
 };
 
 const checkOnIt = (env: Env, id: string): NextHint => ({ hint: "check on it", cmd: `${env.domain.name} request:status ${id} --wait` });
@@ -502,7 +507,7 @@ const callOp = async (env: Env, name: string, rest: string[]): Promise<Outcome> 
 };
 
 const refuseInWorktree = (env: Env, what = "requests are filed"): void => {
-  if (env.worktree) raiseUsage(`${what} from the main checkout, not from the worktree ${env.domain.root}`);
+  if (env.worktree) throw new InputError(`${what} from the main checkout, not from the worktree ${env.domain.root}`);
 };
 
 const startWorker = (env: Env): void => {
@@ -517,7 +522,9 @@ const waitSeconds = (global: Record<string, string | boolean>): number | undefin
 
 const seconds = (raw: string | boolean): number => {
   const value = Number(raw);
-  return Number.isFinite(value) && value > 0 ? value : raiseUsage(`--timeout must be a positive number of seconds, got "${raw}"`);
+  return Number.isFinite(value) && value > 0
+    ? value
+    : raise(new InputError(`--timeout must be a positive number of seconds, got "${raw}"`));
 };
 
 const filedOutcome = async (env: Env, filed: RequestRecord, wait: number | undefined, why?: string, again?: string[]): Promise<Outcome> => {
@@ -534,11 +541,7 @@ const filedOutcome = async (env: Env, filed: RequestRecord, wait: number | undef
 
 const statusOutcome = (env: Env, r: RequestRecord): Outcome => {
   const cli = env.domain.name;
-  const lines = [
-    `${r.id}: ${r.state}${r.stage && r.state === "building" ? ` (stage: ${r.stage})` : ""}`,
-    `kind: ${r.kind}${r.op ? `, op: ${r.op}` : ""}, context: ${r.context}`,
-    `asked: ${r.text}`,
-  ];
+  const lines = [`${r.id}: ${stateOf(r)}`, `kind: ${r.kind}${r.op ? `, op: ${r.op}` : ""}, context: ${r.context}`, `asked: ${r.text}`];
   if (r.waitingFor) lines.push(`waiting for ${r.waitingFor}, which holds ${r.op}`);
   if (r.question) lines.push(`question: ${r.question}`);
   if (r.reason && r.reason !== r.result?.summary) lines.push(`reason: ${r.reason}`);
@@ -578,9 +581,9 @@ const jsonFlags = (text: string): Record<string, string | boolean | string[]> =>
   try {
     parsed = JSON.parse(text);
   } catch {
-    return raiseUsage("--input-json is not JSON");
+    throw new InputError("--input-json is not JSON");
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return raiseUsage("--input-json must be a JSON object");
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new InputError("--input-json must be a JSON object");
   return Object.fromEntries(
     Object.entries(parsed).map(([key, value]) => [
       key,

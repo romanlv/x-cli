@@ -7,6 +7,7 @@ import { existsSync, rmSync } from "node:fs";
 import { connect, createServer } from "node:net";
 import { chromium } from "playwright";
 import { launchWith } from "./browser";
+import { alive } from "./store";
 
 export const BROWSER_PATH = "/browser";
 
@@ -41,12 +42,6 @@ if (import.meta.main) {
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);
   setInterval(() => {
-    let alive = true;
-    try {
-      process.kill(Number(parent), 0);
-    } catch {
-      alive = false;
-    }
-    if (!alive || !existsSync(socket)) void stop();
+    if (!alive(Number(parent)) || !existsSync(socket)) void stop();
   }, 2000);
 }

@@ -3,9 +3,8 @@ import type { Page } from "playwright";
 import { type Domain, defineDomain, type SignInState } from "../core/domain";
 import { envNumber } from "../core/env";
 import { InputError } from "../core/errors";
-import { readPosts, SEL, type Xh, xHelpers } from "./helpers";
+import { HANDLE, ORIGIN, readPosts, SEARCH_TABS, SEL, type SearchTab, type Xh, xHelpers } from "./helpers";
 
-const ORIGIN = "https://x.com";
 const HOSTS = new Set(["x.com", "twitter.com", "mobile.x.com", "mobile.twitter.com"]);
 /** First path segments that are X's own pages, not an account's handle. */
 const RESERVED = new Set([
@@ -33,7 +32,7 @@ export const accountOf = (url: string): { onX: boolean; handle?: string } => {
   try {
     const parsed = new URL(url);
     const first = parsed.pathname.split("/").filter(Boolean)[0];
-    const handle = first && !RESERVED.has(first.toLowerCase()) && /^\w{1,15}$/.test(first) ? first.toLowerCase() : undefined;
+    const handle = first && !RESERVED.has(first.toLowerCase()) && HANDLE.test(first) ? first.toLowerCase() : undefined;
     return { onX: HOSTS.has(parsed.hostname), handle };
   } catch {
     return { onX: false };
@@ -47,7 +46,8 @@ const signedInHandle = async (page: Page): Promise<string | undefined> => {
     .first()
     .textContent()
     .catch(() => null);
-  return text?.match(/@(\w{1,15})/)?.[1]?.toLowerCase();
+  const handle = text?.match(/@(\w+)/)?.[1];
+  return handle && HANDLE.test(handle) ? handle.toLowerCase() : undefined;
 };
 
 /**
@@ -76,14 +76,13 @@ const signInState = async (page: Page, contextUrl: string): Promise<SignInState>
   }
 };
 
-const TABS = ["top", "latest", "people", "media"] as const;
-
 export const xDomain = (overrides: Partial<Domain<Xh>> = {}): Domain<Xh> =>
   defineDomain({
     name: "x",
     dir: import.meta.dir,
+    // Spelled out, not the parent of `dir`: the tests' fixture puts `dir` elsewhere and keeps this checkout.
     root: join(import.meta.dir, ".."),
-    helpers: (page) => xHelpers(page),
+    helpers: xHelpers,
     // X watches for automation and limits each account (knowledge/bot-detection.md): the installed
     // Chrome, one request at a time, no calls of the ops' own, and no keep-alive nudges.
     browserChannel: "chrome",
@@ -103,20 +102,23 @@ export const xDomain = (overrides: Partial<Domain<Xh>> = {}): Domain<Xh> =>
     },
     pageCommands: {
       search: {
-        usage: '"<query>" [top|latest|people|media]  open X search for a query (X\'s operators work: from:, since:, filter:)',
+        usage: `"<query>" [${SEARCH_TABS.join("|")}]  open X search for a query (X's operators work: from:, since:, filter:)`,
         async run({ page }, args) {
           if (!args[0]) throw new InputError('give the query, such as "from:jack bitcoin"');
-          const tab = (args[1] ?? "latest") as (typeof TABS)[number];
-          if (!TABS.includes(tab)) throw new InputError(`no tab "${tab}" (tabs: ${TABS.join(", ")})`);
+          const tab = (args[1] ?? "latest") as SearchTab;
+          if (!SEARCH_TABS.includes(tab)) throw new InputError(`no tab "${tab}" (tabs: ${SEARCH_TABS.join(", ")})`);
           await xHelpers(page).search(args[0], tab);
           return undefined;
         },
       },
       posts: {
         usage: "[n]  the posts on the page as the helpers read them (the first n, 10 by default)",
+        reads: true,
         async run({ page }, args) {
+          const n = Number(args[0] ?? 10);
+          if (!Number.isInteger(n) || n < 1) throw new InputError(`n is how many posts, a whole number from 1, got "${args[0]}"`);
           const posts = await readPosts(page);
-          return JSON.stringify(posts.slice(0, Number(args[0] ?? 10)), null, 2);
+          return JSON.stringify(posts.slice(0, n), null, 2);
         },
       },
     },

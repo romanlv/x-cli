@@ -2,8 +2,8 @@
 // no browser. It is tried before the browser way, which stays the fallback.
 import { existsSync } from "node:fs";
 import { type APIRequestContext, request } from "playwright";
-import { launch, STEP_TIMEOUT_MS, saveSession } from "./browser";
-import type { Context } from "./contexts";
+import { launch, STEP_TIMEOUT_MS, savedUserAgent, saveSession } from "./browser";
+import type { Context, ContextRef } from "./contexts";
 import { envValue } from "./env";
 import { OpError, outcomeOf } from "./errors";
 import type { Attempt, OpEntry, RunEnv } from "./ops";
@@ -13,7 +13,7 @@ export interface DirectContext {
   /** HTTP on the context's saved cookies; no browser is started. */
   http: APIRequestContext;
   step<T>(name: string, fn: () => Promise<T>): Promise<T>;
-  context: { name: string; url: string };
+  context: ContextRef;
 }
 
 /** Why the direct way failed, so the op ran in the browser. */
@@ -24,11 +24,11 @@ export interface FellBack {
 
 /**
  * With XCLI_BROWSER the calls go out from the host's browser server, as the pages do: a sandbox
- * reaches no network of its own.
+ * reaches no network of its own. Either way they carry the browser's user agent, as `page:fetch`'s do.
  */
 const openHttp = async (ctx: Context): Promise<{ http: APIRequestContext; close(): Promise<void> }> => {
   if (!envValue("BROWSER")) {
-    const http = await request.newContext({ storageState: ctx.authFile, timeout: STEP_TIMEOUT_MS });
+    const http = await request.newContext({ storageState: ctx.authFile, timeout: STEP_TIMEOUT_MS, userAgent: savedUserAgent(ctx) });
     return { http, close: () => http.dispose() };
   }
   const browser = await launch(false);

@@ -10,7 +10,7 @@ import type { Locator } from "playwright";
 import { type OpenBrowser, openSignedIn } from "./browser";
 import type { Context, Contexts } from "./contexts";
 import type { Domain, PageCommand, PageCommandContext } from "./domain";
-import { envName, envNumber } from "./env";
+import { envName, envNumber, envOverride } from "./env";
 import { InputError, OpError, outcomeOf } from "./errors";
 import { formatCall, formatNetwork } from "./network";
 import { EXIT, fail, type Outcome, plain } from "./output";
@@ -28,7 +28,8 @@ interface SessionState {
   context: string;
   headed: boolean;
   startedAt: string;
-  error?: string;
+  /** Why the daemon could not start, as the CLI that started it answers. */
+  error?: Outcome;
   ready?: boolean;
 }
 
@@ -209,7 +210,7 @@ export const pageCommand = async (
   if (!running && cmd === "page:close") {
     // A daemon that died leaves its state and socket; closing clears them so the name starts clean.
     // Only a daemon that said it was serving and never said it closed can still be ours to stop.
-    if (state?.ready && state.pid && alive(state.pid)) process.kill(state.pid, "SIGTERM");
+    if (state?.ready && alive(state.pid)) process.kill(state.pid, "SIGTERM");
     if (state?.socket) rmSync(state.socket, { force: true });
     rmSync(stateFile(home, session), { force: true });
     return { ok: true, data: `session ${session} is not running` };
@@ -294,7 +295,7 @@ const waitForStart = async (
   const deadline = Date.now() + START_MS;
   while (Date.now() < deadline) {
     const state = readJson<SessionState | undefined>(stateFile(home, session), undefined);
-    if (state?.error) return { ok: false, outcome: JSON.parse(state.error) as Outcome };
+    if (state?.error) return { ok: false, outcome: state.error };
     // A ready state from a daemon that has since died is the last session's, not this one's.
     if (state?.ready && alive(state.pid)) return { ok: true, state };
     if (child && child.exitCode !== null) break;
@@ -322,7 +323,7 @@ export const runSessionDaemon = async (
     open = await openSignedIn(domain, contexts, context, { headed, network: { bodies: true, during: () => during } });
   } catch (err) {
     const outcome = err instanceof OpError ? outcomeOf(err) : fail((err as Error).message);
-    writeJson(stateFile(home, session), { ...base, error: JSON.stringify(outcome) });
+    writeJson(stateFile(home, session), { ...base, error: outcome });
     // The CLI that started it has its answer; a daemon with no browser has nothing left to serve.
     process.exit(1);
   }
@@ -335,20 +336,17 @@ export const runSessionDaemon = async (
   open.context.on("requestfailed", active);
   let previous: Snapshot | undefined;
   let idleTimer: ReturnType<typeof setTimeout>;
-  const pageEveryMs = domain.keepAlive?.pageEveryMs;
+  const pageEveryMs = envOverride("KEEP_ALIVE_PAGE_MS", domain.keepAlive?.pageEveryMs);
   if (pageEveryMs) {
     // An agent writing code leaves its page alone for longer than the app allows; a mouse move in the
     // page's corner counts as a person there, and changes nothing on it.
-    setInterval(
-      () => {
-        if (page.isClosed()) return;
-        void page.mouse
-          .move(2, 2)
-          .then(() => page.mouse.move(3, 3))
-          .catch(() => {});
-      },
-      envNumber("STAY_ACTIVE_MS", pageEveryMs),
-    ).unref();
+    setInterval(() => {
+      if (page.isClosed()) return;
+      void page.mouse
+        .move(2, 2)
+        .then(() => page.mouse.move(3, 3))
+        .catch(() => {});
+    }, pageEveryMs).unref();
   }
 
   const shutdown = async () => {
@@ -447,7 +445,7 @@ export const runSessionDaemon = async (
   } catch (err) {
     writeJson(stateFile(home, session), {
       ...base,
-      error: JSON.stringify(fail(`session ${session} could not listen on ${socket}: ${(err as Error).message}`)),
+      error: fail(`session ${session} could not listen on ${socket}: ${(err as Error).message}`),
     });
     await open.close();
     process.exit(1);

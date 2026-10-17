@@ -37,11 +37,16 @@ const sleepSync = (ms: number): void => {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 };
 
+/** A lock held longer than this belonged to a process that died holding it. */
+const LOCK_STALE_MS = 10_000;
+/** How long to wait for a lock before giving up. */
+const LOCK_WAIT_MS = 15_000;
+
 /**
- * Run `fn` holding a lock directory. `mkdir` is atomic, so two processes never both hold it; a lock
- * older than `staleMs` belonged to a process that died holding it and is taken over.
+ * Run `fn` holding a lock directory. `mkdir` is atomic, so two processes never both hold it; a stale
+ * lock is taken over.
  */
-export const withLock = <T>(dir: string, fn: () => T, { staleMs = 10_000, waitMs = 15_000 } = {}): T => {
+export const withLock = <T>(dir: string, fn: () => T): T => {
   mkdirSync(dirname(dir), { recursive: true });
   const started = Date.now();
   for (;;) {
@@ -51,11 +56,11 @@ export const withLock = <T>(dir: string, fn: () => T, { staleMs = 10_000, waitMs
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
       try {
-        if (Date.now() - statSync(dir).mtimeMs > staleMs) rmSync(dir, { recursive: true, force: true });
+        if (Date.now() - statSync(dir).mtimeMs > LOCK_STALE_MS) rmSync(dir, { recursive: true, force: true });
       } catch {
         // Released between the mkdir and the stat: try again.
       }
-      if (Date.now() - started > waitMs) throw new Error(`timed out waiting for lock ${dir}`);
+      if (Date.now() - started > LOCK_WAIT_MS) throw new Error(`timed out waiting for lock ${dir}`);
       sleepSync(25);
     }
   }

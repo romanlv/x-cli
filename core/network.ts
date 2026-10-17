@@ -1,4 +1,5 @@
 import type { BrowserContext, Request } from "playwright";
+import { timestamp } from "./store";
 
 export interface NetworkEntry {
   /** Counts up from 1 for the life of the context, so a number names the same call between commands. */
@@ -43,7 +44,7 @@ export const recordNetwork = (
     if (SKIP.has(request.resourceType())) return;
     const entry: NetworkEntry = {
       n: ++n,
-      at: new Date().toISOString(),
+      at: timestamp(),
       method: request.method(),
       url: request.url(),
       type: request.resourceType(),

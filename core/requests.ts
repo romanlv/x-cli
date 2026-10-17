@@ -4,9 +4,8 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Domain } from "./domain";
-import { raise } from "./errors";
+import { PreconditionError } from "./errors";
 import { opFolder } from "./names";
-import { EXIT } from "./output";
 import { appendJsonLine, readJson, readJsonLines, timestamp, withLock, writeJson } from "./store";
 
 export type RequestKind = "intake" | "new" | "change" | "repair";
@@ -36,7 +35,7 @@ export interface RequestRecord {
   /** The call that filed it, re-run once the request is done when the caller waits. */
   call?: { op: string; argv: string[] };
   state: RequestState;
-  /** The workflow stage it is in, while building. */
+  /** The workflow stage it is in, or the one it stopped at; the workflow clears it when it ends the request. */
   stage?: string;
   createdAt: string;
   updatedAt: string;
@@ -56,7 +55,7 @@ export interface RequestRecord {
   /**
    * The next attempt starts again from the first agent stage instead of continuing from the one
    * that stopped, and awf must be told so on every attempt until that stage starts again. Set by
-   * the worker for a run that completed (deferred, declined, flaky), and wherever the worktree
+   * the worker for a run that completed (deferred, a flaky repair), and wherever the worktree
    * went: a cancel, a lock wait with nothing built.
    */
   redo?: boolean;
@@ -113,15 +112,15 @@ export class Requests {
   }
 
   /**
-   * File a repair, or join the open one for the same op and step, in one step under the lock, so two
-   * calls failing the same way at once file one repair between them.
+   * File a repair, or join the open one for the same op and step and way (direct or browser), in one
+   * step under the lock, so two calls failing the same way at once file one repair between them.
    */
   fileOrJoinRepair(input: FileInput & { op: string; failure: NonNullable<RequestRecord["failure"]> }): {
     record: RequestRecord;
     joined: boolean;
   } {
     return withLock(this.lockDir, () => {
-      const open = this.openRepair(input.op, input.failure.step);
+      const open = this.openRepair(input.op, input.failure.step, input.failure.fellBack === true);
       if (!open) return { record: this.fileLocked(input), joined: false };
       const record: RequestRecord = {
         ...open,
@@ -185,9 +184,11 @@ export class Requests {
     return id ? events.filter((e) => e.id === id) : events;
   }
 
-  /** The open repair for this op and step, which a call failing the same way joins. */
-  openRepair(op: string, step: string | undefined): RequestRecord | undefined {
-    return this.list({ op }).find((r) => r.kind === "repair" && !isTerminal(r.state) && r.failure?.step === step);
+  /** The open repair for this op, step and way, which a call failing the same way joins. */
+  private openRepair(op: string, step: string | undefined, fellBack: boolean): RequestRecord | undefined {
+    return this.list({ op }).find(
+      (r) => r.kind === "repair" && !isTerminal(r.state) && r.failure?.step === step && (r.failure?.fellBack === true) === fellBack,
+    );
   }
 
   /**
@@ -230,7 +231,7 @@ export class Requests {
     return this.update(
       id,
       (r) => {
-        if (r.state !== "blocked") raise(`${id} is ${r.state}, not blocked: there is no question to answer`, EXIT.PRECONDITION);
+        if (r.state !== "blocked") throw new PreconditionError(`${id} is ${r.state}, not blocked: there is no question to answer`);
         return {
           state: "received",
           answers: [...r.answers, { at: timestamp(), question: r.question, text }],
@@ -252,7 +253,7 @@ export class Requests {
     return this.update(
       id,
       (r) => {
-        if (isTerminal(r.state)) raise(`${id} is ${r.state} already`, EXIT.PRECONDITION);
+        if (isTerminal(r.state)) throw new PreconditionError(`${id} is ${r.state} already`);
         // Its worktree goes with it, so a retry starts it again from its first stage.
         return { state: "cancelled", reason, waitingFor: undefined, question: undefined, redo: true };
       },
@@ -266,7 +267,7 @@ export class Requests {
       id,
       (r) => {
         if (!RETRYABLE.includes(r.state))
-          raise(`${id} is ${r.state}; only failed, deferred and cancelled requests are retried`, EXIT.PRECONDITION);
+          throw new PreconditionError(`${id} is ${r.state}; only failed, deferred and cancelled requests are retried`);
         return { state: "received", reason: undefined, waitingFor: undefined };
       },
       "retried",

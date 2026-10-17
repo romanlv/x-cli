@@ -3,9 +3,8 @@
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { envValue } from "./env";
-import { raise } from "./errors";
-import { EXIT } from "./output";
-import { readJson, withLock, writeJson } from "./store";
+import { InputError, PreconditionError } from "./errors";
+import { readJson, timestamp, withLock, writeJson } from "./store";
 
 export interface ContextEntry {
   /** What the person gave: the app's URL for this context, or its sign-in page. */
@@ -13,7 +12,7 @@ export interface ContextEntry {
   /** Where the signed-in app lives, recorded at sign-in; runs and sessions start here. */
   appUrl?: string;
   addedAt: string;
-  /** When a person last signed in through `context:login`. */
+  /** When the context last signed in (context:login, or from .env.<context>). */
   signedInAt?: string;
   /** Set when a sign-in check found the saved session expired; cleared by the next login. */
   signedOutAt?: string;
@@ -29,6 +28,12 @@ export interface Context extends ContextEntry {
   appUrl: string;
   /** Playwright storage state: cookies and local storage of the signed-in session. */
   authFile: string;
+}
+
+/** The context as an op sees it: its name, and the URL runs start from. */
+export interface ContextRef {
+  name: string;
+  url: string;
 }
 
 const NAME = /^[a-z0-9][a-z0-9_-]{0,62}$/;
@@ -65,22 +70,22 @@ export class Contexts {
   }
 
   add(name: string, url: string): Context {
-    if (!NAME.test(name)) raise(`context name "${name}" must be lowercase letters, digits, - and _`, EXIT.USAGE);
+    if (!NAME.test(name)) throw new InputError(`context name "${name}" must be lowercase letters, digits, - and _`);
     let parsed: URL;
     try {
       parsed = new URL(url);
     } catch {
-      return raise(`--url "${url}" is not a URL`, EXIT.USAGE);
+      throw new InputError(`--url "${url}" is not a URL`);
     }
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") raise(`--url must be http(s), got "${url}"`, EXIT.USAGE);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new InputError(`--url must be http(s), got "${url}"`);
 
     this.change((config) => {
       if (config.contexts[name] && config.contexts[name].url !== normalizeUrl(url)) {
-        raise(`context "${name}" already names ${config.contexts[name].url}; remove it first`, EXIT.USAGE, [
+        throw new InputError(`context "${name}" already names ${config.contexts[name].url}; remove it first`, [
           { hint: "remove it", cmd: `${this.cli} context:remove ${name}` },
         ]);
       }
-      config.contexts[name] = config.contexts[name] ?? { url: normalizeUrl(url), addedAt: new Date().toISOString() };
+      config.contexts[name] = config.contexts[name] ?? { url: normalizeUrl(url), addedAt: timestamp() };
       // The first context added is the one used until another is chosen.
       config.current = config.current ?? name;
     });
@@ -119,7 +124,7 @@ export class Contexts {
     if (name) return this.get(name);
     const { current } = this.read();
     if (!current) {
-      return raise("no context: add one and sign in first", EXIT.PRECONDITION, [
+      throw new PreconditionError("no context: add one and sign in first", [
         { hint: "add one", cmd: `${this.cli} context:add <name> --url <url>` },
       ]);
     }
@@ -131,13 +136,13 @@ export class Contexts {
   }
 
   markSignedIn(name: string, appUrl: string): void {
-    this.update(name, (entry) => ({ ...entry, appUrl, signedInAt: new Date().toISOString(), signedOutAt: undefined }));
+    this.update(name, (entry) => ({ ...entry, appUrl, signedInAt: timestamp(), signedOutAt: undefined }));
   }
 
   /** Best effort: a sandboxed build can't write the contexts, and the worker finds the sign-out itself. */
   markSignedOut(name: string): void {
     try {
-      this.update(name, (entry) => ({ ...entry, signedOutAt: new Date().toISOString() }));
+      this.update(name, (entry) => ({ ...entry, signedOutAt: timestamp() }));
     } catch {}
   }
 
@@ -159,7 +164,7 @@ export class Contexts {
 
   private missing(name: string): never {
     const names = Object.keys(this.read().contexts);
-    return raise(`no context "${name}"${names.length ? ` (contexts: ${names.join(", ")})` : ""}`, EXIT.PRECONDITION, [
+    throw new PreconditionError(`no context "${name}"${names.length ? ` (contexts: ${names.join(", ")})` : ""}`, [
       { hint: "add it", cmd: `${this.cli} context:add ${name} --url <url>` },
     ]);
   }

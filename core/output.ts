@@ -61,7 +61,7 @@ export const progress = (line: string): void => {
 const write = (writer: Writer, text: string): Promise<void> => new Promise((resolve) => void writer(text, resolve));
 
 /** `key: value` lines for a flat record, which is what most op outputs are. */
-export const formatData = (data: unknown): string => {
+const formatData = (data: unknown): string => {
   if (typeof data === "string") return data;
   if (data && typeof data === "object" && !Array.isArray(data)) {
     const entries = Object.entries(data as Record<string, unknown>);

@@ -15,9 +15,9 @@ export class OpError extends Error {
   }
 }
 
-/** End the command (or op) with this failure. */
-export const raise = (message: string, exitCode: number = EXIT.ERROR, next?: NextHint[]): never => {
-  throw new OpError(message, exitCode, next);
+/** Throw where an expression is wanted: `value ?? raise(new InputError("give --url"))`. */
+export const raise = (err: OpError): never => {
+  throw err;
 };
 
 export const outcomeOf = (err: OpError): Outcome => fail(err.message, err.exitCode, err.next);
@@ -50,7 +50,7 @@ export class BrowserError extends OpError {
   }
 }
 
-/** Thrown by a helper at the last submit of a `--dry-run`; the runner turns it into a result. */
+/** Thrown by the op or a helper at the last submit of a `--dry-run`; the runner turns it into a result. */
 export class DryRunReached extends Error {
   constructor(readonly action: string) {
     super(`dry run: stopped before ${action}`);

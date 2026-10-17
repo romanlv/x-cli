@@ -1,7 +1,7 @@
 // Playwright behind the CLI: a browser per call, signed in as the context's saved session, and the
 // headed sign-in a person does once per context.
-import { chmodSync, existsSync, mkdirSync, renameSync } from "node:fs";
-import { dirname } from "node:path";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { type Browser, type BrowserContext, chromium, type LaunchOptions, type Page, selectors } from "playwright";
 import { type Context, type Contexts, loginHint } from "./contexts";
 import { type Credentials, type SignInWait, savedCredentials, submitCredentials } from "./credentials";
@@ -38,6 +38,29 @@ export const saveSession = async (context: Pick<BrowserContext, "storageState">,
   await context.storageState({ path: temp });
   chmodSync(temp, 0o600);
   renameSync(temp, ctx.authFile);
+};
+
+const userAgentFile = (ctx: Context): string => join(dirname(ctx.authFile), "user-agent");
+
+/**
+ * Keep the browser's user agent beside the sign-in, so the direct way's calls name the browser the
+ * pages did instead of Playwright. Best effort: a sandboxed build can't write it, and needs it not.
+ */
+const saveUserAgent = async (page: Page, ctx: Context): Promise<void> => {
+  const agent = await page.evaluate(() => navigator.userAgent).catch(() => undefined);
+  if (agent)
+    try {
+      writeFileSync(userAgentFile(ctx), agent);
+    } catch {}
+};
+
+/** The user agent the context's last signed-in browser sent; undefined before one has. */
+export const savedUserAgent = (ctx: Context): string | undefined => {
+  try {
+    return readFileSync(userAgentFile(ctx), "utf8").trim() || undefined;
+  } catch {
+    return undefined;
+  }
 };
 
 /**
@@ -127,6 +150,7 @@ const openOnce = async (
       );
     }
     await saveSession(context, ctx).catch(() => {});
+    await saveUserAgent(page, ctx);
     page.setDefaultTimeout(STEP_TIMEOUT_MS);
     return { browser, context, page, network, close };
   } catch (err) {
@@ -155,6 +179,7 @@ export const signIn = async (
     const wait = credentials ? await submitCredentials(submit!, page, ctx.url, credentials, timeoutMs) : byHand(ctx.url, timeoutMs);
     await waitForSignIn(domain, page, ctx.url, wait);
     await saveSession(context, ctx);
+    await saveUserAgent(page, ctx);
     contexts.markSignedIn(ctx.name, domain.appUrl?.(page.url(), ctx.url) ?? page.url());
   } finally {
     await browser.close().catch(() => {});

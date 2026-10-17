@@ -22,8 +22,8 @@ export interface Line {
   key: string;
 }
 
-/** Its state, and the stage it stopped at when it is not building. */
-export const stateOf = (r: RequestRecord): string => `${r.state}${r.stage && r.state !== "building" ? ` (${r.stage})` : ""}`;
+/** Its state, and the stage it is in or stopped at, when it has one. */
+export const stateOf = (r: RequestRecord): string => `${r.state}${r.stage ? ` (${r.stage})` : ""}`;
 
 export const requestLines = (r: RequestRecord, stages: StageRow[]): Line[] => {
   const width = Math.max(0, ...stages.map((s) => s.stage.length));

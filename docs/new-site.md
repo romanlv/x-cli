@@ -12,9 +12,9 @@ domain folder, and leave `core/` as it is.
 | The workflows that build and repair ops | `core/workflows/` | nobody per site |
 | What the workflows tell agents: every prompt, and how any op is written | `core/instructions/` (`prompts.ts`, `authoring.md`) | nobody per site |
 | Skills the agents' harness finds by itself | `.claude/skills/` (`direct-calls`) | nobody per site |
-| The domain's entry point and its settings | `<site>/main.ts` | you |
-| How the app signs in, where runs start, what a refusal looks like, extra page commands | `<site>/domain.ts` | you |
-| The moves every screen of the app shares (`wd`) | `<site>/helpers/` | you, then the agents |
+| The entry point: it calls `main(domain)` | `<site>/main.ts` | you (four lines) |
+| The domain's settings: how the app signs in, where runs start, what a refusal looks like, extra page commands | `<site>/domain.ts` | you |
+| The moves every screen of the app shares (`app`) | `<site>/helpers/` | you, then the agents |
 | `defineOp` bound to those helpers | `<site>/op.ts` | you (four lines) |
 | What is particular to writing ops for this app: scope, ids it marks controls with, limits, test data, the reference op | `<site>/authoring.md` | you, then the agents |
 | What the app is like: pages, controls, the calls behind them | `<site>/knowledge/<name>.md` | you, then the agents |
@@ -28,9 +28,10 @@ prompt is sent; `prompts.ts` decides what it says; `docs/prompts.md` shows every
 ## Steps
 
 1. Copy the checkout without `.state/`, `.env*`, `node_modules/`, `.git/` or the domain's `ops/`.
-2. Rename `x/` to your site's folder and `bin/x` to its command; point `bin/<cli>` and
-   `tests/fixtures/x/main.ts` at it, and set `include` in `tsconfig.json` and `docs:prompts` in
-   `package.json`.
+2. Rename `x/` to your site's folder and `bin/x` to its command; point `bin/<cli>` at it, rename
+   `tests/fixtures/x/` after it and point its `main.ts` at it, set `include` in `tsconfig.json`, and
+   replace the `x x` arguments of `docs:prompts` in `package.json` (the domain folder and the
+   command). Rename `ENV_PREFIX` in `core/env.ts` if the `XCLI_` variables should be the CLI's own.
 3. Write `<site>/domain.ts`: `name`, `signInState` (signed in, signed out, signed in elsewhere,
    unknown) and `helpers` are required; the rest are optional hooks, each described in
    `core/domain.ts`.

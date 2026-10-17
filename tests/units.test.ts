@@ -16,7 +16,6 @@ import { formatSnapshot, suggestLocator, takeSnapshot } from "../core/snapshot";
 import { lineText, requestLines } from "../core/watch";
 import { DEFAULTS, loadConfig } from "../core/workflows/config";
 import { renderPrompts } from "../core/workflows/prompts-doc";
-import { accountOf, xDomain } from "../x/domain";
 import { tempHome } from "./helpers";
 
 describe("parseArgs", () => {
@@ -40,17 +39,16 @@ describe("parseArgs", () => {
 });
 
 const entry = (): OpEntry => ({
-  name: "application:move",
+  name: "thing:find",
   dir: "/nowhere",
   definition: {
-    name: "application:move",
-    description: "Move an application to a stage",
+    name: "thing:find",
+    description: "Find things of a kind",
     input: Type.Object({
-      application: Type.String({ description: "application id" }),
-      stage: Type.Union([Type.Literal("Screen"), Type.Literal("Offer")]),
-      count: Type.Optional(Type.Number()),
-      notify: Type.Optional(Type.Boolean()),
-      tenantStage: Type.Optional(Type.String()),
+      query: Type.String({ description: "what to look for" }),
+      kind: Type.Union([Type.Literal("a"), Type.Literal("b")]),
+      pageSize: Type.Optional(Type.Number()),
+      exact: Type.Optional(Type.Boolean()),
     }),
     output: Type.Object({ id: Type.String() }),
     run: async () => ({ id: "x" }),
@@ -59,48 +57,47 @@ const entry = (): OpEntry => ({
 
 describe("op input", () => {
   test("flags are converted by the schema", () => {
-    expect(parseInput("x", entry(), { application: "A-1", stage: "Offer", count: "3", notify: true, "tenant-stage": "Phone" })).toEqual({
-      application: "A-1",
-      stage: "Offer",
-      count: 3,
-      notify: true,
-      tenantStage: "Phone",
+    expect(parseInput("x", entry(), { query: "Q-1", kind: "b", "page-size": "3", exact: true })).toEqual({
+      query: "Q-1",
+      kind: "b",
+      pageSize: 3,
+      exact: true,
     });
   });
 
   test("bad input lists the valid values and every missing flag", () => {
     const error = (() => {
       try {
-        parseInput("x", entry(), { stage: "Interview" });
+        parseInput("x", entry(), { kind: "c" });
       } catch (err) {
         return err as InputError;
       }
     })();
     expect(error).toBeInstanceOf(InputError);
-    expect(error!.message).toBe('--application is required; --stage "Interview" is not one of: Screen, Offer');
+    expect(error!.message).toBe('--query is required; --kind "c" is not one of: a, b');
     expect(error!.exitCode).toBe(2);
   });
 
   test("an unknown flag names the ones there are", () => {
-    expect(() => parseInput("x", entry(), { stag: "Offer" })).toThrow(
-      "application:move has no flag --stag (flags: --application, --stage, --count, --notify, --tenant-stage)",
+    expect(() => parseInput("x", entry(), { kin: "b" })).toThrow(
+      "thing:find has no flag --kin (flags: --query, --kind, --page-size, --exact)",
     );
   });
 
   test("help comes from the spec", () => {
     const help = opHelp("x", entry());
-    expect(help).toContain("--stage Screen|Offer");
-    expect(help).toContain("--application <string>  application id");
-    expect(help).toContain("--count <number> (optional)");
+    expect(help).toContain("--kind a|b");
+    expect(help).toContain("--query <string>  what to look for");
+    expect(help).toContain("--page-size <number> (optional)");
   });
 
   test("a call round-trips to the argv that reruns it", () => {
-    expect(callArgv("application:move", { application: "A 1", notify: true, count: 2, skip: false })).toEqual([
-      "application:move",
-      "--application",
+    expect(callArgv("thing:find", { query: "A 1", exact: true, pageSize: 2, skip: false })).toEqual([
+      "thing:find",
+      "--query",
       "A 1",
-      "--notify",
-      "--count",
+      "--exact",
+      "--page-size",
       "2",
     ]);
   });
@@ -193,21 +190,6 @@ describe("workflows.json", () => {
   });
 });
 
-describe("x accounts", () => {
-  test("a context's URL names its account, or none; X's own pages are not handles", () => {
-    expect(accountOf("https://x.com/Jack")).toEqual({ onX: true, handle: "jack" });
-    expect(accountOf("https://twitter.com/jack/status/20")).toEqual({ onX: true, handle: "jack" });
-    expect(accountOf("https://x.com/home")).toEqual({ onX: true, handle: undefined });
-    expect(accountOf("https://x.com/i/flow/login")).toEqual({ onX: true, handle: undefined });
-    expect(accountOf("https://example.com/jack").onX).toBe(false);
-  });
-
-  test("a sign-in starts runs from the account's profile, or home when the context names none", () => {
-    expect(xDomain().appUrl!("https://x.com/home", "https://x.com/Jack")).toBe("https://x.com/jack");
-    expect(xDomain().appUrl!("https://x.com/home", "https://x.com")).toBe("https://x.com/home");
-  });
-});
-
 describe("request ledger", () => {
   let t: ReturnType<typeof tempHome>;
   let requests: Requests;
@@ -219,8 +201,8 @@ describe("request ledger", () => {
   afterEach(() => t.cleanup());
 
   test("ids count up, and every change is a ledger event", () => {
-    const a = requests.file({ kind: "intake", text: "merge", context: "acme", domain: domain() });
-    const b = requests.file({ kind: "new", op: "candidate:merge", text: "merge", context: "acme", domain: domain() });
+    const a = requests.file({ kind: "intake", text: "find things", context: "acme", domain: domain() });
+    const b = requests.file({ kind: "new", op: "thing:find", text: "find things", context: "acme", domain: domain() });
     expect([a.id, b.id]).toEqual(["R-0001", "R-0002"]);
     requests.update(a.id, () => ({ state: "building", stage: "spec" }));
     expect(requests.ledger(a.id).map((e) => e.event)).toEqual(["received", "building"]);
@@ -263,15 +245,35 @@ describe("request ledger", () => {
   });
 
   test("a repair is open per op and step; a failed one marks the op broken", () => {
-    const failure = { step: "fill name", error: "Timeout", bundle: "/b" };
-    const r = requests.file({ kind: "repair", op: "x:y", text: "x:y failed", context: "acme", domain: domain(), failure });
-    expect(requests.openRepair("x:y", "fill name")?.id).toBe(r.id);
-    expect(requests.openRepair("x:y", "submit")).toBeUndefined();
+    const failure = { step: "read rows", error: "Timeout", bundle: "/b" };
+    const repair = (f: { step: string; error: string; bundle: string }) =>
+      requests.fileOrJoinRepair({ kind: "repair", op: "x:y", text: "x:y failed", context: "acme", domain: domain(), failure: f });
+    const r = repair(failure).record;
+    expect(repair({ ...failure, bundle: "/b2" })).toMatchObject({ joined: true, record: { id: r.id, joined: [{ bundle: "/b2" }] } });
     expect(requests.brokenBy("x:y")).toBeUndefined();
     requests.update(r.id, () => ({ state: "failed", reason: "flaky" }));
     expect(requests.brokenBy("x:y")?.id).toBe(r.id);
     requests.retry(r.id);
     expect(requests.brokenBy("x:y")).toBeUndefined();
+    expect(repair({ ...failure, step: "open page" })).toMatchObject({ joined: false });
+  });
+
+  test("a repair of the direct way and one of the browser way at the same step are two requests", () => {
+    const repair = (fellBack: boolean) =>
+      requests.fileOrJoinRepair({
+        kind: "repair",
+        op: "x:y",
+        text: "x:y failed",
+        context: "acme",
+        domain: domain(),
+        failure: { step: "read rows", error: "Timeout", bundle: "/b", ...(fellBack && { fellBack }) },
+      });
+    const browser = repair(false).record;
+    const direct = repair(true);
+    expect(direct.joined).toBe(false);
+    expect(direct.record.id).not.toBe(browser.id);
+    expect(repair(true)).toMatchObject({ joined: true, record: { id: direct.record.id } });
+    expect(repair(false)).toMatchObject({ joined: true, record: { id: browser.id } });
   });
 
   test("a request's time and cost add up its attempts, the running one by time only", () => {
@@ -385,24 +387,24 @@ describe("snapshot", () => {
     try {
       const page = await browser.newPage();
       await page.setContent(`
-        <h1>Create Prospect</h1>
-        <form><label for="f">First Name</label><input id="f" data-testid="textInputBox" value="Ada">
-        <label for="l">Last Name</label><input id="l" data-testid="textInputBox">
+        <h1>Sign up</h1>
+        <form><label for="f">Name</label><input id="f" data-testid="textInputBox" value="Ada">
+        <label for="l">Email</label><input id="l" data-testid="textInputBox">
         <button type="button" data-testid="okButton" onclick="document.body.insertAdjacentHTML('beforeend','<div role=alert>Saved</div>')">OK</button>
         <span aria-hidden="true"><button>Hidden</button></span></form>
         <article role="article" tabindex="0" data-testid="tweet"><a href="/ada">Ada</a> posted</article>`);
       const before = await takeSnapshot(page);
       expect(formatSnapshot(before).split("\n").slice(2)).toEqual([
-        '- heading "Create Prospect"',
+        '- heading "Sign up"',
         "- form",
-        '  - textbox "First Name" [e1] = "Ada" {textInputBox}',
-        '  - textbox "Last Name" [e2] = "" {textInputBox}',
+        '  - textbox "Name" [e1] = "Ada" {textInputBox}',
+        '  - textbox "Email" [e2] = "" {textInputBox}',
         '  - button "OK" [e3] {okButton}',
         // A control only by taking focus, it shows what is in it.
         '- article "Ada posted" [e4] {tweet}',
         '  - link "Ada" [e5]',
       ]);
-      expect(suggestLocator(before.nodes[2]!)).toBe(`page.getByLabel("First Name", { exact: true })`);
+      expect(suggestLocator(before.nodes[2]!)).toBe(`page.getByLabel("Name", { exact: true })`);
       expect(suggestLocator(before.nodes[4]!)).toBe(`page.getByTestId("okButton")`);
 
       await page.locator('[data-ref="e3"]').click();

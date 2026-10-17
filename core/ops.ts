@@ -6,7 +6,7 @@ import type { Page } from "playwright";
 import type { Static, TObject, TSchema } from "typebox";
 import Value from "typebox/value";
 import { type OpenBrowser, openSignedIn } from "./browser";
-import { type Context, type Contexts, loginHint } from "./contexts";
+import { type Context, type ContextRef, type Contexts, loginHint } from "./contexts";
 import { type DirectContext, type FellBack, tryDirect } from "./direct";
 import type { Domain } from "./domain";
 import { DryRunReached, InputError, isBrowserFailure, OpError, outcomeOf } from "./errors";
@@ -15,7 +15,7 @@ import { formatNetwork, type NetworkEntry } from "./network";
 import { EXIT, fail, firstLine, type Outcome, plain, progress, shellQuote } from "./output";
 import type { DomainRef, Requests } from "./requests";
 import { formatSnapshot, takeSnapshot } from "./snapshot";
-import { appendJsonLine, readJson, readJsonLines, timestamp, writeJson } from "./store";
+import { appendJsonLine, readJsonLines, timestamp, writeJson } from "./store";
 
 export interface OpContext<Helpers> {
   /** The domain's helper library. */
@@ -23,7 +23,7 @@ export interface OpContext<Helpers> {
   page: Page;
   /** A named step: progress while it runs, and a failure names it. */
   step<T>(name: string, fn: () => Promise<T>): Promise<T>;
-  context: { name: string; url: string };
+  context: ContextRef;
   dryRun: boolean;
 }
 
@@ -43,7 +43,7 @@ export interface OpDefinition<I extends TObject = TObject, O extends TSchema = T
   format?(output: Static<O>): string;
 }
 
-/** A domain binds its helper type once: `export const defineOp = defineOpFor<Wd>()`. */
+/** A domain binds its helper type once: `export const defineOp = defineOpFor<AppHelpers>()`. */
 export const defineOpFor =
   <Helpers>() =>
   <I extends TObject, O extends TSchema>(definition: OpDefinition<I, O, Helpers>): OpDefinition<I, O, Helpers> =>
@@ -180,7 +180,7 @@ export interface HistoryLine {
   ok: boolean;
   step?: string;
   error?: string;
-  /** A failure triage put on the input, the app or the session: 2, 3 or 4. Unset is the op's fault. */
+  /** A failure triage put on something other than the op: 1 (the browser), 2, 3 or 4. Unset is the op's fault. */
   exit?: number;
   /** Done without a browser. */
   direct?: boolean;
@@ -309,7 +309,7 @@ export const runOp = async (
   }
 
   const app = domain.helpers(open.page, { contextUrl: ctx.appUrl, dryRun });
-  const context = { name: ctx.name, url: ctx.appUrl };
+  const context: ContextRef = { name: ctx.name, url: ctx.appUrl };
   try {
     const outcome = check(await entry.definition.run({ app, page: open.page, step: run.step, context, dryRun }, input));
     run.history({ ok: true, ...(fellBack ? { fellBack: fellBack.step } : {}) });
@@ -351,7 +351,7 @@ const fileDirectRepair = (env: RunEnv, entry: OpEntry, input: Record<string, unk
 };
 
 /** Rules only: is this failure someone else's, and which exit says so? Undefined means the op's fault. */
-export const triage = async (env: RunEnv, ctx: Context, open: OpenBrowser, err: unknown): Promise<Outcome | undefined> => {
+const triage = async (env: RunEnv, ctx: Context, open: OpenBrowser, err: unknown): Promise<Outcome | undefined> => {
   const { domain } = env;
   const { page } = open;
   if (err instanceof OpError) return outcomeOf(err);
@@ -378,7 +378,7 @@ export const triage = async (env: RunEnv, ctx: Context, open: OpenBrowser, err: 
   return undefined;
 };
 
-export interface CapturedFailure {
+interface CapturedFailure {
   url?: string;
   screenshot?: Buffer;
   snapshot?: string;
@@ -386,7 +386,7 @@ export interface CapturedFailure {
 }
 
 /** The page as the op left it: URL, screenshot, the controls on it, and the calls that led there. */
-export const captureFailure = async (domain: Domain, open: OpenBrowser): Promise<CapturedFailure> => {
+const captureFailure = async (domain: Domain, open: OpenBrowser): Promise<CapturedFailure> => {
   const { page } = open;
   const network = [...open.network];
   if (page.isClosed()) return { network };
@@ -396,7 +396,7 @@ export const captureFailure = async (domain: Domain, open: OpenBrowser): Promise
 };
 
 /** Everything a repair needs to see what happened, saved where the repair can read it. */
-export const saveFailureBundle = (
+const saveFailureBundle = (
   domain: Domain,
   entry: OpEntry,
   input: Record<string, unknown>,
@@ -465,14 +465,6 @@ const fileRepair = async (
     next: [{ hint: "check on it", cmd: `${cli} request:status ${record.id} --wait` }],
   };
 };
-
-/** Inputs that worked, each tagged with the context it worked in; verify runs the run's context's. */
-export interface Example {
-  context: string;
-  input: Record<string, unknown>;
-}
-
-export const readExamples = (entry: { dir: string }): Example[] => readJson<Example[]>(join(entry.dir, "examples.json"), []);
 
 export const lastRun = (entry: { dir: string }): HistoryLine | undefined =>
   readJsonLines<HistoryLine>(join(entry.dir, "history.jsonl")).at(-1);

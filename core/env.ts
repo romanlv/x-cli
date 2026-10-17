@@ -12,7 +12,8 @@ export type EnvName =
   | "CONTEXTS_DIR"
   | "CREDENTIALS_DIR"
   | "HEADLESS_LOGIN"
-  | "KEEP_SIGNED_IN_MS"
+  | "KEEP_ALIVE_PAGE_MS"
+  | "KEEP_ALIVE_SIGN_IN_MS"
   | "MAX_RUNNING"
   | "NO_REPAIRS"
   | "NO_WORKER"
@@ -20,7 +21,6 @@ export type EnvName =
   | "RUN_TIMEOUT"
   | "SESSION_IDLE_MS"
   | "SIGNIN_WAIT_MS"
-  | "STAY_ACTIVE_MS"
   | "STEP_TIMEOUT_MS";
 
 export const envName = (name: EnvName): string => ENV_PREFIX + name;
@@ -30,6 +30,6 @@ export const envValue = (name: EnvName): string | undefined => process.env[envNa
 /** A number from the environment, or the fallback when it isn't set. */
 export const envNumber = (name: EnvName, fallback: number): number => Number(envValue(name) ?? fallback);
 
-/** The variables to set for a child process, by their short names. */
-export const envVars = (vars: Partial<Record<EnvName, string>>): Record<string, string> =>
-  Object.fromEntries(Object.entries(vars).map(([k, v]) => [envName(k as EnvName), v as string]));
+/** A setting the domain makes, changed by the environment; one the domain leaves unset stays unset. */
+export const envOverride = (name: EnvName, value: number | undefined): number | undefined =>
+  value === undefined ? undefined : envNumber(name, value);

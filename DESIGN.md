@@ -15,7 +15,7 @@ It only reads. Nothing it does, and nothing an agent does while building it, pos
 
 Ops start from none: the first op built through the workflows is reviewed by a person line by line and becomes the reference every later build copies (`x/authoring.md`). Everything after it is built on request.
 
-The tool talks to X through the browser on the person's own sign-in. Once signed in, an op may call the web app's own endpoints with the browser session's cookies where that is faster than scrolling (see [Browser layer](#browser-layer)). X watches for automation, so pace and limits are part of the design ([Staying under X's limits](#staying-under-xs-limits)). Out of scope: X's paid developer API, writing to X, and running on a schedule.
+The tool talks to X through the browser on the person's own sign-in. Once signed in, an op reads the GraphQL responses the page itself fetches, which carry more than the screen shows (see [Browser layer](#browser-layer)). X watches for automation, so pace and limits are part of the design ([Staying under X's limits](#staying-under-xs-limits)). Out of scope: X's paid developer API, writing to X, and running on a schedule.
 
 ## Core and domain
 
@@ -137,7 +137,7 @@ A request records the context it was filed in, and its run works as that account
 - `x requests [--state building]` — the ledger, newest first
 - `x request:answer R-0012 "…"` — answer a blocked request's question; its run continues from the stage that asked
 - `x request:cancel R-0012 ["why"]` — end a request that isn't finished: its run, if one is going, is stopped, and its worktree removed. A retry takes it up again from the start
-- `x request:retry R-0012` — put a failed, deferred or cancelled request back in the queue. It continues from the stage that stopped, unless its run completed (deferred, declined, a flaky repair) or its worktree is gone (cancelled): then it starts again from the first stage
+- `x request:retry R-0012` — put a failed, deferred or cancelled request back in the queue. It continues from the stage that stopped, unless its run completed (deferred, a flaky repair) or its worktree is gone (cancelled): then it starts again from the first stage
 
 Detail beyond that is awf's: `awf runs R-0012` and `awf logs R-0012`.
 
@@ -209,7 +209,7 @@ $ x contexts
 
 Playwright does all the browser work, behind the CLI.
 
-- **Each call and each run gets its own browser.** An op call launches headless Chromium with its context's saved sign-in, runs, and closes. Each awf run, and the checker inside it, gets its own browser the same way, so two runs never share a page.
+- **Each call and each run gets its own browser.** An op call launches the domain's browser (for X, the installed Chrome) headless with its context's saved sign-in, runs, and closes. Each awf run, and the checker inside it, gets its own browser the same way, so two runs never share a page.
 - **Headless by default, `--headed` to watch.** A person can watch any op or run, and step in on a stuck screen.
 - **Exploring uses the same CLI.** Agents drive the page through `x page` commands, attached to a named session that stays open between calls. The session comes from `--session` or `XCLI_SESSION`, which the workflow sets for each agent (`R-0012`, and `R-0012-check` for the checker).
 
@@ -226,7 +226,7 @@ Playwright does all the browser work, behind the CLI.
 - **Exploring leaves a trace.** Every `page` command is logged with the locator Playwright used, to `trace.jsonl` in the run. Writing `op.ts` starts from what worked, not from the agent's memory of it. The page shows each control's `data-testid` (the domain's `testIdAttribute`), and a unique one is the locator suggested: `page.getByTestId(...)`.
 - **The page's own calls, not direct ones.** core lets an op have a `direct` way, plain HTTP on the saved cookies with no browser. X ops don't use it, and `directCalls: false` in `x/domain.ts` keeps an op that has one from loading: X signs each call, rotates its query ids and sits behind Cloudflare's fingerprinting, so a separate client is what it flags (`x/knowledge/bot-detection.md`). Instead an op reads the GraphQL responses the page fetches (`app.graphql`), which carry more than the screen shows. The builder finds them with `page:requests`, as the `direct-calls` skill says.
 - **Installed Chrome, one request at a time.** `x/domain.ts` sets `browserChannel: "chrome"` (core falls back to Playwright's Chromium when Chrome isn't installed) and `maxRunning: 1`, so one request's browsers use the account at a time.
-- **Signed in for as long as runs need it.** A domain whose app signs out an idle session sets `keepAlive`: while a request runs, the worker opens the app every `signInEveryMs` and saves the fresh cookies, and open sessions nudge their page every `pageEveryMs`. X sets none, since its sessions last weeks. A request blocked on signing in is still signed in again by the worker, once per attempt, when `.env.<context>` holds the sign-in.
+- **Signed in for as long as runs need it.** A domain whose app signs out an idle session sets `keepAlive`: while a request runs, the worker opens the app every `signInEveryMs` and saves the fresh cookies, and open sessions nudge their page every `pageEveryMs`. X sets none, since its sessions last weeks. For a domain with `submitSignIn`, a request blocked on signing in is still signed in again by the worker, once per attempt, when `.env.<context>` holds the sign-in. `XCLI_KEEP_ALIVE_PAGE_MS` and `XCLI_KEEP_ALIVE_SIGN_IN_MS` change the two intervals; neither turns on one the domain leaves unset.
 - **A sign-in check runs before every op:** is the context's session still signed in to its URL. If not, it exits 3 with how to sign in again, and no request is filed, because no agent can fix a login.
 
 ## Build workflow: new ops and changes
@@ -239,10 +239,10 @@ Three agents work in it, and all run on their own: the **planner**, on a strong 
    With build, it writes the **intent**: what the person wants and why, what they expect back, what is unclear. Nothing about screens: nobody has opened the app yet.
 2. **explore** — the builder surveys the ways on X a person could serve the intent (search and its tabs and operators, profiles, a post's page, bookmarks, lists), writes what each gives in `notes.md`, picks one, and does the task once that way through `x page`, reading only, leaving a trace. To find records by a value it uses the app's own search. If no way serves the intent, the request ends deferred with what was tried; if the ways differ in what the person gets back, it asks. For a change, only the part that changes.
 3. **spec** — the planner writes or updates `spec.md` from the intent and the builder's notes: what the person wants, the way the op uses and the others with why not, inputs, outputs, what done looks like on X. It may choose another way the builder found; the op is written to the spec.
-4. **write** — the builder writes `op.ts` to the spec, from the trace and notes, with `authoring.md` and the reference op open, using the helpers and adding one when a move does not hold for every X page yet; a read gets its direct way too. `examples.json` gets an input for each case the spec tells apart. Then it tries the op as a caller would, and fixes it until all of this holds: each example's output is what the spec says, checked on X; a direct way gives the same output as `--browser`; a bad input exits 2 saying what is valid; `ci:fast` passes. Verify after it only confirms, with no agent.
+4. **write** — the builder writes `op.ts` to the spec, from the trace and notes, with `authoring.md` and the reference op open, using the helpers and adding one when a move does not hold for every X page yet; a read gets its direct way too, unless the domain rules it out (X does). `examples.json` gets an input for each case the spec tells apart. Then it tries the op as a caller would, and fixes it until all of this holds: each example's output is what the spec says, checked on X; a direct way gives the same output as `--browser`; a bad input exits 2 saying what is valid; `ci:fast` passes. Verify after it only confirms, with no agent.
 5. **verify** — `x` itself runs the op on every example for this context; an op with a direct way runs each both ways, and the two outputs must match. No agent is in this step: either the code works or it does not.
 6. **review** — the checker runs the op on an input of its own, not an example, and finds what it read on X itself (open the posts, the profile). It reads the builder's last answer, with what it says it ran, as claims to check. It reads the change against the intent and the spec, `authoring.md` and the reference op: values copied from exploration that should be inputs, logic that belongs in a helper, steps without names.
-7. **revise** — a failed verify or a blocking review finding goes back to the builder, which fixes it and tries the op as a caller would again, as in write, for as long as each round gets further than the one before (see [When agents get stuck](#when-agents-get-stuck)). The checker marks each finding blocking or minor; with only minor ones, the builder fixes them in one turn and nobody reviews again. Rounds run the repository's fast checks (`ci:fast`: lint, types, unit and workflow tests, seconds); the full suite (`ci:check`, with the browser e2e tests) runs once, before approval. If it is still not right, see [When agents get stuck](#when-agents-get-stuck).
+7. **revise** — a failed verify or a blocking review finding goes back to the builder, which fixes it and tries the op as a caller would again, as in write, for as long as each round gets further than the one before (see [When agents get stuck](#when-agents-get-stuck)). The checker marks each finding blocking or minor; with only minor ones, the builder fixes them in one turn and nobody reviews again. Rounds run the repository's fast checks (`ci:fast`: lint, types, unit and workflow tests, seconds); the full suite (`ci:check`, which would add the browser e2e tests; there are none yet) runs once, before approval. If it is still not right, see [When agents get stuck](#when-agents-get-stuck).
 8. **merge** — the run works in its own git worktree on `req/R-0012`. It rebases on main, re-runs verify for every op whose helpers changed, and fast-forwards main: one commit, `R-0012 build post:thread`.
 
 ### Models and the sandbox: `workflows.json`
@@ -294,7 +294,7 @@ Rounds go on while they make progress, not for a fixed count. A round makes prog
 2. **A troubleshooter** takes over at the first round that doesn't: one generic agent, the same for every request, on the strongest model, opened fresh with the run's whole record (spec, trace, notes, failures, review findings). It may change anything the builder could, including the spec and the helpers, and goes on while its rounds make progress.
 3. **A person** comes last, at the troubleshooter's first round without progress, or after eight rounds in all. The run stops `blocked` with one specific question ("this account can't see @someone's posts: which public account should the examples read?"), and `x request:answer` continues it from that stage.
 
-A signed-out session is no agent's to fix: the run signs in again from `.env.<context>` when the checkout has it, and otherwise skips straight to step 3.
+A signed-out session is no agent's to fix: for a domain with `submitSignIn`, the run signs in again from `.env.<context>` when the checkout has it; otherwise it skips straight to step 3.
 
 ## Prompts
 
@@ -335,7 +335,7 @@ Agents drive a real, personal X account, so the limits are set in code and in th
 - **One account, one page at a time.** X limits each account, so ops don't fetch in parallel, scroll at a person's pace, and turn a rate limit into exit 4, never a retry loop or a repair.
 - **Done means read from X.** An op's output comes from what X returned, and the checker confirms it on its own.
 - **Every self-edit is a commit** on its request's branch, merged only after verify and review, so `git log` is the tool's growth history and `git revert` undoes a bad change.
-- **Bounded spend.** As in the template: a time limit per run, eight revise rounds at most, two runs at a time.
+- **Bounded spend.** As in the template: a time limit per run, eight revise rounds at most, and the domain's `maxRunning` runs at a time (1 for X).
 
 ## Staying under X's limits
 

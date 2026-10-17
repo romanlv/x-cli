@@ -1,5 +1,6 @@
 import { dirname, join } from "node:path";
 import type { BrowserContext, Locator, Page } from "playwright";
+import type { Credentials } from "./credentials";
 import { envValue } from "./env";
 import type { NetworkEntry } from "./network";
 import type { SnapshotNode } from "./snapshot";
@@ -67,7 +68,7 @@ export interface Domain<Helpers = unknown> {
    * Fill the sign-in form with a person's username and password and submit it, for
    * `context:login --username`. Without it, only signing in in the window is offered.
    */
-  submitSignIn?(page: Page, credentials: { username: string; password: string }): Promise<void>;
+  submitSignIn?(page: Page, credentials: Credentials): Promise<void>;
   /**
    * Set up every signed-in browser before it loads the app, such as routes that block a page the
    * app would otherwise load to sign out the sign-in every browser of the context shares.

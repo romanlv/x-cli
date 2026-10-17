@@ -9,6 +9,13 @@ import { InputError, PreconditionError, RefusedError } from "../../core/errors";
 
 export const ORIGIN = "https://x.com";
 
+/** An X handle: letters, digits and _, at most 15. */
+export const HANDLE = /^\w{1,15}$/;
+
+/** X search's tabs, each a filter of its results. */
+export const SEARCH_TABS = ["top", "latest", "people", "media"] as const;
+export type SearchTab = (typeof SEARCH_TABS)[number];
+
 export const SEL = {
   accountSwitcher: '[data-testid="SideNav_AccountSwitcher_Button"]',
   signInButtons: '[data-testid="loginButton"], [data-testid="login"]',
@@ -112,7 +119,7 @@ export const xHelpers = (page: Page) => {
     },
 
     /** X search for a query, on a tab. Its operators (from:, to:, since:, until:, filter:, min_faves:) go in the query. */
-    async search(query: string, tab: "top" | "latest" | "people" | "media" = "latest"): Promise<void> {
+    async search(query: string, tab: SearchTab = "latest"): Promise<void> {
       const f = { top: "", latest: "&f=live", people: "&f=user", media: "&f=media" }[tab];
       await helpers.open(`/search?q=${encodeURIComponent(query)}&src=typed_query${f}`);
     },
@@ -120,7 +127,7 @@ export const xHelpers = (page: Page) => {
     /** A profile, by handle; a handle that isn't there is a precondition, not the op's fault. */
     async profile(handle: string): Promise<void> {
       const clean = handle.replace(/^@/, "");
-      if (!/^\w{1,15}$/.test(clean)) throw new InputError(`"${handle}" is not an X handle (letters, digits and _, at most 15)`);
+      if (!HANDLE.test(clean)) throw new InputError(`"${handle}" is not an X handle (letters, digits and _, at most 15)`);
       await helpers.open(`/${clean}`);
       if (
         await page
@@ -149,6 +156,8 @@ export const xHelpers = (page: Page) => {
           if (until?.(post)) return [...seen.values()];
           seen.set(post.url, post);
         }
+        // Enough: another scroll would only fetch more of the timeline from X.
+        if (seen.size >= limit) break;
         idle = seen.size === before ? idle + 1 : 0;
         await page.mouse.wheel(0, 1800);
         await pause(page);
