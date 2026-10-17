@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { envName } from "../core/env";
 import { Requests } from "../core/requests";
@@ -42,13 +42,25 @@ test("the worker runs every received request, oldest first, and exits when idle"
   expect(requests.ledger(a.id).map((e) => e.event)).toEqual(["received", "started", "done"]);
 });
 
-test("at most two runs at a time", async () => {
+test("at most maxRunning runs at a time", async () => {
   process.env.FAKE_AWF = "slow";
   for (const text of ["a", "b", "c"]) requests.file({ kind: "repair", op: "x:y", text, context: "acme", domain: domain() });
-  await runWorker(t.home, ROOT, { pollMs: 20, awf: AWF });
+  await runWorker(t.home, ROOT, { pollMs: 20, awf: AWF, maxRunning: 2 });
   const [first, second, third] = calls();
   expect(third!.at - first!.at).toBeGreaterThan(300);
   expect(second!.at - first!.at).toBeLessThan(300);
+});
+
+test("a retry of a run that completed redoes it from its first stage, and says so until that stage starts", async () => {
+  const r = requests.file({ kind: "intake", text: "a", context: "acme", domain: domain() });
+  mkdirSync(join(t.home, "runs", "op-build", r.id), { recursive: true });
+  writeFileSync(join(t.home, "runs", "op-build", r.id, "output.json"), JSON.stringify({ outcome: "completed" }));
+  requests.update(r.id, () => ({ state: "deferred" }));
+  requests.retry(r.id);
+  await runWorker(t.home, ROOT, { pollMs: 20, awf: AWF });
+  expect(calls()[0]!.args.slice(-4)).toEqual(["--continue", r.id, "--from-stage", "intake"]);
+  // The fake run never starts a stage, so the next attempt would redo it too.
+  expect(requests.get(r.id)!.redo).toBe(true);
 });
 
 test("one intake at a time, while a repair runs beside it", async () => {
@@ -85,9 +97,15 @@ test("while a request runs, the worker keeps its context signed in", async () =>
   process.env.FAKE_AWF = "slow";
   requests.file({ kind: "intake", text: "a", context: "acme", domain: domain() });
   const touched: string[] = [];
-  await runWorker(t.home, ROOT, { pollMs: 20, awf: AWF, keepSignedInMs: 100, keepSignedIn: async (c) => void touched.push(c) });
+  const keepSignedIn = async (c: string) => touched.push(c) > 0;
+  await runWorker(t.home, ROOT, { pollMs: 20, awf: AWF, keepSignedInMs: 100, keepSignedIn });
   expect(touched.length).toBeGreaterThan(0);
   expect(new Set(touched)).toEqual(new Set(["acme"]));
+  // An app that doesn't sign out an idle session sets no interval: nothing is touched.
+  touched.length = 0;
+  requests.file({ kind: "intake", text: "b", context: "acme", domain: domain() });
+  await runWorker(t.home, ROOT, { pollMs: 20, awf: AWF, keepSignedIn });
+  expect(touched).toEqual([]);
 });
 
 test("a request blocked on signing in gets one sign-in try from the worker", async () => {
@@ -97,10 +115,7 @@ test("a request blocked on signing in gets one sign-in try from the worker", asy
   await runWorker(t.home, ROOT, {
     pollMs: 20,
     awf: AWF,
-    keepSignedIn: async (c) => {
-      tried.push(c);
-      requests.signedIn("x", c);
-    },
+    keepSignedIn: async (c) => tried.push(c) > 0,
   });
   expect(tried).toEqual(["acme"]);
   expect(requests.get(r.id)).toMatchObject({ state: "done", answers: [{ text: "signed in again" }] });

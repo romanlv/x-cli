@@ -23,10 +23,14 @@ The tool talks to X through the browser on the person's own sign-in. Once signed
 
 ```
 core/                       the reusable part: knows nothing of X
-  cli.ts                    command parsing, help, output envelope, exit codes
+  cli.ts                    the commands, their flags and help
+  output.ts                 the output envelope, exit codes, text for people
   contexts.ts               named contexts (here: accounts) and their saved sign-ins
   ops.ts                    op registry, defineOp, step(), the runner, triage
-  requests.ts               request ledger and the worker loop
+  requests.ts               the request ledger
+  worker.ts                 the worker loop, which starts a run per request
+  awf.ts                    a run's awf command line, and what awf keeps of it, read back for status
+  watch.ts                  what `request:status --wait` shows while it waits
   browser.ts                sessions and the `page` commands
   workflows/                awf workflows: build.ts (new ops, changes), repair.ts
   instructions/             what core tells agents: prompts.ts (every prompt), authoring.md (any op)
@@ -42,7 +46,7 @@ The workflows take the domain folder as an argument and read its `authoring.md`,
 
 ## Interface
 
-The CLI is the whole interface. Whoever calls it, a person or an agent, sees commands and text output, and never Playwright, selectors or a browser API. It follows airkit's conventions, so an agent that knows one knows the other.
+The CLI is the whole interface. Whoever calls it, a person or an agent, sees commands and text output, and never Playwright, selectors or a browser API. It follows airkit's conventions (the `--json` envelope, exit codes 0 to 4 and 6; 5 is new), so an agent that knows one knows the other.
 
 ```
 $ x posts:search --query "from:jack bitcoin" --limit 3
@@ -66,7 +70,8 @@ Next: check on it
 - **Nothing is built by accident.** A call to an op that doesn't exist fails with exit 2 and names the ops close to it; only `--request` files it.
 - **Ops are `noun:verb`** (`posts:search`, `account:posts`, `post:thread`, `bookmarks:list`). `x help` lists them, grouped by noun; `x <op> --help` comes from the op's spec and input schema, so a new op documents itself.
 - **One account per call.** Every call runs as the current context, or the one `--context` names (see [Accounts and contexts](#accounts-and-contexts)).
-- **Text by default, `--json` for code.** The JSON is airkit's envelope: `{ "ok", "data", "error", "next" }`, where `next` lists `{ hint, cmd }` for what to run next.
+- **Text by default, `--json` for code.** The JSON is the envelope `{ "ok", "data", "error", "next" }`, where `next` lists `{ hint, cmd }` for what to run next. A command returns its data and, where a person reads it differently, its text; `--json` prints the data.
+- **A few flags are every command's.** `--json`, `--context`, `--wait`, `--timeout`, `--request`, `--help`, `--headed`, `--dry-run`, `--browser` and `--input-json` steer the call; the rest are the op's, or the command's own (`requests --state`, `page --session`). An op whose input would be one of the shared flags is refused when called, since the flag would never reach it.
 - **Errors say what to do next.** A bad input says what is valid; a signed-out session says how to sign in; a rate limit says so; a filed request says how to check on it.
 - **stdout is only the result.** Progress goes to stderr; a failure prints nothing to stdout.
 
@@ -129,7 +134,7 @@ A request records the context it was filed in, and its run works as that account
 - `x requests [--state building]` — the ledger, newest first
 - `x request:answer R-0012 "…"` — answer a blocked request's question; its run continues from the stage that asked
 - `x request:cancel R-0012 ["why"]` — end a request that isn't finished: its run, if one is going, is stopped, and its worktree removed. A retry takes it up again from the start
-- `x request:retry R-0012` — put a deferred or failed request back in the queue
+- `x request:retry R-0012` — put a failed, deferred or cancelled request back in the queue. It continues from the stage that stopped, unless its run completed (deferred, declined, a flaky repair) or its worktree is gone (cancelled): then it starts again from the first stage
 
 Detail beyond that is awf's: `awf runs R-0012` and `awf logs R-0012`.
 
@@ -140,14 +145,14 @@ Every request is kept, whatever happens to it, in `.state/requests/`: `ledger.js
 ```
 received ─▶ building ─▶ done
    │           ├──────▶ failed  ─▶ (retry)
-   │           ├──────▶ blocked ─▶ (answer) ─▶ building
+   │           ├──────▶ blocked ─▶ (answer) ─▶ received
    │           ├──────▶ deferred ─▶ (retry)    needs something the tool cannot get yet
    │           ├──────▶ declined               out of scope, unsafe, or too vague to act on
    │           └──────▶ duplicate              an op already does it, or an open request asks for it
    └───────────────────▶ cancelled ─▶ (retry)    request:cancel, from any state that isn't final
 ```
 
-The worker is a loop: it takes the oldest received request and starts an awf run for it, at most two at a time. Filing a request starts the worker if none is running. Deferred, declined and duplicate are decided by the run's first stage, intake, so they show up as outcomes of a run that ended early.
+The worker is a loop: it takes the oldest received request and starts an awf run for it, as many at once as the domain's `maxRunning` (2 unless the domain says; X says 1). Filing a request starts the worker if none is running. When a request starts, the worker decides whether its run continues or starts again from the first stage, and records `redo` on it until that stage starts. Deferred, declined and duplicate are decided by the run's first stage, intake, so they show up as outcomes of a run that ended early.
 
 Two requests for the same thing don't both get built:
 
@@ -218,7 +223,7 @@ Playwright does all the browser work, behind the CLI.
 - **Exploring leaves a trace.** Every `page` command is logged with the locator Playwright used, to `trace.jsonl` in the run. Writing `op.ts` starts from what worked, not from the agent's memory of it.
 - **The page's own calls, not direct ones.** core lets an op have a `direct` way, plain HTTP on the saved cookies with no browser. X ops don't use it: X signs each call, rotates its query ids and sits behind Cloudflare's fingerprinting, so a separate client is what it flags (`x/knowledge/bot-detection.md`). Instead an op reads the GraphQL responses the page fetches (`app.graphql`), which carry more than the screen shows. The builder finds them with `page:requests`, as the `direct-calls` skill says.
 - **Installed Chrome, one request at a time.** `x/domain.ts` sets `browserChannel: "chrome"` (core falls back to Playwright's Chromium when Chrome isn't installed) and `maxRunning: 1`, so one request's browsers use the account at a time.
-- **Signed in for as long as runs need it.** While a request runs, the worker opens the app every five minutes and saves the fresh cookies, and open sessions nudge their page (template behaviour; whether X needs it is an open question).
+- **Signed in for as long as runs need it.** A domain whose app signs out an idle session sets `keepAlive`: while a request runs, the worker opens the app every `signInEveryMs` and saves the fresh cookies, and open sessions nudge their page every `pageEveryMs`. X sets none, since its sessions last weeks. A request blocked on signing in is still signed in again by the worker, once per attempt, when `.env.<context>` holds the sign-in.
 - **A sign-in check runs before every op:** is the context's session still signed in to its URL. If not, it exits 3 with how to sign in again, and no request is filed, because no agent can fix a login.
 
 ## Build workflow: new ops and changes
@@ -335,7 +340,7 @@ X detects automation and limits or locks accounts that look like it. `x/knowledg
 
 ## Open questions
 
-- [ ] One request at a time still opens two browsers on the account (the builder's and the checker's), and the worker's keep-signed-in touch a third. Watch whether X minds.
+- [ ] One request at a time still opens two browsers on the account (the builder's and the checker's). Watch whether X minds.
 - [ ] The e2e tests and their mock app were Workday's and were not copied. A mock X (a sign-in page, a search page, a profile with posts) would let `ci:check` cover the runner, the browser and the helpers again.
-- [ ] Does the worker's keep-signed-in nudge (opening the app every five minutes while requests run) look like automation to X? Workday needed it; X sessions last weeks, so it may be better off.
+- [ ] X sets no `keepAlive`, so nothing opens the app just to stay signed in. If a long run finds itself signed out, set it in `x/domain.ts`, and watch whether the nudge looks like automation to X.
 

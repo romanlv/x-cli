@@ -1,5 +1,6 @@
 import { envValue } from "./env";
-/** Exit codes, as DESIGN.md's Interface table lists them. 0 to 4 and 6 match airkit; 5 is new. */
+
+/** Exit codes, as DESIGN.md's Interface table lists them. */
 export const EXIT = {
   OK: 0,
   ERROR: 1,
@@ -22,6 +23,8 @@ export interface NextHint {
 export interface Outcome {
   ok: boolean;
   data?: unknown;
+  /** What a person reads in place of `data`; --json prints `data`. */
+  text?: string;
   error?: string;
   next?: NextHint[];
   exitCode?: number;
@@ -36,7 +39,7 @@ export const fail = (error: string, exitCode: number = EXIT.ERROR, next?: NextHi
   next,
 });
 
-export const ok = (data: unknown, next?: NextHint[]): Outcome => ({ ok: true, data, next });
+export const ok = (data: unknown, next?: NextHint[], text?: string): Outcome => ({ ok: true, data, text, next });
 
 type Writer = (text: string, cb: () => void) => unknown;
 
@@ -69,7 +72,7 @@ export const formatData = (data: unknown): string => {
   return JSON.stringify(data, null, 2);
 };
 
-/** Print an outcome and exit: airkit's `{ ok, data, error, next }` with --json, text otherwise. */
+/** Print an outcome and exit: `{ ok, data, error, next }` with --json, text otherwise. */
 export const finish = async (outcome: Outcome, { json }: { json: boolean }): Promise<never> => {
   const exitCode = outcome.exitCode ?? (outcome.ok ? EXIT.OK : EXIT.ERROR);
 
@@ -82,7 +85,8 @@ export const finish = async (outcome: Outcome, { json }: { json: boolean }): Pro
   if (outcome.error) await write(stderr, `error: ${outcome.error}\n`);
 
   const lines: string[] = [];
-  if (outcome.data !== undefined) lines.push(formatData(outcome.data));
+  if (outcome.text !== undefined) lines.push(outcome.text);
+  else if (outcome.data !== undefined) lines.push(formatData(outcome.data));
   for (const { hint, cmd } of outcome.next ?? []) lines.push(`Next: ${hint}\n  ${cmd}`);
 
   // A failure prints nothing to stdout, so `ID=$(x … )` captures nothing on failure. A filed
@@ -103,4 +107,21 @@ export const plain = (text: string): string => text.replace(/\u001b\[[0-9;]*m/g,
 export const firstLine = (text: string, max = Number.POSITIVE_INFINITY): string => {
   const line = text.split("\n")[0]!;
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+};
+
+/** "2h ago", "3d ago": for listings a person reads. */
+export const ago = (iso: string, now = Date.now()): string => {
+  const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86_400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86_400)}d ago`;
+};
+
+/** "45s", "16m", "1h05m". */
+export const formatDuration = (ms: number): string => {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.round(s / 60);
+  return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}m`;
 };
