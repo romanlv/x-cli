@@ -66,7 +66,7 @@ const cursor = (entryId: string, cursorType: string, value: string) => ({
   content: { entryType: "TimelineTimelineCursor", __typename: "TimelineTimelineCursor", value, cursorType },
 });
 
-const ada = userResult("11", "ada");
+export const ada = userResult("11", "ada");
 const bob = userResult("22", "bob");
 
 /** SearchTimeline (twscrape raw_search.json): tweet-<id> items, then Top and Bottom cursors. */

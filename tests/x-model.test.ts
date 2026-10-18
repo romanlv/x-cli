@@ -29,10 +29,13 @@ import {
   threadText,
   timeOfId,
   User,
+  UsersPage,
   UserUnavailable,
+  usersText,
   XList,
 } from "../x/model";
 import {
+  ada,
   adsOnly,
   foldedDetail,
   followers,
@@ -367,11 +370,24 @@ describe("x model: GraphQL accounts and lists", () => {
     });
   });
 
-  test("followers: users and unavailable accounts, with the bottom cursor", () => {
+  test("followers: users and unavailable accounts, a page of only items and more", () => {
     const p = usersPage(followers);
-    valid(Page(Type.Union([User, UserUnavailable])), p);
+    valid(UsersPage(Type.Union([User, UserUnavailable])), p);
     expect(p.items.map((u) => u.kind)).toEqual(["user", "user-unavailable"]);
-    expect(p.cursor).toBe("1840000000000000000|1840000000000000001");
+    expect(Object.keys(p).sort()).toEqual(["items", "more"]);
+  });
+
+  test("a suggestion's reason is X's socialContext text, left out when X sends none", () => {
+    const item = (socialContext?: unknown) => ({
+      entryId: "user-11",
+      content: { itemContent: { itemType: "TimelineUser", user_results: { result: ada }, ...(socialContext ? { socialContext } : {}) } },
+    });
+    const page = (e: unknown) => ({ data: { x: { timeline: { instructions: [{ type: "TimelineAddEntries", entries: [e] }] } } } });
+    const withReason = usersPage(page(item({ contextType: "Follow", text: "Followed by Grace" })));
+    valid(UsersPage(Type.Union([User, UserUnavailable])), withReason);
+    expect(withReason.items[0]).toMatchObject({ kind: "user", reason: "Followed by Grace" });
+    expect(usersText(withReason)).toContain("\n  Followed by Grace\n");
+    expect("reason" in usersPage(page(item())).items[0]!).toBe(false);
   });
 
   test("a list", () => {

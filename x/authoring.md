@@ -53,7 +53,7 @@ This is a sketch, not a built op: the first real one replaces it here.
 
 - **Outputs are the model.** `model.ts` has the types every op returns (`knowledge/data-model.md` is
   the design): a timeline is `Page(Entry)` (posts, reposts and unavailable posts), a post's page a
-  `Thread`, an account a `User`, followers `Page(Type.Union([User, UserUnavailable]))`. Inputs reuse
+  `Thread`, an account a `User`, an account list `UsersPage(Type.Union([User, UserUnavailable]))` (items and `more`, no `pinned` or `cursor`). Inputs reuse
   its types too (`PostId`, `UserId`). An op adds no output shape of its own for what the model has;
   what it lacks is added to `model.ts` and data-model.md, from a source, not in one op.
 - **Ids are the keys, handles are snapshots.** An output names posts and accounts by id; a handle is

@@ -1,4 +1,4 @@
-import { Page, User, UserUnavailable, usersText } from "../../model";
+import { User, UsersPage, UserUnavailable, usersText } from "../../model";
 import { defineOp, InputError, Type } from "../../op";
 
 export default defineOp({
@@ -17,7 +17,7 @@ export default defineOp({
       }),
     ),
   }),
-  output: Page(Type.Union([User, UserUnavailable])),
+  output: UsersPage(Type.Union([User, UserUnavailable])),
   async run({ app, step }, input) {
     const query = input.query.trim();
     if (!query) throw new InputError("query is empty: give X's search a name or words, such as `machine learning`");

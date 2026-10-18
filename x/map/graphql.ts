@@ -31,6 +31,7 @@ import {
   type UnavailableReason,
   type User,
   type UserRef,
+  type UsersPage,
   type UserUnavailable,
   type XList,
 } from "../model";
@@ -479,8 +480,12 @@ const itemValue = (content: Json, entryId: string): TimelineItem["value"] | unde
       const result = at(content, "tweet_results", "result") ?? at(content, "tweetResult", "result");
       return entryFromResult(result, { entryId });
     }
-    case "TimelineUser":
-      return userFromResult(at(content, "user_results", "result"));
+    case "TimelineUser": {
+      const user = userFromResult(at(content, "user_results", "result"));
+      // X's reason for showing the account, where a list carries one (a `socialContext` on the item). Never made up.
+      const reason = str(at(content, "socialContext", "text"))?.trim();
+      return user?.kind === "user" && reason ? { ...user, reason } : user;
+    }
     case "TimelineTombstone": {
       // Older TweetDetail shape for a deleted ancestor (inferred; not in the clients' fixtures).
       const text = str(at(content, "tombstoneInfo", "richText", "text")) ?? str(at(content, "tombstoneInfo", "text"));
@@ -577,7 +582,10 @@ const page = <T extends TimelineItem["value"]>(t: Timeline, keep: (v: TimelineIt
 export const postsPage = (json: unknown): Page<Entry> => page(readTimeline(json), isEntry);
 
 /** A timeline of accounts as a page: followers, following, list members, reposters. */
-export const usersPage = (json: unknown): Page<User | UserUnavailable> => page(readTimeline(json), isAccount);
+export const usersPage = (json: unknown): UsersPage<User | UserUnavailable> => {
+  const { items, more } = page(readTimeline(json), isAccount);
+  return clean({ items, more });
+};
 
 /** Reply groups of a TweetDetail's items: a group per conversation module (or lone entry), in the order X sent them. */
 const groupsOf = (items: TimelineItem[], more: Record<string, string>, section?: string): ReplyGroup[] => {

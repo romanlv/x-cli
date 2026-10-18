@@ -218,6 +218,12 @@ export const User = Type.Object({
   ),
   pinned: Type.Optional(Type.Array(PostId)),
   relationship: Type.Optional(Relationship),
+  reason: Type.Optional(
+    Type.String({
+      description:
+        'why X shows this account in a list of suggestions, in X\'s words ("Followed by Ada", a topic); left out when X gives none',
+    }),
+  ),
   withheldIn: Type.Optional(Type.Array(Type.String())),
 });
 
@@ -269,6 +275,16 @@ export const Page = <T extends TSchema>(item: T) =>
     more: Type.Optional(Type.Boolean()),
     cursor: Type.Optional(Type.String()),
     pinned: Type.Optional(Type.Array(PostId, { description: "ids of the items X pinned to the top, out of the timeline's order" })),
+  });
+
+/**
+ * A bounded read of accounts: followers, following, search's People, X's suggestions. Only `items` and
+ * `more`: no `pinned` (accounts pin nothing) and no `cursor` (ops never resume one of X's).
+ */
+export const UsersPage = <T extends TSchema>(item: T) =>
+  Type.Object({
+    items: Type.Array(item),
+    more: Type.Optional(Type.Boolean()),
   });
 
 /** Replies shown together: X's conversation module, a reply to the focal post and the replies under it. */
@@ -381,6 +397,7 @@ export type PostAction = Static<typeof PostAction>;
 export type UserAction = Static<typeof UserAction>;
 export type MessageDraft = Static<typeof MessageDraft>;
 export type Page<T> = { items: T[]; more?: boolean; cursor?: string; pinned?: string[] };
+export type UsersPage<T> = { items: T[]; more?: boolean };
 
 /** A post's link that works whatever its author is called now. */
 export const postUrl = (id: string): string => `https://x.com/i/status/${id}`;
@@ -645,6 +662,7 @@ export const userText = (user: User | UserUnavailable): string => {
   const r = user.relationship;
   const tags = [r?.following && "following", r?.followedBy && "follows you", user.protected && "protected"].filter(Boolean);
   const lines = [`${user.name ? `${user.name} ` : ""}@${user.handle}${tags.length ? ` · ${tags.join(" · ")}` : ""}`];
+  if (user.reason) lines.push(`  ${user.reason}`);
   lines.push(
     ...clip(user.bio ?? "", WIDTH - 2, 2, 160)
       .filter(Boolean)
@@ -661,38 +679,6 @@ export const userText = (user: User | UserUnavailable): string => {
 export const usersText = (page: { items: (User | UserUnavailable)[]; more?: boolean }): string => {
   if (page.items.length === 0) return "no accounts";
   const blocks = page.items.map(userText);
-  if (page.more) blocks.push(`${plural(page.items.length, "account", "accounts")} · more: raise --limit`);
-  return blocks.join(`\n${RULE}\n`);
-};
-
-/** A count in full, as data: 418105, with "~" when X rounded it already. */
-const exactN = (c?: Count) => (c ? `${c.exact ? "" : "~"}${c.value}` : "?");
-
-/**
- * One account with everything an agent reads it for, nothing shortened: id, handle, the whole bio, exact
- * counts, and every relationship flag that is set. `userText` is the briefer one for a person.
- */
-export const userFullText = (user: User | UserUnavailable): string => {
-  if (user.kind === "user-unavailable") return userText(user);
-  const r = user.relationship ?? {};
-  const flags = Object.entries(r)
-    .filter(([, v]) => v === true)
-    .map(([k]) => k);
-  const tags = [user.protected && "protected", user.blue && "blue", user.verifiedType && `verified:${user.verifiedType}`].filter(Boolean);
-  const c = user.counts ?? {};
-  const lines = [`${user.name} @${user.handle}`, `  id ${user.id}`];
-  if (user.bio) lines.push(...user.bio.split(/\r?\n/).map((l) => `  ${l}`));
-  if (user.location) lines.push(`  location: ${user.location}`);
-  lines.push(`  followers ${exactN(c.followers)} · following ${exactN(c.following)} · posts ${exactN(c.posts)}`);
-  lines.push(`  relationship: ${flags.length ? flags.join(", ") : "none"}${tags.length ? ` · ${tags.join(", ")}` : ""}`);
-  lines.push(`  https://x.com/${user.handle}`);
-  return lines.join("\n");
-};
-
-/** A page of accounts in full (`userFullText`), with a rule between blocks and, when there is more, how to read on. */
-export const usersFullText = (page: { items: (User | UserUnavailable)[]; more?: boolean }): string => {
-  if (page.items.length === 0) return "no accounts";
-  const blocks = page.items.map(userFullText);
   if (page.more) blocks.push(`${plural(page.items.length, "account", "accounts")} · more: raise --limit`);
   return blocks.join(`\n${RULE}\n`);
 };

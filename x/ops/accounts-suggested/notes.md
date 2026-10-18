@@ -79,3 +79,43 @@ shape, not the accounts. A `--limit` cut is of X's order for that load. All 100 
 - Scoping to another account ("similar to @x"): the page has no input for it (the profile's "similar
   accounts" is `SimilarUsers`/profile recommendations, a different call). Not read.
 - No direct way (x/authoring.md): the op reads the page's own `ConnectTabTimeline`.
+
+## Looked again for a reason, for R-0012 (2026-10-18)
+
+Asked: does X give a reason anywhere ("Followed by …", a topic)? Looked in every place the page shows
+suggestions, on `me` (signed in as @romitch), read only, one page at a time.
+
+- **`/i/connect_people`, tab "Who to follow"**: `ConnectTabTimeline` again, 100 users. Searched the whole
+  response (232 KB) for any key or text naming a reason (`social`, `reason`, `topic`, `why`, `context`,
+  "followed by", "popular", "based on"): only `relationship_perspectives.followed_by` (the user follows
+  the viewer) and `super_followed_by`, a boolean on each of the 100. The module has `header.text`
+  "Suggested for you" and `clientEventInfo.component` `people_connect_module`; each item's
+  `clientEventInfo.details.timelinesDetails` has `injectionType: "MergeAllCandidatesModule"` and opaque
+  base64 `controllerData`/`sourceData` (thrift ids, no text). `itemContent` has only `__typename`,
+  `itemType`, `userDisplayType`, `user_results`. No `socialContext`, no `socialProof`.
+- **The DOM row** (`UserCell`, 28 rows in the page): in the page's controls each row is name, `@handle`,
+  "Follow" and the bio, nothing else; no line like "Followed by" under the name.
+- **The sidebar's "Who to follow"** (3 `UserCell` listitems): `SidebarUserRecommendations` returns
+  `data.sidebar_user_recommendations[]` of `{ token, user_results }`; the `token` is opaque base64
+  (thrift), no reason text. The same 3 rows show only name, handle and Follow.
+- **`ExploreSidebar`** (trends and the sidebar's other modules): only `domain_context` on trends; nothing
+  about accounts.
+- **A suggestion's profile** (`/AndrewYNg`, a suggestion): X shows "Followers you know" there, from a
+  separate per-account call, `GET /i/api/1.1/friends/following/list.json` (REST v1.1, `include_followed_by=1`),
+  not in any suggestions response. Getting it would take one profile page per suggestion (up to 100),
+  against x/authoring.md's one-page-at-a-time pace; and it is the mutual follows, not X's reason for
+  suggesting the account. Not read.
+- Not tried: "Creators for you" (same call, same item shape as the first tab, read by the last build: no
+  reason), and the home For you timeline's "Who to follow" module (not this list).
+
+**Answer: X gives no reason for a suggestion on any screen or call behind this list.** So the output has no
+reason field to fill. If one is added to `model.ts` it should be optional and left out when X sends
+none, never made up; nothing in today's data could fill it. The only tag the data has is the viewer's
+relationship (`following`, `followedBy`), which `usersText` already prints as "following" / "follows you".
+
+## Waits and screens (this run)
+
+- `page:goto https://x.com/romitch` first (the start page), then `page:goto https://x.com/i/connect_people`:
+  the tab "Who to follow" is selected, and `ConnectTabTimeline` was in by the time the page had its first
+  `UserCell` rows (about 3 s). Nothing clicked.
+- Spaced the page loads about 10 s apart; no rate limit seen.

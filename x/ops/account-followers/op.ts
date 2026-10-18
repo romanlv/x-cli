@@ -1,5 +1,5 @@
 import { HANDLE } from "../../helpers";
-import { Page, User, UserUnavailable, usersText } from "../../model";
+import { User, UsersPage, UserUnavailable, usersText } from "../../model";
 import { defineOp, InputError, PreconditionError, Type } from "../../op";
 
 export default defineOp({
@@ -17,7 +17,7 @@ export default defineOp({
       }),
     ),
   }),
-  output: Page(Type.Union([User, UserUnavailable])),
+  output: UsersPage(Type.Union([User, UserUnavailable])),
   async run({ app, step }, input) {
     // Only an omitted handle means the signed-in account: a supplied one is checked as given.
     let handle: string | undefined;

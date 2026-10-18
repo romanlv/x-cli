@@ -22,8 +22,8 @@ User ◄─author── Post ──quoted (one level)──► QuotedPost | Unav
  │  │
  │  └─ relationship (viewer → user: following, followedBy, followRequestSent/Received, blocking, blockedBy, muting)
  │
- ├── owner ── XList ── members: Page<User>          Notification ─ actors: UserRef[], targets: PostId[]
- └── Page<User | UserUnavailable>   (followers, following, list members, reposters, follow requests)
+ ├── owner ── XList ── members: UsersPage<User>        Notification ─ actors: UserRef[], targets: PostId[]
+ └── UsersPage<User | UserUnavailable>   (followers, suggestions, following, list members, reposters, follow requests)
 
 Thread = { focal, ancestors[], replies: ReplyGroup[], more?, folded?, unshown? }      Page<T> = { items, more?, cursor?, pinned? }
 Writes: Draft (text, replyTo?, quote?, media?, poll?), PostAction, UserAction, MessageDraft
@@ -34,10 +34,11 @@ Writes: Draft (text, replyTo?, quote?, media?, poll?), PostAction, UserAction, M
 | `Post` (`kind: "post"`) | Something an account wrote: an original post, a reply (`replyTo`), or a quote (`quotedId`, `quoted`). |
 | `Repost` (`kind: "repost"`) | Who reposted which post, and when. It is not a post by the reposter. |
 | `Unavailable` (`kind: "unavailable"`) | A post X names but won't show, with a `reason` and X's own `message`. |
-| `User` / `UserUnavailable` | An account. A `UserRef` (`id`, `handle`, `name`) is how other objects point to one. |
+| `User` / `UserUnavailable` | An account (`reason`: X's own words for why it suggests it, set only when a `TimelineUser` carries a `socialContext`; none seen so far). A `UserRef` (`id`, `handle`, `name`) is how other objects point to one. |
 | `XList` | A list, with its owner and counts. Its members and posts are Pages. |
 | `Notification` | One row of the notifications tab: `type`, `actors`, `targets`. |
-| `Page<T>` | A bounded read of a timeline. |
+| `Page<T>` | A bounded read of a timeline of posts. |
+| `UsersPage<T>` | A bounded read of accounts (followers, following, search's People, X's suggestions): `{ items, more? }`, with no `pinned` and no `cursor`, which mean nothing for accounts. |
 | `Thread` | A post with its ancestors and its groups of replies. |
 | `Media`, `Card`, `Poll`, `Entities`, `CommunityNote`, `Edits`, `PostCounts`, `PostViewer`, `Relationship` | The parts of the above. |
 
@@ -193,8 +194,7 @@ API v2 reports a missing referenced post as an `errors[]` entry next to `data` (
 `Page<T> = { items, more?, cursor?, pinned? }`. Ops never make calls of their own (`authoring.md`),
 so an op can't resume a GraphQL cursor: scrolling sends the page's next request. A read is bounded
 by `limit`, or by a stopping id (`until`), and a later read resumes from an id. Post ids are
-time-ordered snowflakes. `cursor` is X's Bottom cursor where one response is mapped (`postsPage`,
-`usersPage`), and for the API source the `next_token` an op can pass back; `app.timeline` and
+time-ordered snowflakes. An account list is a `UsersPage`, only `items` and `more`; the rest of this section is about `Page`. `cursor` is X's Bottom cursor where one response is mapped (`postsPage`; `usersPage` drops it), and for the API source the `next_token` an op can pass back; `app.timeline` and
 `app.posts` leave it out, since a cursor past a page cut at `limit` would skip what was cut.
 
 `more` is true when X sent a Bottom cursor, unless X said the timeline ends: a

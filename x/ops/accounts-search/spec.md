@@ -49,7 +49,7 @@ it sees (those it blocks or that block it).
 
 ## Output
 
-`Page(User | UserUnavailable)` from `model.ts`, mapped from the `SearchTimeline` responses by
+`UsersPage(User | UserUnavailable)` from `model.ts` (`items` and `more` only: no `pinned`, no `cursor`), mapped from the `SearchTimeline` responses by
 `usersPage`, as for `account:following`:
 
 - `items`: accounts in the order X lists them, unique by id: id, handle, name, bio, location,

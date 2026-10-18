@@ -46,7 +46,7 @@ throughout. A caller who wants more raises `--limit`; 200 is the most, as in `ac
 
 ## Output
 
-`Page(User | UserUnavailable)` from `model.ts`, mapped by `usersPage`, which reads `Followers` as it
+`UsersPage(User | UserUnavailable)` from `model.ts` (`items` and `more` only: no `pinned`, no `cursor`), mapped by `usersPage`, which reads `Followers` as it
 comes (`data.user.result.timeline.timeline`, `user-<id>` items plus cursors):
 
 - `items`: accounts in the order X lists them, unique by id: id, handle, name, bio, location,

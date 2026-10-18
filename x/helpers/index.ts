@@ -18,7 +18,16 @@ import {
   userFromResult,
   usersPage,
 } from "../map/graphql";
-import { type Entry, postOf, type ReplyGroup, type Thread, type User, type UserUnavailable, type Page as XPage } from "../model";
+import {
+  type Entry,
+  postOf,
+  type ReplyGroup,
+  type Thread,
+  type User,
+  type UsersPage,
+  type UserUnavailable,
+  type Page as XPage,
+} from "../model";
 
 export const ORIGIN = "https://x.com";
 
@@ -754,7 +763,7 @@ export const xHelpers = (page: Page) => {
       open: () => Promise<unknown>,
       bound: Pick<Bound, "limit" | "scrolls"> = {},
       timeout = 30_000,
-    ): Promise<XPage<User | UserUnavailable>> {
+    ): Promise<UsersPage<User | UserUnavailable>> {
       const limit = bound.limit ?? 20;
       const match = callOf(operation);
       const responses: Response[] = [];

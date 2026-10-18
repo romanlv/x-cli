@@ -1,8 +1,8 @@
-import { Page, User, UserUnavailable, usersFullText } from "../../model";
+import { User, UsersPage, UserUnavailable, usersText } from "../../model";
 import { defineOp, Type } from "../../op";
 
 export default defineOp({
-  name: "suggestions:list",
+  name: "accounts:suggested",
   description: "The accounts X suggests the signed-in account follow (Who to follow / Connect), in X's order, with bio and counts",
   input: Type.Object({
     limit: Type.Optional(
@@ -13,12 +13,12 @@ export default defineOp({
       }),
     ),
   }),
-  output: Page(Type.Union([User, UserUnavailable])),
+  output: UsersPage(Type.Union([User, UserUnavailable])),
   async run({ app, step }, input) {
     // The page's own call holds all 100 suggestions, so a read never scrolls; nothing here follows or dismisses one.
     return step("read the suggested accounts", () =>
       app.users("ConnectTabTimeline", () => app.open("/i/connect_people"), { limit: input.limit ?? 20 }),
     );
   },
-  format: usersFullText,
+  format: usersText,
 });

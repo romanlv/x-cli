@@ -31,7 +31,7 @@ hundred accounts risks X's limits, which is why 200 is the most.
 
 ## Output
 
-`Page(User | UserUnavailable)` from `model.ts`, mapped by `usersPage`:
+`UsersPage(User | UserUnavailable)` from `model.ts` (`items` and `more` only: no `pinned`, no `cursor`), mapped by `usersPage`:
 
 - `items`: accounts in the order X lists them, unique by id: id, handle, name, bio, location,
   counts (followers, following, posts, likes, media; exact), `protected`, `blue`, and

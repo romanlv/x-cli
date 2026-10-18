@@ -120,7 +120,7 @@ Confirmed against this account:
   `clientEventInfo.component` says why X showed it (`for_you_in_network`, `for_you_phoenix_retrieval`,
   `for_you_simclusters`, `ranked_following`); the model has no field for it yet. `postsPage` read
   both as they came and agreed with the DOM on every count looked at.
-- `ConnectTabTimeline` (2026-10-18, `suggestions:list`): `/i/connect_people` (tab "Who to follow", the sidebar's "Show more")
+- `ConnectTabTimeline` (2026-10-18, `accounts:suggested`): `/i/connect_people` (tab "Who to follow", the sidebar's "Show more")
   makes it once, `variables.count: 20`, `context: "{}"`; X sends **100 users in one call**, no cursor, the timeline ended
   (`TimelineTerminateTimeline` TopAndBottom), so scrolling adds nothing. It is at `data.connect_tab_timeline.timeline`,
   a single `mergeallcandidatesmodule-2` module whose `items[]` are `…-user-<id>` `TimelineUser`s; `usersPage` read 100 of
@@ -181,3 +181,11 @@ Every op that prints posts shares `model.ts`'s text. GraphQL `entities.urls` hav
 and `display_url`; `display_url` can end in `…`, so the expanded link is used then. The post's own media's
 t.co is not in `urls` but last in the text; a link to the quoted post is in `urls`, also last. `--until` reads
 only posts newer than an id, so a "more" hint says to raise `--limit` for older ones.
+
+## Account lists and why X suggests an account (2026-10-18, R-0012)
+
+Account lists (`account:following`, `account:followers`, `accounts:search`, `accounts:suggested`) are a
+`UsersPage`: `items` and `more`, no `pinned` and no `cursor`. They print with `usersText`. **X gives no
+reason for a suggested account** on any screen: not in `ConnectTabTimeline`, `SidebarUserRecommendations`
+or `ExploreSidebar`, nor in the cells' DOM. A suggestion's profile shows "Followers you know" from a
+separate per-account call, which is not X's reason. See `accounts:suggested`'s notes.md.

@@ -44,7 +44,7 @@ Every op below was asked for in a sentence and built by the agents, starting fro
 | a post and its thread | `post:thread` | 33m | $2.68 | 1 |
 | an account's followers | `account:followers` | 31m | $1.51 | 1 |
 | accounts matching a search | `accounts:search` | 11m | $1.29 | 0 |
-| the accounts X suggests I follow | `suggestions:list` | 15m | $1.52 | 1 |
+| the accounts X suggests I follow | `accounts:suggested` | 15m | $1.52 | 1 |
 
 Eight ops in 3h54m of runs, for $21 at list prices. The ops themselves are about 300 lines in
 all, because most of what a build learns goes into code and notes every later op shares. Over these
