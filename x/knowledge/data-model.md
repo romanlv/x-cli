@@ -190,8 +190,9 @@ or under the DOM's "Pinned" `socialContext` **[inferred]**, out of the timeline'
 in `items`, and `pinned` lists its id, so an op can drop or label it. `until` never stops at a
 pinned entry. Where the timeline is newest first by id, an op says so (`newestFirst`) and a read
 stops at the first entry whose id is at or before `until`, so a deleted `until` post still stops
-it: a post by its id, a GraphQL repost by its own (when it was reposted), and a DOM repost, which
-has no id of its own, by its post's. `until` itself stops a read by the same ids. Elsewhere
+it: a post by its id and a GraphQL repost by its own (when it was reposted). A DOM repost has no
+id of its own, so its post's id says nothing of when it was reposted: it stops a read only when
+its post is `until` itself. `until` itself stops a read by the same ids. Elsewhere
 (bookmarks and likes are in the order they were saved, search's Top by rank) only `until` itself
 stops a read.
 
