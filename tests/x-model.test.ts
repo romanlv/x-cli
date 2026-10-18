@@ -1,7 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import Type, { type TSchema } from "typebox";
 import Value from "typebox/value";
-import { entryFromResult, listFromResult, postsPage, readTimeline, threadOf, userFromResult, usersPage, xTime } from "../x/map/graphql";
+import {
+  entryFromResult,
+  iso,
+  listFromResult,
+  postsPage,
+  readTimeline,
+  threadOf,
+  userFromResult,
+  usersPage,
+  xTime,
+} from "../x/map/graphql";
 import { Draft, Entry, entryText, Page, type Post, postUrl, type Repost, Thread, timeOfId, User, UserUnavailable, XList } from "../x/model";
 import {
   adsOnly,
@@ -180,7 +190,7 @@ describe("x model: GraphQL posts", () => {
       kind: "unavailable",
       id: "77",
       reason: "protected",
-      message: "Protected",
+      // X's reason code is no sentence of its own: message stays unset.
       source: "graphql",
     });
     expect(entryFromResult(undefined, { entryId: "tweet-78" })).toEqual({
@@ -290,6 +300,8 @@ describe("x model: helpers and writes", () => {
     expect(xTime("Wed Jul 08 21:59:10 +0000 2026")).toBe("2026-07-08T21:59:10.000Z");
     expect(xTime("Wed Jul 08 21:59:10 -0130 2026")).toBe("2026-07-08T23:29:10.000Z");
     expect(xTime("yesterday")).toBeUndefined();
+    expect(iso("2024-04-18T18:37:10Z")).toBe("2024-04-18T18:37:10.000Z");
+    expect(iso("soon")).toBeUndefined();
     expect(timeOfId("2074976613713031490")?.slice(0, 4)).toBe("2026");
     // Ids before 2010-11-04 are counters: jack/status/20 holds no time.
     expect(timeOfId("20")).toBeUndefined();

@@ -5,7 +5,7 @@
 // it", not yet checked against this account. The DOM has no user ids, no repost ids and rounded
 // counts; an op that needs those reads GraphQL.
 import type { Count, Entry, Post, PostCounts, PostViewer, QuotedPost } from "../model";
-import { clean, nonEmpty, reasonOfText } from "./graphql";
+import { clean, iso, nonEmpty, reasonOfText } from "./graphql";
 
 /** One timeline cell as the browser read it: a post's parts, or the text of a tombstone in its place. */
 export interface Article {
@@ -36,7 +36,6 @@ const permalink = (href?: string) => {
   const m = href?.match(/^(?:https:\/\/(?:x|twitter)\.com)?\/(\w{1,15})\/status\/(\d+)/);
   return m ? { handle: m[1]!, id: m[2]! } : undefined;
 };
-const iso = (t?: string) => (t && !Number.isNaN(Date.parse(t)) ? new Date(t).toISOString() : undefined);
 
 /**
  * A count as X writes it, "1,204 Likes. Like" or "12K". K and M are rounded, so `exact: false`. A

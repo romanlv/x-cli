@@ -54,7 +54,7 @@ Bookmarks and likes have no type of their own. `bookmarks:list` is a `Page<Entry
 - `postUrl(id)` gives `https://x.com/i/status/<id>`, which works whatever the author is now called
   **[inferred: X redirects /i/status/ to the canonical URL]**. No URL is stored.
 - `timeOfId(id)` gives a post's time from its id (snowflake bits 22+, epoch 1288834974657)
-  **[confirmed: X's snowflake format]**. When `createdAt` is missing, this fills it. Ids from before
+  **[confirmed: X's snowflake format]**. When `createdAt` is missing, text output (`entryText`) falls back to it; no mapper fills `createdAt` from it. Ids from before
   snowflakes (2010-11-04, below about 2.97e10, such as jack/status/20) are counters with no time in
   them: `timeOfId` gives undefined, and `entryText` leaves the time out.
 - A `UserRef` from the DOM has only a `handle`, because the page shows no user ids. GraphQL and the
@@ -160,7 +160,7 @@ A user's counts are followers, following, posts, likes, media and listed. The ne
 | GraphQL | Model |
 | --- | --- |
 | `TweetTombstone` with `tombstone.text.text` ("This Post was deleted by the Post author. Learn more") | `Unavailable`, `reason` read from the sentence (deleted, suspended, protected, withheld, age-restricted, blocked), `message` set to the sentence. Its id comes from the entry id or the quoting post. **[confirmed shape: twikit, yt-dlp; the sentences are inferred]** |
-| `TweetUnavailable` with `reason` (`Protected`, `NsfwLoggedOut`, …) | `Unavailable` **[confirmed: yt-dlp]** |
+| `TweetUnavailable` with `reason` (`Protected`, `NsfwLoggedOut`, …) | `Unavailable`, `reason` from the code, no `message` (the code is not X's sentence) **[confirmed: yt-dlp]** |
 | `TweetWithVisibilityResults { tweet, limitedActionResults }` | The inner post, with `limitedActions` (for example `["Reply"]`) **[confirmed: raw_list_timeline.json]** |
 | an empty `tweet_results` | `Unavailable`, reason `unknown`, id from the entry **[inferred]** |
 | `UserUnavailable { reason, message }` | `UserUnavailable`; `Suspended` becomes `suspended` **[confirmed: the-convocation profile.ts]**, any other reason (`NoReason` in _issue_342_343.json) `unknown`. No source names a reason for a deactivated account, so the model has none. |

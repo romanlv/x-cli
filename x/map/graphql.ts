@@ -73,6 +73,8 @@ export const xTime = (s: unknown): string | undefined => {
   const offset = sign * (Math.abs(Number(m[6])) * 60 + Number(m[7])) * 60_000;
   return new Date(utc - offset).toISOString();
 };
+/** An ISO 8601 or other date `Date` reads, as ISO 8601 in UTC; undefined when it can't read it. */
+export const iso = (t?: string): string | undefined => (t && !Number.isNaN(Date.parse(t)) ? new Date(t).toISOString() : undefined);
 const msTime = (x: unknown): string | undefined => {
   const n = int(x);
   return n === undefined ? undefined : new Date(n).toISOString();
@@ -238,7 +240,6 @@ const mediaOf = (list: unknown): Media[] =>
         height: int(at(m, "original_info", "height")),
         durationMs: int(video.duration_millis),
         variants: variants.length ? variants : undefined,
-        views: count(at(m, "mediaStats", "viewCount")),
       }),
     ];
   });
@@ -259,7 +260,7 @@ const pollOf = (name: string, values: Map<string, Json>): Poll | undefined => {
   const end = str(values.get("end_datetime_utc")?.string_value);
   return clean({
     options,
-    endsAt: end ? new Date(end).toISOString() : undefined,
+    endsAt: iso(end),
     durationMinutes: int(values.get("duration_minutes")?.string_value),
     closed: bool(values.get("counts_are_final")?.boolean_value),
   });
@@ -343,8 +344,7 @@ export const entryFromResult = (result: unknown, opts: PostOptions = {}): Entry 
     const text = str(at(r, "tombstone", "text", "text"));
     return unavailable(reasonOfText(text), fallbackId, text);
   }
-  if (r.__typename === "TweetUnavailable")
-    return unavailable(UNAVAILABLE_REASON[str(r.reason) ?? ""] ?? "unknown", fallbackId, str(r.reason));
+  if (r.__typename === "TweetUnavailable") return unavailable(UNAVAILABLE_REASON[str(r.reason) ?? ""] ?? "unknown", fallbackId);
   const f = fields(r);
   const id = str(r.rest_id) ?? str(f.id_str);
   if (!id) return unavailable("unknown", fallbackId);
