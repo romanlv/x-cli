@@ -669,6 +669,59 @@ describe("running an op", () => {
   });
 });
 
+describe("opening the app", () => {
+  let t: ReturnType<typeof tempHome>;
+  beforeEach(() => {
+    t = tempHome();
+    process.env[envName("SIGNIN_WAIT_MS")] = "300";
+  });
+  afterEach(() => {
+    delete process.env[envName("SIGNIN_WAIT_MS")];
+    t.cleanup();
+  });
+
+  /** An op's call on an app whose page never shows itself or a sign-in, and that names `refused` as why. */
+  const open = async (refused?: string) => {
+    const domain: Domain = {
+      name: "t",
+      dir: join(t.home, "t"),
+      root: t.home,
+      home: t.home,
+      helpers: () => ({}),
+      signInState: async () => "unknown",
+      // A blank page at the app's URL, with no server behind it.
+      prepareBrowser: async (context) => {
+        await context.route("http://app.test/**", (route) => route.fulfill({ contentType: "text/html", body: "<p></p>" }));
+      },
+      refusal: async () => refused,
+    };
+    const contexts = new Contexts(t.home, "t");
+    const ctx = contexts.add("acme", "http://app.test/");
+    mkdirSync(dirname(ctx.authFile), { recursive: true });
+    writeFileSync(ctx.authFile, JSON.stringify({ cookies: [], origins: [] }));
+    const requests = new Requests(t.home);
+    const outcome = await runOp(
+      { domain, contexts, requests, fileRepairs: true },
+      entry(),
+      { query: "q", kind: "a" },
+      contexts.get("acme"),
+    );
+    return { outcome, repairs: requests.list() };
+  };
+
+  test("a page that never shows the app, where the app names a refusal (a rate limit), is refused, not a precondition", async () => {
+    const { outcome, repairs } = await open("rate limited (Viewer, status 429)");
+    expect(outcome).toMatchObject({ ok: false, exitCode: EXIT.REFUSED, error: "t refused it: rate limited (Viewer, status 429)" });
+    expect(repairs).toEqual([]);
+    // Naming none, it is a page that showed neither the app nor a sign-in.
+    expect((await open()).outcome).toMatchObject({
+      ok: false,
+      exitCode: EXIT.PRECONDITION,
+      error: expect.stringContaining("showed neither"),
+    });
+  });
+});
+
 describe("signing in by hand", () => {
   let t: ReturnType<typeof tempHome>;
   let server: ReturnType<typeof Bun.serve>;

@@ -93,6 +93,17 @@ Confirmed against this account:
   `TimelineAddEntries` of `tweet-<id>` items newest first by id, plus `cursor-top-…` and
   `cursor-bottom-…`. `postsPage`/`readTimeline` read it as it came; nothing differed. A search that
   matches nothing is an empty page, and a dangling operator (`from:`) is searched as text.
+- `Following` (2026-10-18, `account:following`): `/<handle>/following` makes `UserByScreenName`, then
+  `Following` with `variables.userId`, `count: 20`; X sends 50 or more users per page whatever `count`
+  says. The timeline is at `data.user.result.timeline.timeline`, `user-<id>` items plus cursors, the
+  last page ending in `TimelineTerminateTimeline` Bottom. `usersPage` read 121 of 121 as it came; each
+  user has `relationship_perspectives` (`following`, `followed_by`) and exact counts. The
+  "Who to follow" sidebar also uses `UserCell`: read the response, never the DOM by that testid.
+- **A rate-limited `Viewer` leaves the page blank** (2026-10-18): every fresh page load calls
+  `Viewer`, and when X answers it 429, x.com renders nothing, neither the side nav nor a message. About
+  30 fresh browsers in ten minutes did it, and it had reset ten minutes later. `x/domain.ts` keeps
+  each page's 429s (`watchLimits`), so the sign-in check and triage call it X's refusal (exit 4), not
+  a page that showed neither x's pages nor a sign-in (exit 3). While building, space the runs out.
 - A timeline's next page loads only when the page is scrolled near its bottom (20 posts are about
   8000 px), so a read can't count early scrolls without a new call as the end: `app.timeline` counts
   one only at the page's bottom.

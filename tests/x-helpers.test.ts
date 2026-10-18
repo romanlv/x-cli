@@ -3,11 +3,12 @@ import type { Browser, Page } from "playwright";
 import Value from "typebox/value";
 import { launch } from "../core/browser";
 import { PreconditionError, RefusedError } from "../core/errors";
+import { xDomain } from "../x/domain";
 import { gather, readPosts, xHelpers } from "../x/helpers";
 import { count } from "../x/map/dom";
 import { Entry, entryText, type Post, type Repost, type Unavailable } from "../x/model";
 import { profileHtml, selfThreadHtml, timelineHtml } from "./fixtures/x-dom";
-import { adsOnly, profileConversations, searchTimeline, userTweets } from "./fixtures/x-graphql";
+import { adsOnly, followers, profileConversations, searchTimeline, userTweets } from "./fixtures/x-graphql";
 
 const post = (id: string): Post => ({ kind: "post", id, source: "dom", author: { handle: "ada" }, text: "" });
 const gone: Unavailable = { kind: "unavailable", reason: "deleted", source: "dom" };
@@ -318,6 +319,36 @@ describe("x helpers: reading the page", () => {
       await expect(xHelpers(page).timeline("UserTweets", fetchTweets)).rejects.toThrow(/account looks limited or locked/);
       await serve(limited, { "x-rate-limit-limit": "500", "x-rate-limit-remaining": "0" }, 429);
       await expect(xHelpers(page).timeline("UserTweets", fetchTweets)).rejects.toThrow(/rate limited \(UserTweets, code 88\); it resets/);
+    });
+
+    test("users: the accounts of a list call, cut to limit; X's end is no more, a low budget stops with more", async () => {
+      const fetchFollowing = () =>
+        page.evaluate(() => fetch("https://x.com/i/api/graphql/q1/Following?variables=%7B%7D").then((r) => r.text()));
+      await serve(followers);
+      expect(await xHelpers(page).users("Following", fetchFollowing)).toMatchObject({
+        items: [{ kind: "user" }, { kind: "user-unavailable" }],
+        more: false,
+      });
+      expect(await xHelpers(page).users("Following", fetchFollowing, { limit: 1 })).toMatchObject({ items: { length: 1 }, more: true });
+      await serve(followers, low);
+      expect(await xHelpers(page).users("Following", fetchFollowing)).toMatchObject({ items: { length: 2 }, more: false });
+      await serve(followers, { "x-rate-limit-limit": "500", "x-rate-limit-remaining": "0" }, 429);
+      await expect(xHelpers(page).users("Following", fetchFollowing)).rejects.toThrow(RefusedError);
+    });
+
+    test("a page that shows no main column after X rate limited one of its calls is X's refusal; one that shows it is not", async () => {
+      const domain = xDomain();
+      await domain.prepareBrowser!(page.context());
+      await serve(
+        { errors: [{ code: 88, message: "Rate limit exceeded" }] },
+        { "x-rate-limit-limit": "50", "x-rate-limit-remaining": "0" },
+        429,
+      );
+      await page.evaluate(() => fetch("https://x.com/i/api/graphql/q1/Viewer?variables=%7B%7D").then((r) => r.text()));
+      await page.waitForTimeout(100);
+      expect(await domain.refusal!(page)).toMatch(/^X: rate limited \(Viewer, code 88\); it resets at 2027-/);
+      await page.setContent('<div data-testid="primaryColumn">Home</div>');
+      expect(await domain.refusal!(page)).toBeUndefined();
     });
 
     /** An `open` that shows `html` and makes the timeline call that loads its first page, as X's does. */

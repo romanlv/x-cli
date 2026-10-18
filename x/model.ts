@@ -478,3 +478,28 @@ export const pageText = (page: { items: Entry[]; more?: boolean }): string => {
   if (page.more && newest) blocks.push(`${page.items.length} posts · more: pass --until ${newest}`);
   return blocks.join(`\n${RULE}\n`);
 };
+
+/** One account as a person reads it in the terminal: who, how it relates to the viewer, its bio and counts. */
+export const userText = (user: User | UserUnavailable): string => {
+  if (user.kind === "user-unavailable") return `[${user.reason}] ${user.message ?? "account unavailable"}${user.id ? ` ${user.id}` : ""}`;
+  const r = user.relationship;
+  const tags = [r?.following && "following", r?.followedBy && "follows you", user.protected && "protected"].filter(Boolean);
+  const lines = [`${user.name ? `${user.name} ` : ""}@${user.handle}${tags.length ? ` · ${tags.join(" · ")}` : ""}`];
+  lines.push(
+    ...clip(user.bio ?? "", WIDTH - 2, 2, 160)
+      .filter(Boolean)
+      .map((l) => `  ${l}`),
+  );
+  const c = user.counts;
+  if (c) lines.push(`  ${n(c.followers)} followers · ${n(c.following)} following · ${n(c.posts)} posts`);
+  lines.push(`  https://x.com/${user.handle}`);
+  return lines.join("\n");
+};
+
+/** A page of accounts: blocks with a rule between them, and when there is more, how to read on. */
+export const usersText = (page: { items: (User | UserUnavailable)[]; more?: boolean }): string => {
+  if (page.items.length === 0) return "no accounts";
+  const blocks = page.items.map(userText);
+  if (page.more) blocks.push(`${page.items.length} accounts · more: raise --limit`);
+  return blocks.join(`\n${RULE}\n`);
+};

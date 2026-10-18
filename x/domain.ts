@@ -2,7 +2,19 @@ import { join } from "node:path";
 import type { Page } from "playwright";
 import { type Domain, defineDomain, type SignInState } from "../core/domain";
 import { InputError } from "../core/errors";
-import { HANDLE, ORIGIN, readPosts, SEARCH_TABS, SEL, type SearchTab, type Xh, xHelpers } from "./helpers";
+import {
+  HANDLE,
+  ORIGIN,
+  readPosts,
+  refusedLoad,
+  SEARCH_TABS,
+  SEL,
+  type SearchTab,
+  signedInHandle,
+  watchLimits,
+  type Xh,
+  xHelpers,
+} from "./helpers";
 
 const HOSTS = new Set(["x.com", "twitter.com", "mobile.x.com", "mobile.twitter.com"]);
 /** First path segments that are X's own pages, not an account's handle. */
@@ -36,17 +48,6 @@ export const accountOf = (url: string): { onX: boolean; handle?: string } => {
   } catch {
     return { onX: false };
   }
-};
-
-/** The handle of the account the page is signed in as, from the side nav's account switcher. */
-const signedInHandle = async (page: Page): Promise<string | undefined> => {
-  const text = await page
-    .locator(SEL.accountSwitcher)
-    .first()
-    .textContent()
-    .catch(() => null);
-  const handle = text?.match(/@(\w+)/)?.[1];
-  return handle && HANDLE.test(handle) ? handle.toLowerCase() : undefined;
 };
 
 /** Is this X's login or sign-up flow? Its path, not the whole URL: an account may be called `logintest`. */
@@ -100,9 +101,13 @@ export const xDomain = (overrides: Partial<Domain<Xh>> = {}): Domain<Xh> =>
       // The profile keeps the handle the sign-in check compares against.
       return handle ? `${ORIGIN}/${handle}` : `${ORIGIN}/home`;
     },
+    // A page whose start-up call X rate limited shows nothing, so the calls say why (helpers, watchLimits).
+    async prepareBrowser(context) {
+      watchLimits(context);
+    },
     async refusal(page) {
       const messages = await xHelpers(page).errors();
-      return messages.length ? messages.join("; ") : undefined;
+      return messages.length ? messages.join("; ") : refusedLoad(page);
     },
     pageCommands: {
       search: {

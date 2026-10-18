@@ -4,10 +4,10 @@
 // X marks its controls with data-testid, which these target first. The ids here are a seed from
 // general knowledge of x.com, written before the reference op was built against a real account:
 // see knowledge/x.md for which have been confirmed.
-import type { Page, Response } from "playwright";
+import type { BrowserContext, Page, Response } from "playwright";
 import { InputError, PreconditionError, RefusedError } from "../../core/errors";
 import { type Article, entryFromArticle, isPinned } from "../map/dom";
-import { clean, hasMore, isEntry, readTimeline, type TimelineItem, threadOf, userFromResult } from "../map/graphql";
+import { clean, hasMore, isEntry, readTimeline, type TimelineItem, threadOf, userFromResult, usersPage } from "../map/graphql";
 import { type Entry, postOf, type Thread, type User, type UserUnavailable, type Page as XPage } from "../model";
 
 export const ORIGIN = "https://x.com";
@@ -314,6 +314,38 @@ const limitsOf = async (operation: string, response: Response): Promise<{ body: 
   return { body, low };
 };
 
+/** Each page's last X call refused as rate limited or locked, in `limitsOf`'s words, kept by `watchLimits`. */
+const refusedCalls = new WeakMap<Page, string>();
+
+/**
+ * Keep, for each page of `context`, the last of X's calls that came back 429. A page whose start-up
+ * call X refused shows nothing at all, neither the app nor a message (`Viewer`, 2026-10-18), so this
+ * is the only way to say why: `refusedLoad`. Only 429s are read, not every body.
+ */
+export const watchLimits = (context: BrowserContext): void => {
+  context.on("response", (response) => {
+    const operation = response.url().match(GRAPHQL)?.[1];
+    if (!operation || response.status() !== 429) return;
+    limitsOf(operation, response).catch((err) => {
+      try {
+        if (err instanceof RefusedError) refusedCalls.set(response.frame().page(), err.message);
+      } catch {}
+    });
+  });
+};
+
+/** Why a page never showed X's main column, when one of its calls was refused as rate limited; else undefined. */
+export const refusedLoad = async (page: Page): Promise<string | undefined> => {
+  const refused = refusedCalls.get(page);
+  if (!refused) return undefined;
+  const shown = await page
+    .locator(SEL.primaryColumn)
+    .first()
+    .isVisible()
+    .catch(() => false);
+  return shown ? undefined : refused;
+};
+
 /** A GraphQL response's JSON, through `limitsOf`; a response that isn't one is an error. */
 const bodyOf = async (operation: string, response: Response) => {
   const answer = await limitsOf(operation, response);
@@ -322,11 +354,25 @@ const bodyOf = async (operation: string, response: Response) => {
   return answer;
 };
 
+/** The handle of the account the page is signed in as, from the side nav's account switcher. */
+export const signedInHandle = async (page: Page): Promise<string | undefined> => {
+  const text = await page
+    .locator(SEL.accountSwitcher)
+    .first()
+    .textContent()
+    .catch(() => null);
+  const handle = text?.match(/@(\w+)/)?.[1];
+  return handle && HANDLE.test(handle) ? handle.toLowerCase() : undefined;
+};
+
 /** A handle as X writes it in a URL: without the "@" people type. */
 const bare = (handle: string): string => handle.replace(/^@/, "");
 
 export const xHelpers = (page: Page) => {
   const helpers = {
+    /** The handle the page is signed in as. */
+    me: () => signedInHandle(page),
+
     /** Open a path on x.com and wait for its main column. */
     async open(path: string): Promise<void> {
       await page.goto(new URL(path, ORIGIN).toString(), { waitUntil: "domcontentloaded" });
@@ -485,6 +531,86 @@ export const xHelpers = (page: Page) => {
           atEnd = await scroll(page);
         }
         return read.page(more);
+      } finally {
+        page.off("response", listen);
+      }
+    },
+
+    /**
+     * An account's list of accounts (`following`, or `followers`), opened as a person does: the profile,
+     * then the link with the count under its name. A profile that isn't there, or a protected one the
+     * signed-in account can't see, is a precondition. Read it with `users`, which hears the call this makes.
+     */
+    async follows(handle: string, list: "following" | "followers"): Promise<void> {
+      const name = bare(handle);
+      await helpers.profile(name);
+      if (
+        await page
+          .getByText(/these posts are protected|this account.s posts are protected/i)
+          .first()
+          .isVisible()
+          .catch(() => false)
+      )
+        throw new PreconditionError(`@${name} is protected: its ${list} are not visible to this account`);
+      const link = page.locator(SEL.primaryColumn).locator(`a[href$="/${list}" i]`).first();
+      await link.waitFor({ state: "visible", timeout: 15_000 }).catch(() => {
+        throw new PreconditionError(`@${name}'s ${list} are not shown to this account`);
+      });
+      await link.click();
+    },
+
+    /**
+     * The accounts of a list call (`Following`, `Followers`, ...) that `open` makes the page send, then of
+     * the calls scrolling sends, at a person's pace, until `limit` accounts, until X has no more, or after
+     * `scrolls` scrolls. X sends more accounts than asked for, so the read is cut to `limit`. Limits are
+     * `timeline`'s: a rate limit or a lock is `RefusedError`, a budget down to a tenth ends the read with
+     * `more`. No cursor, as with `timeline`; and no `until`, since these lists are not in id order.
+     */
+    async users(
+      operation: string,
+      open: () => Promise<unknown>,
+      bound: Pick<Bound, "limit" | "scrolls"> = {},
+      timeout = 30_000,
+    ): Promise<XPage<User | UserUnavailable>> {
+      const limit = bound.limit ?? 20;
+      const match = callOf(operation);
+      const responses: Response[] = [];
+      const listen = (r: Response) => {
+        if (match.test(r.url())) responses.push(r);
+      };
+      page.on("response", listen);
+      try {
+        const seen = new Map<string, User | UserUnavailable>();
+        await open();
+        if (!responses.length) await page.waitForResponse((r) => match.test(r.url()), { timeout });
+        let more: boolean | undefined;
+        let done = false;
+        let atEnd = false;
+        for (let used = 0, idle = 0, scrolls = 0; ; scrolls++) {
+          const before = used;
+          while (!done && used < responses.length) {
+            const { body, low } = await bodyOf(operation, responses[used++]!);
+            const read = usersPage(body);
+            more = read.more;
+            for (const u of read.items) seen.set(u.id ? `${u.kind}:${u.id}` : `${u.kind}#${seen.size}`, u);
+            done = seen.size >= limit || more === false;
+            if (!done && low) {
+              if (!seen.size) throw new RefusedError(low);
+              done = true;
+            }
+          }
+          if (done) break;
+          // Only a scroll that reached the bottom without a new call counts as idle.
+          idle = used !== before ? 0 : atEnd ? idle + 1 : idle;
+          if (idle >= 3) break;
+          if (scrolls >= (bound.scrolls ?? MAX_SCROLLS)) {
+            more = true;
+            break;
+          }
+          atEnd = await scroll(page);
+        }
+        const items = [...seen.values()].slice(0, limit);
+        return clean({ items, more: seen.size > limit ? true : more });
       } finally {
         page.off("response", listen);
       }

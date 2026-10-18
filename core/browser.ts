@@ -7,7 +7,7 @@ import { type Context, type Contexts, loginHint } from "./contexts";
 import { type Credentials, type SignInWait, savedCredentials, submitCredentials } from "./credentials";
 import type { Domain, SignInState } from "./domain";
 import { envNumber, envValue } from "./env";
-import { BrowserError, InputError, PreconditionError } from "./errors";
+import { BrowserError, InputError, PreconditionError, RefusedError } from "./errors";
 import { type NetworkEntry, recordNetwork } from "./network";
 import { firstLine, progress } from "./output";
 import { browserBinary, startPlain } from "./plain-browser";
@@ -27,8 +27,8 @@ class SignedOut extends PreconditionError {}
 const VIEWPORT = { width: 1440, height: 900 };
 /** How long one Playwright action, or one direct call, waits before the step fails. */
 export const STEP_TIMEOUT_MS = envNumber("STEP_TIMEOUT_MS", 15_000);
-/** How long a loaded page may take to show the app signed in or a sign-in. */
-const SIGNIN_WAIT_MS = envNumber("SIGNIN_WAIT_MS", 15_000);
+/** How long a loaded page may take to show the app signed in or a sign-in, read when asked. */
+const signInWaitMs = (): number => envNumber("SIGNIN_WAIT_MS", 15_000);
 
 /**
  * A browser context on the context's saved sign-in, set up as the domain sets up every one that is
@@ -54,7 +54,7 @@ const headedUserAgent = async (browser: Browser): Promise<string | undefined> =>
  * SIGNIN_WAIT_MS: a slow page is not a signed-out one.
  */
 export const signInStateOf = async (domain: Domain, page: Page, contextUrl: string): Promise<SignInState> => {
-  const deadline = Date.now() + SIGNIN_WAIT_MS;
+  const deadline = Date.now() + signInWaitMs();
   for (;;) {
     const state = await domain.signInState(page, contextUrl).catch(() => "unknown" as const);
     if (state !== "unknown" || page.isClosed() || Date.now() > deadline) return state;
@@ -177,6 +177,9 @@ const openOnce = async (
       throw new SignedOut(`context "${ctx.name}" is signed out: its saved session has expired`, login);
     }
     if (state === "unknown") {
+      // A page that never showed the app may be the app refusing (a rate limit): that is the app's no.
+      const refused = await domain.refusal?.(page).catch(() => undefined);
+      if (refused) throw new RefusedError(`${domain.name} refused it: ${refused}`);
       throw new PreconditionError(
         `could not tell whether "${ctx.name}" is signed in: ${ctx.appUrl} showed neither ${domain.name}'s pages nor a sign-in`,
       );
@@ -268,6 +271,8 @@ export const readSignIn = async (
   ctx: Context,
   { profileDir, binary }: { profileDir: string; binary: string },
 ): Promise<void> => {
+  // No profile, no window ever wrote one: nothing to open (and a browser may be slow to make one).
+  if (!existsSync(profileDir)) throw new PreconditionError(`not signed in to ${ctx.url}: the window was closed before signing in`);
   let context: BrowserContext;
   try {
     context = await launchWith(false, ({ channel: _, ...options }) =>
