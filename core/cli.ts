@@ -10,8 +10,8 @@ import type { Domain } from "./domain";
 import { envName, envNumber, envOverride, envValue } from "./env";
 import { InputError, OpError, outcomeOf, PreconditionError, raise } from "./errors";
 import { isCliNoun, kebab, OP_NAME, opFolder } from "./names";
-import { commandLine, domainRef, type HistoryLine, lastRun, loadOps, type OpEntry, opHelp, parseInput, type RunEnv, runOp } from "./ops";
-import { ago, EXIT, fail, finish, firstLine, formatDuration, guardStdout, type NextHint, type Outcome, ok } from "./output";
+import { domainRef, type HistoryLine, lastRun, loadOps, type OpEntry, opHelp, parseInput, type RunEnv, runOp } from "./ops";
+import { ago, commandLine, EXIT, fail, finish, firstLine, formatDuration, guardStdout, type NextHint, type Outcome, ok } from "./output";
 import { isTerminal, RETRYABLE, type RequestRecord, type RequestState, Requests } from "./requests";
 import { pageCommand, pageCommandsOf, runSessionDaemon, sessionContext } from "./session";
 import { requestLines, stateOf, statusBoard } from "./watch";
@@ -337,7 +337,9 @@ const cancelRequest = async (env: Env, args: ParsedArgs): Promise<Outcome> => {
 const maxRunningOf = (domain: Domain): number => {
   const n = envNumber("MAX_RUNNING", domain.maxRunning ?? 2);
   if (Number.isInteger(n) && n >= 1) return n;
-  throw new InputError(`runs at once (${envName("MAX_RUNNING")}, or the domain's maxRunning) must be a whole number, 1 or more, not ${n}`);
+  throw new InputError(
+    `runs at once (${envName("MAX_RUNNING")}, or the domain's maxRunning) must be a whole number, 1 or more, not "${envValue("MAX_RUNNING") ?? domain.maxRunning}"`,
+  );
 };
 
 const work = async (env: Env): Promise<Outcome> => {

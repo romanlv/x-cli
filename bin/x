@@ -5,7 +5,7 @@
 #   ln -s "$PWD/bin/x" ~/bin/x
 #
 # Resolves symlinks first so a linked path still finds the checkout, and runs bun on the entry
-# point without cd-ing, so relative arguments like `--resume ./cv.pdf` stay the caller's.
+# point without cd-ing, so relative arguments such as a file path stay the caller's.
 set -euo pipefail
 
 src="${BASH_SOURCE[0]}"

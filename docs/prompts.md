@@ -214,6 +214,9 @@ The builder. It answers reproduced or flaky.
 <request id="R-0002" kind="repair" context="acme">
 thing:find failed at "open search": timeout at read results
 </request>
+<call>
+x thing:find --query lamp
+</call>
 <intent>
 a repair of thing:find, which failed at the step "open search"
 </intent>
@@ -238,6 +241,9 @@ The builder.
 <request id="R-0002" kind="repair" context="acme">
 thing:find failed at "open search": timeout at read results
 </request>
+<call>
+x thing:find --query lamp
+</call>
 <intent>
 a repair of thing:find, which failed at the step "open search"
 </intent>

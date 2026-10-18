@@ -12,7 +12,7 @@ import type { Domain } from "./domain";
 import { DryRunReached, InputError, isBrowserFailure, OpError, outcomeOf } from "./errors";
 import { isCliNoun, kebab, OP_NAME, opFolder } from "./names";
 import { formatNetwork, type NetworkEntry } from "./network";
-import { EXIT, fail, firstLine, type Outcome, plain, progress, shellQuote } from "./output";
+import { commandLine, EXIT, fail, firstLine, type Outcome, plain, progress } from "./output";
 import type { DomainRef, Requests } from "./requests";
 import { formatSnapshot, takeSnapshot } from "./snapshot";
 import { appendJsonLine, readJsonLines, timestamp, writeJson } from "./store";
@@ -172,8 +172,6 @@ export const callArgv = (op: string, input: Record<string, unknown>): string[] =
   ),
 ];
 
-export const commandLine = (cli: string, argv: string[]): string => [cli, ...argv.map(shellQuote)].join(" ");
-
 export interface HistoryLine {
   at: string;
   context: string;
@@ -277,7 +275,7 @@ export const runOp = async (
       const problem = [...Value.Errors(entry.definition.output, output)][0];
       throw new Error(`output does not match the op's output schema: ${problem?.instancePath || "/"} ${problem?.message}`);
     }
-    return { ok: true, data: entry.definition.format ? entry.definition.format(output as never) : output };
+    return { ok: true, data: output, ...(entry.definition.format && { text: entry.definition.format(output as never) }) };
   };
 
   const directRun = attempt(entry, ctx, started, dryRun);

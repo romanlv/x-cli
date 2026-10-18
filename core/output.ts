@@ -102,6 +102,9 @@ export const finish = async (outcome: Outcome, { json }: { json: boolean }): Pro
 /** Quote an argument for a command a person or agent will paste. */
 export const shellQuote = (arg: string): string => (/^[\w@%+=:,./-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, `'\\''`)}'`);
 
+/** A command as a person would type it: the CLI and its arguments, quoted where the shell needs it. */
+export const commandLine = (cli: string, argv: string[]): string => [cli, ...argv.map(shellQuote)].join(" ");
+
 /** Playwright colours its call logs; the ledger and bundles are read as plain text. */
 // biome-ignore lint/suspicious/noControlCharactersInRegex: the escape character is what an ANSI colour code starts with.
 export const plain = (text: string): string => text.replace(/\u001b\[[0-9;]*m/g, "");

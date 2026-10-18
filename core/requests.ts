@@ -210,8 +210,12 @@ export class Requests {
    * one of its direct way (filed when the op fell back to the browser), which the op then skips.
    */
   brokenBy(op: string, direct = false): RequestRecord | undefined {
-    const latest = this.list({ op }).find((r) => r.kind === "repair" && (r.failure?.fellBack === true) === direct);
-    return latest?.state === "failed" ? latest : undefined;
+    const all = this.list({ op });
+    const latest = all.find((r) => r.kind === "repair" && (r.failure?.fellBack === true) === direct);
+    // A repair that couldn't reproduce the failure found the op working; and a build, change or repair
+    // done on the op since may have fixed it, and verify ran it before it merged.
+    if (latest?.state !== "failed" || latest.reason?.startsWith("flaky:")) return undefined;
+    return all.some((r) => r.state === "done" && r.updatedAt >= latest.updatedAt) ? undefined : latest;
   }
 
   /** Take the lock on an op for a request; returns the holder when another request has it. */

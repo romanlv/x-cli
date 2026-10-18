@@ -30,8 +30,11 @@ prompt is sent; `prompts.ts` decides what it says; `docs/prompts.md` shows every
 1. Copy the checkout without `.state/`, `.env*`, `node_modules/`, `.git/` or the domain's `ops/`.
 2. Rename `x/` to your site's folder and `bin/x` to its command; point `bin/<cli>` at it, rename
    `tests/fixtures/x/` after it and point its `main.ts` at it, set `include` in `tsconfig.json`, and
-   replace the `x x` arguments of `docs:prompts` in `package.json` (the domain folder and the
-   command). Rename `ENV_PREFIX` in `core/env.ts` if the `XCLI_` variables should be the CLI's own.
+   replace the `x x` arguments of `docs:prompts` in `package.json` (the command and the domain
+   folder; the prompts test reads them from there). Point the domain import in
+   `tests/worktree.test.ts` and `tests/helpers.ts`'s `ENTRY` at the new folder, and delete X's own
+   tests (`tests/x*.test.ts`, `tests/fixtures/x-*.ts`). Rename `ENV_PREFIX` in `core/env.ts` if the
+   `XCLI_` variables should be the CLI's own.
 3. Write `<site>/domain.ts`: `name`, `signInState` (signed in, signed out, signed in elsewhere,
    unknown: one look at the page, which core repeats while it is unknown) and `helpers` are
    required; the rest are optional hooks, each described in `core/domain.ts`.

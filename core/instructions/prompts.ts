@@ -9,6 +9,7 @@
 // authoring.md, and what its app and each context are like is its knowledge/. The instructions send
 // agents to read them.
 import { join } from "node:path";
+import { commandLine } from "../output";
 import { type RequestRecord, signInQuestion } from "../requests";
 import { type CheckScope, opDirIn, SCRIPTS, type Verified } from "../workflows/deps";
 import type { Finding, Paths } from "../workflows/shared";
@@ -67,10 +68,9 @@ const answers = (request: RequestRecord, readOnly = false): string => {
 
 /** The request as asked, and the call that filed it. */
 const asked = (request: RequestRecord, attrs: Record<string, string>): string =>
-  [
-    tag("request", request.text, attrs),
-    ...(request.call ? [tag("call", `${request.domain.name} ${request.call.argv.join(" ")}`)] : []),
-  ].join("\n");
+  [tag("request", request.text, attrs), ...(request.call ? [tag("call", commandLine(request.domain.name, request.call.argv))] : [])].join(
+    "\n",
+  );
 
 /** Everything an agent needs about the request, whether or not it saw an earlier stage. */
 const brief = (run: PromptRun, op: string, summary: string): string => {

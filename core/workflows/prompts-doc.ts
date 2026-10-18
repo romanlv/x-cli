@@ -55,7 +55,6 @@ export const renderPrompts = (cli: string, domainFolder: string, config: Workflo
     // As the runner files it.
     text: `${op} failed at "${failure.step}": ${failure.error}`,
     op,
-    call: undefined,
     failure,
   });
   const other: RequestRecord = {

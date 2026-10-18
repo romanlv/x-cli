@@ -321,9 +321,18 @@ describe("request ledger", () => {
     const r = repair(failure).record;
     expect(repair({ ...failure, bundle: "/b2" })).toMatchObject({ joined: true, record: { id: r.id, joined: [{ bundle: "/b2" }] } });
     expect(requests.brokenBy("x:y")).toBeUndefined();
-    requests.update(r.id, () => ({ state: "failed", reason: "flaky" }));
+    requests.update(r.id, () => ({ state: "failed", reason: "the builder's rounds ran out" }));
     expect(requests.brokenBy("x:y")?.id).toBe(r.id);
     requests.retry(r.id);
+    expect(requests.brokenBy("x:y")).toBeUndefined();
+    // One that couldn't reproduce the failure found the op working.
+    requests.update(r.id, () => ({ state: "failed", reason: "flaky: could not reproduce (works every time)" }));
+    expect(requests.brokenBy("x:y")).toBeUndefined();
+    // A change done on the op after its repair failed may have fixed it.
+    requests.update(r.id, () => ({ state: "failed", reason: "the builder's rounds ran out" }));
+    expect(requests.brokenBy("x:y")?.id).toBe(r.id);
+    const change = requests.file({ kind: "change", op: "x:y", text: "fix it", context: "acme", domain: domain() });
+    requests.update(change.id, () => ({ state: "done" }));
     expect(requests.brokenBy("x:y")).toBeUndefined();
     expect(repair({ ...failure, step: "open page" })).toMatchObject({ joined: false });
   });
@@ -543,7 +552,10 @@ describe("snapshot", () => {
 
 test("docs/prompts.md is what prompts.ts writes now: `bun run docs:prompts` updates it", async () => {
   const root = join(import.meta.dir, "..");
-  expect(await Bun.file(join(root, "docs/prompts.md")).text()).toBe(renderPrompts("x", "x", loadConfig(root)));
+  // The CLI's name and domain folder, from the one place that names them: the docs:prompts script.
+  const script: string = (await Bun.file(join(root, "package.json")).json()).scripts["docs:prompts"];
+  const [cli, folder] = script.split(" ").slice(2);
+  expect(await Bun.file(join(root, "docs/prompts.md")).text()).toBe(renderPrompts(cli!, folder!, loadConfig(root)));
 });
 
 test("a domain whose ops make no calls of their own has no page:fetch to make one with", () => {

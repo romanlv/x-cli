@@ -20,6 +20,7 @@ import Type from "typebox";
 import { envName, envValue } from "../env";
 import * as prompts from "../instructions/prompts";
 import { opFromFolder } from "../names";
+import { commandLine } from "../output";
 import { isSignInQuestion, isTerminal, REQUEST_ID, type RequestKind, type RequestRecord, Requests, signInQuestion } from "../requests";
 import { loadConfig, type Role, type WorkflowConfig } from "./config";
 import { type CheckScope, cliEnv, type Deps, domainIn, entryIn, examplesIn, realDeps, type Verified } from "./deps";
@@ -643,7 +644,7 @@ export const land = async (
     () => mergeToMain(run, team, op, summary, `${run.id} ${DID[kind].commit} ${op}`, checked.base),
   );
   const { request } = run;
-  const command = request.call ? `${request.domain.name} ${request.call.argv.join(" ")}` : `${request.domain.name} ${op} --help`;
+  const command = request.call ? commandLine(request.domain.name, request.call.argv) : `${request.domain.name} ${op} --help`;
   const done = `${DID[kind].past} ${op} (${checked.revisions} revision(s)): ${what}`;
   return run.end("done", done, { summary: done, command, commit: merged.commit });
 };
