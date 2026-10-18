@@ -236,6 +236,21 @@ describe("request ledger", () => {
     expect(requests.retry(r.id)).toMatchObject({ state: "received", reason: undefined });
   });
 
+  test("signing in continues only the requests still blocked on signing in to that context", () => {
+    const blocked = (context: string, question: string) => {
+      const r = requests.file({ kind: "intake", text: "x", context, domain: domain() });
+      requests.update(r.id, () => ({ state: "blocked", question }));
+      return r.id;
+    };
+    const a = blocked("acme", "sign in again: x context:login acme");
+    const other = blocked("other", "sign in again: x context:login other");
+    const asked = blocked("acme", "which?");
+    expect(requests.signedIn("acme")).toEqual([a]);
+    // Signed in twice (a person and the worker at once): the second finds nothing left to continue.
+    expect(requests.signedIn("acme")).toEqual([]);
+    expect([requests.get(other)!.state, requests.get(asked)!.state]).toEqual(["blocked", "blocked"]);
+  });
+
   test("a cancelled request keeps nothing its stopping run records, and a retry starts it over", () => {
     const r = requests.file({ kind: "new", op: "x:y", text: "x", context: "acme", domain: domain() });
     requests.update(r.id, () => ({ state: "building", stage: "explore" }));

@@ -77,6 +77,13 @@ export interface FileInput {
 
 export const REQUEST_ID = /^R-\d{4,}$/;
 
+/** A blocked request's question answered: it goes back in the queue. */
+const answered = (r: RequestRecord, text: string): Partial<RequestRecord> => ({
+  state: "received",
+  answers: [...r.answers, { at: timestamp(), question: r.question, text }],
+  question: undefined,
+});
+
 export class Requests {
   constructor(readonly home: string) {}
 
@@ -163,20 +170,27 @@ export class Requests {
     event?: string,
     { evenIfCancelled = false }: { evenIfCancelled?: boolean } = {},
   ): RequestRecord {
-    return withLock(this.lockDir, () => {
-      const current = this.get(id);
-      if (!current) throw new Error(`no request ${id}`);
-      if (current.state === "cancelled" && !evenIfCancelled) return current;
-      const patch = change(current);
-      const next: RequestRecord = { ...current, ...patch, updatedAt: timestamp() };
-      writeJson(this.fileOf(id), next);
-      const logged: Record<string, unknown> = {};
-      for (const key of ["state", "stage", "op", "question", "reason", "result", "waitingFor"] as const) {
-        if (key in patch) logged[key] = patch[key];
-      }
-      this.event(id, event ?? (patch.state && patch.state !== current.state ? patch.state : "updated"), logged);
-      return next;
-    });
+    return withLock(this.lockDir, () => this.updateLocked(id, change, event, evenIfCancelled));
+  }
+
+  private updateLocked(
+    id: string,
+    change: (r: RequestRecord) => Partial<RequestRecord>,
+    event?: string,
+    evenIfCancelled = false,
+  ): RequestRecord {
+    const current = this.get(id);
+    if (!current) throw new Error(`no request ${id}`);
+    if (current.state === "cancelled" && !evenIfCancelled) return current;
+    const patch = change(current);
+    const next: RequestRecord = { ...current, ...patch, updatedAt: timestamp() };
+    writeJson(this.fileOf(id), next);
+    const logged: Record<string, unknown> = {};
+    for (const key of ["state", "stage", "op", "question", "reason", "result", "waitingFor"] as const) {
+      if (key in patch) logged[key] = patch[key];
+    }
+    this.event(id, event ?? (patch.state && patch.state !== current.state ? patch.state : "updated"), logged);
+    return next;
   }
 
   ledger(id?: string): { at: string; id: string; event: string; [k: string]: unknown }[] {
@@ -232,21 +246,22 @@ export class Requests {
       id,
       (r) => {
         if (r.state !== "blocked") throw new PreconditionError(`${id} is ${r.state}, not blocked: there is no question to answer`);
-        return {
-          state: "received",
-          answers: [...r.answers, { at: timestamp(), question: r.question, text }],
-          question: undefined,
-        };
+        return answered(r, text);
       },
       "answered",
     );
   }
 
-  /** Continue every request blocked on signing in to `context`; returns their ids. */
+  /**
+   * Continue every request blocked on signing in to `context`; returns their ids. Read and answered
+   * under one lock, so one that a person, a cancel or another sign-in moved on meanwhile is left as it is.
+   */
   signedIn(context: string): string[] {
-    return this.list({ state: "blocked" })
-      .filter((r) => r.context === context && isSignInQuestion(r.question))
-      .map((r) => this.answer(r.id, "signed in again").id);
+    return withLock(this.lockDir, () =>
+      this.list({ state: "blocked" })
+        .filter((r) => r.context === context && isSignInQuestion(r.question))
+        .map((r) => this.updateLocked(r.id, (current) => answered(current, "signed in again"), "answered").id),
+    );
   }
 
   cancel(id: string, reason: string): RequestRecord {

@@ -168,7 +168,10 @@ export const runWorker = async (
     if (contexts.size === 0) return;
     signingIn = (async () => {
       for (const context of contexts) if (await keepSignedIn(context).catch(() => false)) requests.signedIn(context);
-    })().finally(() => (signingIn = undefined));
+    })()
+      // A lock that stays taken must not end the worker, which nothing awaits this for.
+      .catch((err) => console.error(`${new Date().toISOString()} signing in: ${(err as Error).message}`))
+      .finally(() => (signingIn = undefined));
   };
 
   for (;;) {
