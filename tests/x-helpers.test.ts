@@ -367,11 +367,12 @@ describe("x helpers: reading the page", () => {
 
     test("an account that isn't there is a precondition", async () => {
       await expect(xHelpers(profilePage).profile("nobody")).rejects.toThrow(PreconditionError);
-    });
+      // A fresh page's first load of the routed site takes seconds, near bun's default timeout.
+    }, 20_000);
 
     test("one that is opens", async () => {
       await xHelpers(profilePage).profile("ada");
       expect(await profilePage.locator('[data-testid="UserName"]').isVisible()).toBe(true);
-    });
+    }, 20_000);
   });
 });

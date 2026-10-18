@@ -321,7 +321,7 @@ The tool should get faster at building with every op, because what one op learns
 | All of X | `knowledge/x.md` | "a post's permalink is the link around its `time`" |
 | Detection and limits | `knowledge/bot-detection.md` | what X watches for, rate-limit headers, what keeps a low profile |
 | One account | `knowledge/contexts/<context>.md` | its lists, its own handle |
-| Code | `helpers/` | `app.posts({ limit })`, written once and used by every op |
+| Code | `helpers/` | `app.posts(open, { limit })`, written once and used by every op |
 
 Promotion moves knowledge up a level, as in the template: a note not specific to its op goes into `x.md` too; a move written out in two ops becomes a helper; a person's answer is written where it belongs.
 
