@@ -567,3 +567,35 @@ export const usersText = (page: { items: (User | UserUnavailable)[]; more?: bool
   if (page.more) blocks.push(`${page.items.length} accounts · more: raise --limit`);
   return blocks.join(`\n${RULE}\n`);
 };
+
+/** A count in full, as data: 418105, with "~" when X rounded it already. */
+const exactN = (c?: Count) => (c ? `${c.exact ? "" : "~"}${c.value}` : "?");
+
+/**
+ * One account with everything an agent reads it for, nothing shortened: id, handle, the whole bio, exact
+ * counts, and every relationship flag that is set. `userText` is the briefer one for a person.
+ */
+export const userFullText = (user: User | UserUnavailable): string => {
+  if (user.kind === "user-unavailable") return userText(user);
+  const r = user.relationship ?? {};
+  const flags = Object.entries(r)
+    .filter(([, v]) => v === true)
+    .map(([k]) => k);
+  const tags = [user.protected && "protected", user.blue && "blue", user.verifiedType && `verified:${user.verifiedType}`].filter(Boolean);
+  const c = user.counts ?? {};
+  const lines = [`${user.name} @${user.handle}`, `  id ${user.id}`];
+  if (user.bio) lines.push(...user.bio.split(/\r?\n/).map((l) => `  ${l}`));
+  if (user.location) lines.push(`  location: ${user.location}`);
+  lines.push(`  followers ${exactN(c.followers)} · following ${exactN(c.following)} · posts ${exactN(c.posts)}`);
+  lines.push(`  relationship: ${flags.length ? flags.join(", ") : "none"}${tags.length ? ` · ${tags.join(", ")}` : ""}`);
+  lines.push(`  https://x.com/${user.handle}`);
+  return lines.join("\n");
+};
+
+/** A page of accounts in full (`userFullText`), with a rule between blocks and, when there is more, how to read on. */
+export const usersFullText = (page: { items: (User | UserUnavailable)[]; more?: boolean }): string => {
+  if (page.items.length === 0) return "no accounts";
+  const blocks = page.items.map(userFullText);
+  if (page.more) blocks.push(`${page.items.length} accounts · more: raise --limit`);
+  return blocks.join(`\n${RULE}\n`);
+};

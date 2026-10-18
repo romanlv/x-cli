@@ -120,6 +120,14 @@ Confirmed against this account:
   `clientEventInfo.component` says why X showed it (`for_you_in_network`, `for_you_phoenix_retrieval`,
   `for_you_simclusters`, `ranked_following`); the model has no field for it yet. `postsPage` read
   both as they came and agreed with the DOM on every count looked at.
+- `ConnectTabTimeline` (2026-10-18, `suggestions:list`): `/i/connect_people` (tab "Who to follow", the sidebar's "Show more")
+  makes it once, `variables.count: 20`, `context: "{}"`; X sends **100 users in one call**, no cursor, the timeline ended
+  (`TimelineTerminateTimeline` TopAndBottom), so scrolling adds nothing. It is at `data.connect_tab_timeline.timeline`,
+  a single `mergeallcandidatesmodule-2` module whose `items[]` are `…-user-<id>` `TimelineUser`s; `usersPage` read 100 of
+  100 as it came, exact counts. **No reason text anywhere** (no `socialContext`). The list differs between loads (70 of
+  100 shared after 25 s, other order). The "Creators for you" tab is the same call with
+  `context: "{\"isCreatorOnlyConnectTab\":true}"` (20 users). The sidebar's "Who to follow" is `SidebarUserRecommendations`
+  (`profileUserId`, 3 users: `{token, user_results}`). The page's DOM holds about 28 of the 100 cells (virtualised).
 - A profile's tabs are Posts, Replies, Reposts and Media (2026-10-18, `account:posts`; there is no
   "Posts & replies"). Each is its own call: `UserOriginalsTimeline` (`/<handle>`: own posts and
   quotes, no reposts, no replies, the pin above them as a `TimelinePinEntry`), `UserRepliesTimeline`
