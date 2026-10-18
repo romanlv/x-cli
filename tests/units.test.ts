@@ -515,6 +515,30 @@ describe("snapshot", () => {
       await browser.close();
     }
   });
+
+  test("a control or region without text, named by aria-labelledby or a title, is found without matching that name as text", async () => {
+    const browser = await launch(false);
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`
+        <span id="h">Saved notice</span>
+        <div role="alert" aria-labelledby="h" style="width:10px;height:10px"></div>
+        <div tabindex="0" data-testid="avatar" title="Ada" style="width:10px;height:10px"></div>
+        <div tabindex="0" data-testid="avatar" style="width:10px;height:10px">Bob</div>`);
+      const { nodes } = await takeSnapshot(page);
+      const find = (n: SnapshotNode) => new Function("page", `return ${suggestLocator(n)}.count()`)(page) as Promise<number>;
+      const alert = nodes.find((n) => n.role === "alert")!;
+      expect(alert.name).toBe("Saved notice");
+      expect(suggestLocator(alert)).toBe(`page.getByLabel("Saved notice", { exact: true })`);
+      expect(await find(alert)).toBe(1);
+      // The test id is both avatars', and a filter by a title it doesn't show as text would match neither.
+      const avatar = nodes.find((n) => n.name === "Ada")!;
+      expect(suggestLocator(avatar)).toBe(`page.getByTestId("avatar")`);
+      expect(await find(avatar)).toBe(2);
+    } finally {
+      await browser.close();
+    }
+  });
 });
 
 test("docs/prompts.md is what prompts.ts writes now: `bun run docs:prompts` updates it", async () => {

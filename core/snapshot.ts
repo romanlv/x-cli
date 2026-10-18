@@ -16,8 +16,10 @@ export interface SnapshotNode {
   label?: string;
   /** Its text as Playwright's `hasText` and `getByText` match it (`textContent`), where that isn't its name. */
   text?: string;
-  /** Whether its name is its `aria-label`, which `getByLabel` matches, rather than its text. */
+  /** Whether its name is its `aria-label` or `aria-labelledby`, which `getByLabel` matches, rather than its text. */
   labelled?: boolean;
+  /** Whether it has no text at all, so a name it has came from an attribute (`title`, `placeholder`) `hasText` can't match. */
+  textless?: boolean;
   disabled?: boolean;
   checked?: boolean;
 }
@@ -84,15 +86,16 @@ const collect = (testIdAttribute: string): Omit<Snapshot, "url" | "title"> => {
     }
     return undefined;
   };
-  const labelOf = (el: Element): string => {
-    const labelled = el.getAttribute("aria-labelledby");
-    if (labelled) {
-      const text = labelled
+  const labelledBy = (el: Element): string =>
+    clean(
+      (el.getAttribute("aria-labelledby") ?? "")
         .split(/\s+/)
         .map((id) => document.getElementById(id)?.textContent ?? "")
-        .join(" ");
-      if (clean(text)) return clean(text);
-    }
+        .join(" "),
+    );
+  const labelOf = (el: Element): string => {
+    const labelled = labelledBy(el);
+    if (labelled) return labelled;
     const aria = el.getAttribute("aria-label");
     if (aria) return clean(aria);
     const id = el.getAttribute("id");
@@ -157,8 +160,9 @@ const collect = (testIdAttribute: string): Omit<Snapshot, "url" | "title"> => {
       // between blocks, so a locator by text needs that text, not the name.
       const text = clean(el.textContent);
       if (text && text !== node.name) node.text = text;
+      if (!text) node.textless = true;
       const aria = clean(el.getAttribute("aria-label"));
-      if (aria && aria === node.name) node.labelled = true;
+      if (node.name && (aria === node.name || labelledBy(el) === node.name)) node.labelled = true;
       if (testId) {
         node.testId = testId;
         node.testIdUnique = counts.get(testId) === 1;
@@ -294,9 +298,11 @@ export const suggestLocator = (node: SnapshotNode): string => {
     return `page.getByRole(${q(node.role)}, { name: ${q(name)}${cut(node.name) ? "" : ", exact: true"} })`;
   }
   // Any other role (an article, a region, an element that is a control only by taking focus) is
-  // named by its aria-label alone, which getByLabel finds, or else by nothing: its text, as Playwright
-  // reads it, narrows its test id or role down to it.
+  // named by its aria-label or aria-labelledby alone, which getByLabel finds, or else by nothing: its
+  // text, as Playwright reads it, narrows its test id or role down to it. Without text, a name from
+  // its title or placeholder narrows nothing, so its test id or role is all there is.
   if (node.labelled) return cut(node.name) ? `page.getByLabel(${q(name)})` : `page.getByLabel(${q(name)}, { exact: true })`;
+  if (node.textless) return node.testId ? `page.getByTestId(${q(node.testId)})` : `page.getByRole(${q(node.role)})`;
   const text = node.text ? (cut(node.text) ?? node.text) : name;
   const hasText = `.filter({ hasText: ${q(text)} })`;
   if (node.testId) return `page.getByTestId(${q(node.testId)})${hasText}`;
