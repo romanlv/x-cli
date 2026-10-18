@@ -22,6 +22,7 @@ Ops are named for what they read: `posts:search`, `post:thread`, `account:posts`
 ## A sketch of an op
 
 ```ts
+import { Entry, entryText, Page, PostId } from "../../model";
 import { defineOp, Type } from "../../op";
 
 export default defineOp({
@@ -30,13 +31,15 @@ export default defineOp({
   input: Type.Object({
     query: Type.String({ description: "what to search for; X's operators work (from:, since:, filter:links)" }),
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200, description: "at most this many posts (20)" })),
+    until: Type.Optional({ ...PostId, description: "stop before this post, the newest an earlier read returned" }),
   }),
-  output: Type.Array(Type.Object({ url: Type.String(), handle: Type.String(), time: Type.String(), text: Type.String() })),
+  output: Page(Entry),
   async run({ app, step }, input) {
-    await step("open search", () => app.search(input.query, "latest"));
-    const posts = await step("read posts", () => app.posts({ limit: input.limit ?? 20 }));
-    return posts.map(({ url, handle, time, text }) => ({ url, handle, time: time ?? "", text }));
+    return step("read posts", () =>
+      app.timeline("SearchTimeline", () => app.search(input.query, "latest"), { limit: input.limit ?? 20, until: input.until }),
+    );
   },
+  format: (page) => page.items.map(entryText).join("\n\n"),
 });
 ```
 
@@ -44,9 +47,30 @@ This is a sketch, not a built op: the first real one replaces it here.
 
 ## X's rules for ops
 
+- **Outputs are the model.** `model.ts` has the types every op returns (`knowledge/data-model.md` is
+  the design): a timeline is `Page(Entry)` (posts, reposts and unavailable posts), a post's page a
+  `Thread`, an account a `User`, followers `Page(Type.Union([User, UserUnavailable]))`. Inputs reuse
+  its types too (`PostId`, `UserId`). An op adds no output shape of its own for what the model has;
+  what it lacks is added to `model.ts` and data-model.md, from a source, not in one op.
+- **Ids are the keys, handles are snapshots.** An output names posts and accounts by id; a handle is
+  only what an account was called when read. An op that takes a handle resolves it and keys by id.
 - **Bound every read.** A timeline never ends, so every op that scrolls takes a `limit` (with a
-  default) or a stopping point (`--since`, a post id), and the help says which.
-- **The helpers** (`app`) are `open`, `search`, `profile`, `posts`, `graphql` and `errors`.
+  default) and may take `until`, a post id that a later read stops before (the newest one an earlier
+  read returned), and the help says which. Never a cursor: ops make no calls, so they can't resume
+  one of X's.
+- **Read GraphQL through the mappers.** `app.timeline(operation, open, { limit, until })` is a
+  timeline's posts as the page and scrolling fetch them, `app.thread(id)` a post's TweetDetail,
+  `app.user(handle)` its UserByScreenName. For any other call, `app.graphql` returns the raw JSON
+  and `map/graphql.ts` maps it (`postsPage`, `usersPage`, `threadOf`, `userFromResult`,
+  `listFromResult`); an op never picks fields out of X's JSON itself. `app.posts` reads the same
+  timeline from the DOM, with handles but no account ids and rounded counts.
+- **`format` is `entryText`** for posts, so a person reads who, when, the text and the counts.
+- **The first op to use a mapper confirms it.** The mappers follow open-source clients, not this
+  account's responses yet: the first op that uses one compares its output with what the page
+  received (`page:requests <n> body`), fixes the mapper and its fixture where they differ, and
+  records the shape as confirmed in `knowledge/x.md`.
+- **The helpers** (`app`) are `open`, `search`, `profile`, `posts`, `timeline`, `thread`, `user`,
+  `graphql` and `errors`.
 - **Target `data-testid`**, then role and name, then text. X's class names change with every release.
 - **Errors**: `InputError` for a bad handle or a limit out of range; `PreconditionError` for an
   account or post that isn't there, or a protected account; `RefusedError` for a rate limit or a
@@ -57,11 +81,9 @@ This is a sketch, not a built op: the first real one replaces it here.
   anyone else's (a per-call signature, query ids that change with every release, Chrome's TLS
   fingerprint), so an op never makes calls of its own and never writes a `direct` function: a
   separate HTTP client is the riskiest thing this tool could do to the account. Instead `run` reads
-  the GraphQL responses the page fetches: `app.graphql("SearchTimeline", () => app.search(q))` returns
-  the JSON the screen is drawn from, which carries more than the DOM (exact counts, ids, full text).
-  Scrolling fetches the next page of it. Find the operation with `page:requests` while exploring, as
-  the `direct-calls` skill says, and write its shape in notes.md. Where the DOM has all the op needs,
-  reading the DOM (`app.posts`) is fine.
+  the GraphQL responses the page fetches, which carry more than the DOM (exact counts, ids, full
+  text). Find the operation with `page:requests` while exploring, as the `direct-calls` skill says,
+  and write its shape in notes.md.
 
 ## Pace and limits
 

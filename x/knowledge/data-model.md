@@ -251,23 +251,28 @@ Ranges in `entities` are offsets in Unicode code points, as X gives them, and `e
 UTF-16, so slicing text after an emoji needs `Array.from(text)`. The mapper stores the offsets as X
 sent them.
 
-## How the DOM fills it (for the helpers)
+## How the DOM fills it
 
-`readPosts` becomes a DOM mapper that returns `Entry` with `source: "dom"`:
+`readPosts` (`x/helpers`) reads each timeline cell in the browser and `x/map/dom.ts` maps it to an
+`Entry` with `source: "dom"` **[inferred: tested against modelled HTML, tests/fixtures/x-dom.ts]**:
 
-- `id` from the permalink.
-- `author: { handle, name }`, with no id.
-- `createdAt` from `time[datetime]`.
-- `text` from `tweetText`, with `truncated: true` when a "Show more" link is present.
-- `counts` from the aria-labels via `count()`. Each is `exact: false` when the label has K or M,
-  else `exact: true` once confirmed.
-- A `socialContext` "reposted" header turns the entry into a `Repost` with `by: { handle }`, no `id`,
-  and the article's post as `post`.
-- An embedded quote becomes `quoted`, a QuotedPost with its permalink id, when one is found.
-- A tombstone box becomes `Unavailable` with X's text as `message`.
+- `id` and `author.handle` from the permalink (`/<handle>/status/<id>`); `author.name` from
+  User-Name. No account id.
+- `createdAt` from `time[datetime]`; `text` and `lang` from `tweetText`, with `truncated: true` when
+  `tweet-text-show-more-link` is there.
+- `counts` from the buttons' aria-labels via `count()`: `exact: false` when the number has K or M,
+  else `exact: true`, since X rounds only with a suffix (open question 1 confirms it). A button with
+  no number in its label is 0. Views come from the analytics link; quotes aren't shown.
+- `viewer` from which button of each pair shows (`unlike` means liked).
+- A `socialContext` "reposted" line makes the entry a `Repost` with `by: { handle }` from its link,
+  no `id`, and the article's post as `post`.
+- An embedded quote (a `role=link` box with its own User-Name) becomes `quoted` only when it holds a
+  permalink, since a `QuotedPost` needs its id; the post's own text and buttons are the ones outside it.
+- A cell with no article whose text names "this post" is `Unavailable`, reason from the sentence,
+  no id.
 
-Everything else stays absent. A DOM key is the post id, not the URL: the helpers key `seen` by id
-today in all but name.
+Everything else stays absent. `app.posts` keys what it has seen by id (an id-less tombstone by the
+entry before it) and stops at `limit` or before `until`, as `app.timeline` does over GraphQL.
 
 ## Writes reuse the types
 
