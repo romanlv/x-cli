@@ -365,8 +365,12 @@ export const xHelpers = (page: Page) => {
         let more = false;
         for (let used = 0, idle = 0, scrolls = 0; ; scrolls++) {
           const before = read.size;
-          // Enough: another scroll would only fetch more of the timeline from X.
-          if (read.add(await readCells(page))) break;
+          // Enough: another scroll would only fetch more of the timeline from X, which goes on past
+          // `limit` (`page` drops this when the read reached `until`).
+          if (read.add(await readCells(page))) {
+            more = true;
+            break;
+          }
           let low: string | undefined;
           while (used < responses.length) {
             const response = responses[used++]!;

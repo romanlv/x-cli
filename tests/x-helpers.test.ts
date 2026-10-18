@@ -204,6 +204,8 @@ describe("x helpers: reading the page", () => {
   test("posts: at most limit, stopping before the until post, never past limit", async () => {
     const app = xHelpers(page);
     expect(await app.posts(show(timelineHtml), { limit: 2 })).toMatchObject({ items: [{ id: "1001" }, { kind: "repost" }], more: true });
+    // Exactly limit (the page's six entries) is enough too, and the timeline goes on past it.
+    expect(await app.posts(show(timelineHtml), { limit: 6 })).toMatchObject({ items: { length: 6 }, more: true });
     const untilQuote = await app.posts(show(timelineHtml), { until: "1003" });
     expect(untilQuote.items.length).toBe(2);
     expect(untilQuote.more).toBeUndefined();
