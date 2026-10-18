@@ -7,7 +7,9 @@ What isn't here is read by the agents from the domain folder: how an op is writt
 
 ## Agents
 
-| Agent | Model (workflows.json) | Instructions | Stages |
+Each agent's model is its default in `core/workflows/config.ts`, or the one `workflows.json` names where it differs.
+
+| Agent | Model | Instructions | Stages |
 |---|---|---|---|
 | planner | claude · claude-opus-5-5 | planner | intake, spec (after explore) |
 | builder | claude · claude-sonnet-5-5 | builder | explore, write, diagnose, patch, revise while each round gets further, polish, rebase |
@@ -64,6 +66,7 @@ Rules:
 - Never sign in and never type credentials. If the session is signed out, answer with the question "sign in again: x context:login acme".
 - Change in the app only what /repo/.state/worktrees/R-0001/x/authoring.md, under "Test data", allows. Page commands have no dry run: stop before a step that would change anything else. An op's saving step can be tried with --dry-run.
 - What one screen taught you goes in the op's notes.md; what holds for every op goes in knowledge/x.md too; a move two ops need becomes a helper.
+- The direct-calls skill is /repo/.state/worktrees/R-0001/.claude/skills/direct-calls/SKILL.md; read it when a prompt names it.
 ````
 
 ### Checker
@@ -501,7 +504,7 @@ Context "acme" is signed in again. Close each page session you had open with `pa
 
 ### earlier answers
 
-Appended to most prompts once a person has answered a question; here, explore's. The checker changes no files, so review's says only to follow the answers.
+Appended to most prompts once a person has answered a question; here, explore's. Review's, polish's, rebase's and the question's say only to follow the answers: review and the question change no files, and polish and rebase only what they ask for.
 
 ````text
 <request id="R-0001" kind="new" context="acme">

@@ -50,7 +50,8 @@ const tag = (name: string, body: string, attrs: Record<string, string> = {}): st
 
 /**
  * What the person answered so far, for a prompt that may be reading it for the first time. `readOnly`
- * for an agent that changes no files, which follows the answers without writing them down.
+ * for a turn that shouldn't write them down, which follows the answers only: review's and the final
+ * question's, which change no files, and polish's and rebase's, which change only what they ask for.
  */
 const answers = (request: RequestRecord, readOnly = false): string => {
   if (!request.answers.length) return "";
@@ -133,6 +134,7 @@ export const builderInstructions = (run: PromptRun): string => {
     - Never sign in and never type credentials. If the session is signed out, answer with the question "${signInQuestion(request.domain.name, request.context)}".
     - ${testData(run)}
     - What one screen taught you goes in the op's notes.md; what holds for every op goes in knowledge/${request.domain.name}.md too; a move two ops need becomes a helper.
+    - The direct-calls skill is ${join(paths.worktree, ".claude", "skills", "direct-calls", "SKILL.md")}; read it when a prompt names it.
   `;
 };
 
@@ -352,13 +354,13 @@ export const polish = (run: PromptRun, op: string, summary: string, findings: Fi
   The checker approved it, with minor findings to fix in ${opDir(run, op)} (or a helper):
   ${listFindings(findings)}
 
-  Nobody reviews it again, so change only what these ask for; verify and the repository's checks run after. Answer done with what you changed.${answers(run.request)}
+  Nobody reviews it again, so change only what these ask for; verify and the repository's checks run after. Answer done with what you changed.${answers(run.request, true)}
 `;
 
 /** A revise round; the troubleshooter's first carries every earlier round's problem. */
 export const revise = (run: PromptRun, op: string, summary: string, problems: string[], takingOverAfter?: number): string => {
   const taking = takingOverAfter
-    ? `\nYou are taking over ${op}: the builder's ${takingOverAfter} rounds stopped getting further. You may change anything the builder could, the spec and the helpers included. What each earlier round found, oldest first:\n${rounds(problems.slice(0, -1))}\n`
+    ? `\nYou are taking over ${op}: the builder's ${takingOverAfter === 1 ? "round" : `${takingOverAfter} rounds`} stopped getting further. You may change anything the builder could, the spec and the helpers included. What each earlier round found, oldest first:\n${rounds(problems.slice(0, -1))}\n`
     : "";
   return md`
     ${brief(run, op, summary)}
@@ -379,7 +381,7 @@ export const stuck = (run: PromptRun, op: string, summary: string, problems: str
   The rounds for ${op} ran out, or stopped getting further, and it is still not right. What each round found, oldest first:
   ${rounds(problems)}
 
-  Write the one specific question a person must answer for this to go on, with what you would recommend.${answers(run.request)}
+  Write the one specific question a person must answer for this to go on, with what you would recommend.${answers(run.request, true)}
 `;
 
 // ── Merge: the builder ────────────────────────────────────────────────────────────────────────────
@@ -391,6 +393,6 @@ export const rebase = (run: PromptRun, op: string, summary: string, conflict: st
     main moved while ${request.id} was built, and rebasing ${paths.branch} on it conflicts in:
     ${tag("conflicts", conflict)}
 
-    Run \`git rebase main\` in ${paths.worktree} and resolve the conflicts, keeping both changes' intent; committing is how a rebase finishes. Answer done once the rebase is finished.${answers(request)}
+    Run \`git rebase main\` in ${paths.worktree} and resolve the conflicts, keeping both changes' intent; committing is how a rebase finishes. Answer done once the rebase is finished.${answers(request, true)}
   `;
 };

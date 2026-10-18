@@ -343,7 +343,7 @@ test("a question stops the run blocked on it, at the stage that asked", async ()
   expect(git.calls.some((c) => c.startsWith("remove"))).toBe(false);
 });
 
-test("an answered question reaches the stage that asked, and the checker, on the continue", async () => {
+test("an answered question reaches the stage that asked, the checker and the polish, on the continue", async () => {
   const r = file();
   requests.update(r.id, () => ({ state: "blocked", question: "Which word?" }));
   requests.answer(r.id, "lamp");
@@ -352,14 +352,20 @@ test("an answered question reaches the stage that asked, and the checker, on the
     { id: r.id, home },
     {
       recorded: recordedUpTo("intake"),
-      agents: { planner: done("spec written"), builder: building(), checker: approve },
+      agents: {
+        planner: done("spec written"),
+        builder: [...building(), done("fixed the typo")],
+        checker: answer(REVIEW, { findings: [{ where: "notes.md:4", problem: "a typo", severity: "minor" }] }),
+      },
     },
   );
-  expect(run.turnsOf("builder")[0]!.prompt).toContain("A: lamp");
-  expect(run.turnsOf("checker")[0]!.prompt).toContain("A: lamp");
-  // The checker changes no files, so it isn't told to write the answer down.
+  const polish = run.turnsOf("builder").at(-1)!.prompt;
+  expect(polish).toContain("notes.md:4: a typo");
+  for (const prompt of [run.turnsOf("builder")[0]!.prompt, run.turnsOf("checker")[0]!.prompt, polish]) expect(prompt).toContain("A: lamp");
+  // The checker changes no files, and the polish only what the findings ask for: neither is told to write the answer down.
   expect(run.turnsOf("builder")[0]!.prompt).toContain("write each into the level of knowledge");
   expect(run.turnsOf("checker")[0]!.prompt).not.toContain("write each into the level of knowledge");
+  expect(polish).not.toContain("write each into the level of knowledge");
   expect(run.value.state).toBe("done");
 });
 
@@ -615,13 +621,13 @@ test("a helper change re-verifies every other op with examples for the context",
   expect(run.value.state).toBe("done");
 });
 
-test("a mapper change re-verifies the other ops too, and a change to the op alone doesn't", async () => {
+test("a mapper change re-verifies the other ops too, and a change to the op and to tests alone doesn't", async () => {
   for (const id of ["R-0001", "R-0002"]) {
     const other = join(home, "worktrees", id, "x", "ops", "thing-list");
     mkdirSync(other, { recursive: true });
     writeFileSync(join(other, "examples.json"), JSON.stringify([{ context: "acme", input: {} }]));
   }
-  git.changedFiles = ["x/ops/thing-find/op.ts"];
+  git.changedFiles = ["x/ops/thing-find/op.ts", "x/helpers/index.test.ts", "core/workflows/workflows.test.ts"];
   const alone = file();
   await testWorkflow(
     defineBuild(deps()),

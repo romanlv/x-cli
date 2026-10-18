@@ -11,7 +11,7 @@ domain folder, and leave `core/` as it is.
 | The machinery: CLI, contexts, op runner, requests, worker, browser, page sessions | `core/*.ts` | nobody per site |
 | The workflows that build and repair ops | `core/workflows/` | nobody per site |
 | What the workflows tell agents: every prompt, and how any op is written | `core/instructions/` (`prompts.ts`, `authoring.md`) | nobody per site |
-| Skills the agents' harness finds by itself | `.claude/skills/` (`direct-calls`) | nobody per site |
+| Skills the agents read: Claude finds them itself, and the prompts name the path for other harnesses | `.claude/skills/` (`direct-calls`) | nobody per site |
 | The entry point: it calls `main(domain)` | `<site>/main.ts` | you (four lines) |
 | The domain's settings: how the app signs in, where runs start, what a refusal looks like, extra page commands | `<site>/domain.ts` | you |
 | The moves every screen of the app shares (`app`) | `<site>/helpers/` | you, then the agents |

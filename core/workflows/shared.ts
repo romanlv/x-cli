@@ -406,11 +406,16 @@ const openTeam = (run: RequestRun): Team => {
 };
 
 // ── Verify, review, revise ────────────────────────────────────────────────────────────────────────
-/** Code every op may run: core and the domain's `.ts` outside its ops (helpers, model, mappers, domain.ts). */
+/** Code every op may run: core and the domain's `.ts` outside its ops (helpers, model, mappers, domain.ts), but not their tests. */
 const sharedCodeIn = (paths: Paths, files: string[]): boolean => {
   const domain = relative(paths.worktree, paths.domainDir);
-  // What ops load: core and the domain's code. Tests and docs don't run in an op.
-  return files.some((f) => f.endsWith(".ts") && (f.startsWith("core/") || f.startsWith(`${domain}/`)) && !f.startsWith(`${domain}/ops/`));
+  return files.some(
+    (f) =>
+      f.endsWith(".ts") &&
+      !f.endsWith(".test.ts") &&
+      (f.startsWith("core/") || f.startsWith(`${domain}/`)) &&
+      !f.startsWith(`${domain}/ops/`),
+  );
 };
 
 /** Every op with an example for this context, as the worktree has them now, and every op whose examples.json can't be read, so verify says so. */
