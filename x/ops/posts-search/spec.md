@@ -12,7 +12,13 @@ text is trimmed, with links as X shows them rather than t.co, the counts take on
 comes last, so a glance tells one post from the next. The closing line says how to read on: a higher
 `--limit` for older posts, `--until` next time for only newer ones. The print is shared with every op
 that prints posts (home:posts, account:posts, post:thread), so they all read alike. `--json` returns
-everything, untrimmed.
+everything an agent uses, untrimmed.
+
+An agent reading my X to find relevant posts and accounts reads 50 posts at a time with `--json`
+and pays for every byte, so the JSON keeps what it uses to judge a post (ids, text, author, times,
+counts, links, quotes and reposts, what media there is) and leaves out what it doesn't: every video
+bitrate but the best, media keys and pixel sizes, avatars and banners on a post's author. The model
+is shared, so posts read the same way from home:posts, account:posts and post:thread.
 
 ## The way in X
 
@@ -33,6 +39,9 @@ Other ways, and why not:
 - **A profile's Posts tab** (`/<handle>`): one account's posts, newest first, but only that account
   and with no text, date or link filters.
 - **People, Media and Lists tabs**: accounts, posts with media only, lists; not posts matching a query.
+- **A leaner way to the same posts**, for agents: none. The Top tab sends the same payload per post,
+  and the DOM, which has no video files, also has no account ids, entities or exact counts. The JSON
+  is made lean in the mapper instead (Output).
 - **The page's own text** (the DOM), for the print: it already shows links as `nasa.gov/maxpower/`
   and drops the media's link, but it has no repost time, no account ids and only rounded counts.
   The print is made from the `SearchTimeline` responses instead, whose `entities.urls` give each
@@ -66,7 +75,22 @@ The JSON is unchanged by the print: `text` keeps X's t.co links and `entities.ur
 leads. The print's expanded text is derived from those two (`textWithLinks` in `model.ts`), so no
 field was added for it.
 
-`--json` prints this `Page(Entry)` whole: full text, every count, every field the mapper gives.
+`--json` prints this `Page(Entry)` whole: full text, every count, every field the mapper gives. It is lean
+where a reader of many posts would only pay for what it never uses:
+
+- a post's `media` entry is `{ type, url, alt?, durationMs?, video?, stream? }`: `url` is the photo,
+  or a video's or gif's preview image; `video` is the highest-bitrate mp4 of X's `video_info.variants`
+  (a gif has just one); `stream` is the video's m3u8, when X sends one. The other mp4 bitrates (X sends
+  four for a video, 632000 to 10368000 on a 1080x1920 clip), `media_key` and `original_info`'s width
+  and height are left out. A post read from the DOM (`source: "dom"`) has no `media`.
+- a post's `author` and a repost's `by` are `{ id, handle, name }` plus `blue`, `verifiedType` (when X names one) and `followers`, to judge the
+  account, with no avatar or banner; those are on `User`, where the account is the item (account lists and lookups).
+- `counts`, `viewer` and `edits` stay: each is a small share (counts 10% of a 20-post page; the author's
+  `blue`, `verifiedType` and `followers` 5%) and an agent judges a post by its counts.
+
+Measured on `--query "from:NASA filter:videos" --limit 20` (20 posts, each with a video, the worst case):
+44,075 bytes before this change, 32,186 after (-27%, with the author's `blue`, `verifiedType` and `followers`); media had been 20,528 of the 44,075, its variants
+16,830. The print is the same as before: it uses only a media item's type, url and alt.
 
 ### Printed (without `--json`)
 
@@ -132,6 +156,10 @@ Enter, pick Latest). The op's items are the posts at the top of that page, in th
 first `limit` of them; with `until`, they are the posts above that one. The counts match each
 post's buttons (`retweet`'s count is the op's reposts plus quotes). Nothing is posted, liked,
 reposted, followed or bookmarked.
+
+A video post's `video` plays the same clip as the page, at its best quality, and its `stream` is the
+playlist the page's player loads; its `url` is the still the page shows before it plays. No post in
+`--json` has `variants`, `key`, `width`, `height`, or an author `avatar` or `banner`.
 
 The print matches the page post for post, in the same order. Each block's name, `@handle` and
 start of text are those of the post in the same place on the page. Its link opens that post. A

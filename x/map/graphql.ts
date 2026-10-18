@@ -106,8 +106,18 @@ const userFields = (u: Json) => {
 const userRefFromResult = (result: unknown): UserRef | undefined => {
   const u = obj(result);
   if (u.__typename === "UserUnavailable") return undefined;
-  const { id, handle, name } = userFields(u);
-  return id || handle ? clean({ id, handle, name }) : undefined;
+  const { id, handle, name, l } = userFields(u);
+  const followers = count(at(u, "relationship_counts", "followers") ?? l.followers_count);
+  return id || handle
+    ? clean({
+        id,
+        handle,
+        name,
+        blue: bool(u.is_blue_verified),
+        verifiedType: str(at(u, "verification", "verified_type")) ?? str(l.verified_type),
+        followers,
+      })
+    : undefined;
 };
 
 const userUnavailable = (u: Json): UserUnavailable => {
@@ -226,22 +236,17 @@ const mediaOf = (list: unknown): Media[] =>
     const url = str(m.media_url_https);
     if (!type || !url) return [];
     const video = obj(m.video_info);
-    const variants = arr(video.variants).flatMap((v) => {
-      const o = obj(v);
-      return str(o.url) && str(o.content_type)
-        ? [clean({ url: str(o.url)!, contentType: str(o.content_type)!, bitrate: int(o.bitrate) })]
-        : [];
-    });
+    const variants = arr(video.variants).map(obj);
+    const mp4s = variants.filter((v) => v.content_type === "video/mp4" && str(v.url));
+    const best = mp4s.reduce<Json | undefined>((top, v) => (!top || (int(v.bitrate) ?? 0) > (int(top.bitrate) ?? 0) ? v : top), undefined);
     return [
       clean({
-        key: str(m.media_key),
         type,
         url,
         alt: str(m.ext_alt_text),
-        width: int(at(m, "original_info", "width")),
-        height: int(at(m, "original_info", "height")),
         durationMs: int(video.duration_millis),
-        variants: variants.length ? variants : undefined,
+        video: best && str(best.url),
+        stream: str(variants.find((v) => v.content_type === "application/x-mpegURL")?.url),
       }),
     ];
   });

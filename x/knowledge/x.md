@@ -189,3 +189,10 @@ Account lists (`account:following`, `account:followers`, `accounts:search`, `acc
 reason for a suggested account** on any screen: not in `ConnectTabTimeline`, `SidebarUserRecommendations`
 or `ExploreSidebar`, nor in the cells' DOM. A suggestion's profile shows "Followers you know" from a
 separate per-account call, which is not X's reason. See `accounts:suggested`'s notes.md.
+
+## How lean a post's JSON is (2026-10-18, R-0013)
+
+`--json` is read by agents 50 posts at a time, so a post's `media` keeps only `type`, `url`, `alt`,
+`durationMs` and, for video and gif, `video` (the best mp4) and `stream` (the m3u8): X's other bitrates,
+`media_key` and the pixel size are dropped. Posts name authors and reposters by id, handle, name, `blue`, `verifiedType` and `followers`;
+avatar and banner are on a `User`. 20 video posts from `posts:search`: 44,075 bytes down to 32,186.

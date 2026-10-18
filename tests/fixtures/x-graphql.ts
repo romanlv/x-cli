@@ -119,7 +119,9 @@ export const searchTimeline = {
                               duration_millis: 10850,
                               variants: [
                                 { content_type: "application/x-mpegURL", url: "https://video.twimg.com/v.m3u8" },
+                                { bitrate: 256000, content_type: "video/mp4", url: "https://video.twimg.com/v-low.mp4" },
                                 { bitrate: 832000, content_type: "video/mp4", url: "https://video.twimg.com/v.mp4" },
+                                { bitrate: 432000, content_type: "video/mp4", url: "https://video.twimg.com/v-mid.mp4" },
                               ],
                             },
                             url: "https://t.co/pic",

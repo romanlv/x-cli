@@ -69,7 +69,7 @@ describe("x model: GraphQL posts", () => {
   test("a long post's text and entities come from note_tweet, counts are exact, views a number", () => {
     const p = page.items[0] as Post;
     expect(p.text).toBe("Hello @bob #cats $ACME https://t.co/abc and the rest of a long post");
-    expect(p.author).toEqual({ id: "11", handle: "ada", name: "Name ada" });
+    expect(p.author).toEqual({ id: "11", handle: "ada", name: "Name ada", blue: false, followers: { value: 120, exact: true } });
     expect(p.createdAt).toBe("2026-07-08T21:59:10.000Z");
     expect(p.counts).toEqual({
       replies: { value: 11, exact: true },
@@ -88,20 +88,19 @@ describe("x model: GraphQL posts", () => {
     expect(p.text.slice(p.entities!.hashtags[0]!.start, p.entities!.hashtags[0]!.end)).toBe("#cats");
   });
 
-  test("media keeps alt text and video variants; edits, notes and viewer state are read", () => {
+  test("media keeps alt text and a video's m3u8 and best mp4, not its other bitrates, sizes or key; edits, notes and viewer state are read", () => {
     const p = page.items[0] as Post;
     expect(p.media?.[0]).toEqual({
-      key: "3_5001",
       type: "photo",
       url: "https://pbs.twimg.com/media/p.jpg",
       alt: "a cat on a mat",
-      width: 800,
-      height: 600,
     });
-    expect(p.media?.[1]).toMatchObject({
+    expect(p.media?.[1]).toEqual({
       type: "video",
+      url: "https://pbs.twimg.com/amplify_video_thumb/5002/img/v.jpg",
       durationMs: 10850,
-      variants: [{ contentType: "application/x-mpegURL" }, { bitrate: 832000 }],
+      video: "https://video.twimg.com/v.mp4",
+      stream: "https://video.twimg.com/v.m3u8",
     });
     expect(p.edits).toEqual({ versions: ["1000", "1001"], editableUntil: "2026-07-08T22:59:10.000Z", remaining: 4 });
     expect(p).toMatchObject({

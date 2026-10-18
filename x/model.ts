@@ -32,8 +32,14 @@ export const UserRef = Type.Object(
     id: Type.Optional(UserId),
     handle: Type.Optional(Type.String({ description: "the @handle when read, without @" })),
     name: Type.Optional(Type.String({ description: "display name" })),
+    blue: Type.Optional(Type.Boolean({ description: "has the blue check (X Premium); only where a post's GraphQL author says" })),
+    verifiedType: Type.Optional(Type.String({ description: "Business, Government, ... as X names it; only when verified that way" })),
+    followers: Type.Optional(Count),
   },
-  { description: "at least one of id and handle; id from GraphQL and the API, the DOM has only the handle" },
+  {
+    description:
+      "at least one of id and handle; id from GraphQL and the API, the DOM has only the handle. blue, verifiedType and followers are from a post's GraphQL author, to judge the account; never avatar or banner, which only a User has",
+  },
 );
 
 /** Ranges are offsets into GraphQL's `text` in Unicode code points, as X gives them; `end` is exclusive. The DOM has none. */
@@ -53,16 +59,14 @@ export const Entities = Type.Object({
 });
 
 export const Media = Type.Object({
-  key: Type.Optional(Type.String({ description: "X's media_key, e.g. 3_<id> for a photo" })),
   type: Type.Union([Type.Literal("photo"), Type.Literal("video"), Type.Literal("gif")]),
   url: Type.String({ description: "the image; for a video or gif, its preview image" }),
   alt: Type.Optional(Type.String({ description: "alt text, when the author wrote one" })),
-  width: Type.Optional(Type.Integer()),
-  height: Type.Optional(Type.Integer()),
   durationMs: Type.Optional(Type.Integer()),
-  variants: Type.Optional(
-    Type.Array(Type.Object({ url: Type.String(), contentType: Type.String(), bitrate: Type.Optional(Type.Integer()) })),
+  video: Type.Optional(
+    Type.String({ description: "a video's or gif's best mp4 (highest bitrate); X also serves lower bitrates, left out" }),
   ),
+  stream: Type.Optional(Type.String({ description: "a video's HLS playlist (m3u8)" })),
   views: Type.Optional(Count),
 });
 

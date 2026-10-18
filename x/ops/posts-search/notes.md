@@ -136,3 +136,40 @@ What the screen taught (live, `from:NASA filter:links --limit 4`, `post:thread`,
   and post:thread, resetting at 18:21Z: exit 4 as it should be, not the op's fault. Rerun one at a
   time after the reset, all four examples gave what the spec says, and the search page (Latest) had
   the same posts in the same order, its links shown as the print shows them (`nasa.gov/maxpower/`).
+
+## Change R-0013: lean JSON for agents (no new way in X)
+
+The way in X stays search's Latest, read through `SearchTimeline`; only what the mapper keeps of each post
+changes, in `model.ts` (`Media`) and `map/graphql.ts` (`mediaOf`), for every op that returns posts. Start page
+was the profile `/romitch`; checked 2026-10-18 on `me`.
+
+Ways to get posts an agent can read cheaply, and what each gives:
+
+- **Search's Latest tab, `SearchTimeline`** (the op's way): newest first, every operator; each media item arrives
+  with `media_key`, `original_info` and `video_info.variants` (an m3u8 and four mp4 bitrates). Serves the intent
+  once the mapper keeps less.
+- **Search's Top tab**: ranked, no `until`; same per-post payload, so no leaner.
+- **The DOM** (the page's articles): no media variants at all, but no ids, entities or exact counts; it is
+  the fallback `source: "dom"`, which has no `media` and is unchanged.
+
+Measured, live, `posts:search --query "from:NASA filter:videos" --limit 20 --json` (all 20 posts carry a video, so
+the worst case), 2026-10-18: **44,075 bytes before, 30,506 after (-31%)**. Before, media was 20,528 of the 44,075
+(variants 16,830, key 620, width/height 528); `author` was 1,140 (2.6%), `counts` 4,622 (10%), `viewer` 1,220 and
+`edits` 2,040. Kept: `author` (id, handle, name; a post's author never had an avatar or banner here, a `User` has
+them only where the account is the item), `counts`, `viewer`, `edits`, since each is a small share and an agent
+uses counts to judge a post. The print (`pageText`) is unchanged: it used only media type, url and alt.
+
+What the screen taught: a video's variants were an m3u8 (no bitrate) and mp4s with `bitrate` (632000 to
+10368000 on a 1080x1920 clip); the best mp4 is the highest bitrate, and a gif has a single mp4. `video` is that
+mp4's url, `stream` the m3u8's, each left out when X sends none. A 429 on `Viewer` (exit 4) stopped one early
+run, resetting 20:09Z; the rerun after it was fine.
+
+### R-0013, review: the author keeps blue, verifiedType and followers
+
+The first cut left a post's author as `{ id, handle, name }` only, which dropped signals an agent uses to judge
+an account. They are back on `UserRef` (from the author's GraphQL result, `userRefFromResult`): `blue`,
+`verifiedType`, and `followers` (the one count that tells a big account from a small one; the other account counts,
+bio, avatar and banner stay on `User`). Measured live, same query (`from:NASA filter:videos --limit 20 --json`,
+2026-10-18): **44,075 bytes before, 32,186 after (-27%)**. The three fields cost about 1,700 bytes of the 32,186
+(5%): `blue` + `verifiedType` 820, `followers` the rest. Not a large share, so they stay. (The 30,506 above was
+before they were added.)

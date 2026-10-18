@@ -73,6 +73,13 @@ Bookmarks and likes have no type of their own. `bookmarks:list` is a `Page<Entry
   present field is what X said: `[]` means none, `0` means zero, `false` means no. `null` is never
   used. So `counts.bookmarks` absent means unknown, and `{ value: 0 }` means nobody bookmarked it.
   `media: []` means no media, and an absent `media` means it wasn't read.
+- **The JSON is lean for agents that read many posts** (R-0013). A `Media` keeps `type`, the image `url`
+  (a video's preview), `alt`, `durationMs`, and for a video or gif `video` (its best mp4) and `stream`
+  (its m3u8): X's other mp4 bitrates, the media key and the pixel size are left out. A post's author
+  and a repost's `by` are a `UserRef` (id, handle, name, and from GraphQL `blue`, `verifiedType` and `followers`,
+  which an agent uses to judge the account) and never carry an avatar or banner; those are on a `User`, where
+  the account is the item. Measured on 20 posts of `from:NASA filter:videos`
+  (`posts:search --json`): 44,075 bytes, of which media was 20,528 (variants 16,830) and authors 1,140.
 - Every object has a `source` (`dom`, `graphql` or `api`), so a reader knows how complete it can be.
   A DOM post won't have `conversationId`, `entities` or exact counts. That is expected, not a bug.
 - `truncated: true` marks text known to be cut short, for example a DOM post behind "Show more".
@@ -288,7 +295,7 @@ raw_user_by_login.json, 2026]**. The mapper reads both. "—" means the source d
 | `quotedId` / `quoted` | the embedded quote box (inferred) | `quoted_status_id_str`, `quoted_status_result.result` | `referenced_tweets[quoted]` + `includes.tweets` |
 | Repost | `socialContext` "X reposted" above the article (inferred) | `retweeted_status_result.result` | `referenced_tweets[retweeted]` |
 | `entities` | links and `@`/`#` anchors, no ranges | `entities` / `note_tweet…entity_set`: `hashtags`, `symbols`, `user_mentions`, `urls`, each with `indices` | `entities.{hashtags,cashtags,mentions,urls}` with `start`/`end` |
-| `media` | `tweetPhoto` img `alt`, `videoPlayer` (inferred) | `extended_entities.media[]`: `type`, `media_key`, `media_url_https`, `ext_alt_text`, `original_info`, `video_info` | `attachments.media_keys` + `includes.media` (`alt_text`, `variants`, `duration_ms`, `public_metrics.view_count`) |
+| `media` | `tweetPhoto` img `alt`, `videoPlayer` (inferred) | `extended_entities.media[]`: `type`, `media_url_https`, `ext_alt_text`, `video_info` (`duration_millis`; `variants` give `video`, the highest-bitrate mp4, and `stream`, the m3u8). `media_key` and `original_info` (width, height) are not kept | `attachments.media_keys` + `includes.media` (`alt_text`, `variants`, `duration_ms`, `public_metrics.view_count`) |
 | `card` | `card.wrapper` (inferred) | `card.legacy.{name, binding_values}` (title, description, vanity_url, card_url, *_image_original) | `card_uri` only; link previews in `entities.urls[].title/description/images` |
 | `poll` | radio list with %, not counts | card `poll<n>choice_*`: `choiceN_label`, `choiceN_count`, `end_datetime_utc`, `duration_minutes`, `counts_are_final` | `attachments.poll_ids` + `includes.polls` (`options[].votes`, `voting_status`, `end_datetime`) |
 | `hasNote` / `note` | `birdwatch-pivot` box (inferred) | `has_birdwatch_notes`; `birdwatch_pivot.{note.rest_id, subtitle.text}` (inferred: twikit) | — (the API documents none) |
