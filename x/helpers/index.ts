@@ -675,11 +675,20 @@ export const xHelpers = (page: Page) => {
           .catch(() => false)
       )
         throw new PreconditionError(`@${name} is protected: its ${list} are not visible to this account`);
-      const link = page.locator(SEL.primaryColumn).locator(`a[href$="/${list}" i]`).first();
+      // A profile's "Followers" link opens the Verified Followers tab (`/verified_followers`), not the plain list.
+      const link = page.locator(SEL.primaryColumn).locator(`a[href$="/${list}" i], a[href$="/verified_${list}" i]`).first();
       await link.waitFor({ state: "visible", timeout: 15_000 }).catch(() => {
         throw new PreconditionError(`@${name}'s ${list} are not shown to this account`);
       });
       await link.click();
+      if (list === "followers") {
+        // The plain list is the "Followers" tab next to Verified Followers ("Followers you know" is another).
+        const tab = page.getByRole("tab", { name: "Followers", exact: true });
+        await tab.waitFor({ state: "visible", timeout: 15_000 }).catch(() => {
+          throw new PreconditionError(`@${name}'s followers are not shown to this account`);
+        });
+        await tab.click();
+      }
     },
 
     /**

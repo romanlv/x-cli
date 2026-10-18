@@ -99,6 +99,11 @@ Confirmed against this account:
   last page ending in `TimelineTerminateTimeline` Bottom. `usersPage` read 121 of 121 as it came; each
   user has `relationship_perspectives` (`following`, `followed_by`) and exact counts. The
   "Who to follow" sidebar also uses `UserCell`: read the response, never the DOM by that testid.
+- `Followers` (2026-10-18, `account:followers`): a profile's "N Followers" link opens `/<handle>/verified_followers`
+  (`BlueVerifiedFollowers`, a subset), not the plain list; the tab "Followers" (`/<handle>/followers`) makes
+  `Followers` with `variables.userId`, `count: 20`, same shape as `Following`. `usersPage` read it as it came.
+  Not in id order (large accounts start with ~20 notable followers); the list can hold one fewer than the
+  profile's count.
 - **A rate-limited `Viewer` leaves the page blank** (2026-10-18): every fresh page load calls
   `Viewer`, and when X answers it 429, x.com renders nothing, neither the side nav nor a message. About
   30 fresh browsers in ten minutes did it, and it had reset ten minutes later. `x/domain.ts` keeps
