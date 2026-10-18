@@ -194,13 +194,14 @@ A context is an X account, named as in `kubectl config use-context`: a nickname,
 
 ```
 $ x context:add me --url https://x.com/<your handle>
-$ x context:login me        # headed browser; the person signs in, 2FA included
+$ x context:login me        # Chrome opens; the person signs in, 2FA included
 $ x contexts
 * me   https://x.com/<handle>   signed in, 2h ago
 ```
 
 - **The URL names the account.** `https://x.com/<handle>` makes the sign-in check refuse a session signed in as anyone else (`elsewhere`); runs start from that profile. Plain `https://x.com` accepts whichever account signs in and starts from `/home`.
 - **Only a person signs in**, in the window. There is no username and password sign-in for X: automated logins are what X challenges hardest. The saved sign-in is `.state/contexts/<name>/auth.json`; agents never see or type credentials.
+- **Nothing drives the sign-in window.** X refused a sign-in in a Chrome that Playwright launched. So `context:login` starts the installed browser as itself, without Playwright's flags, on a profile kept for the context (`.state/contexts/<name>/browser`, so X sees the same browser each time). Core lists its tabs over the debugging port, which pages can't see, and attaches for one look only once a tab has held still off the domain's sign-in pages (`signInPage`), to ask `signInState` and save the cookies.
 - **A request keeps the context it was filed in**, so switching contexts never moves a running build to another account.
 - **Account knowledge** lives in `x/knowledge/contexts/<name>.md`, and examples are tagged by context.
 - **Signed out mid-run**, a run stops `blocked` with "sign in again: x context:login me" as its question, and continues once that is done.
@@ -225,6 +226,7 @@ Playwright does all the browser work, behind the CLI.
 - **Exploring leaves a trace.** Every `page` command is logged with the locator Playwright used, to `trace.jsonl` in the run. Writing `op.ts` starts from what worked, not from the agent's memory of it. The page shows each control's `data-testid` (the domain's `testIdAttribute`), and a unique one is the locator suggested: `page.getByTestId(...)`.
 - **The page's own calls, not direct ones.** core lets an op have a `direct` way, plain HTTP on the saved cookies with no browser. X ops don't use it, and `directCalls: false` in `x/domain.ts` keeps an op that has one from loading, and leaves out `page:fetch`, which makes a call the same way, from the `page` commands: X signs each call, rotates its query ids and sits behind Cloudflare's fingerprinting, so a separate client is what it flags (`x/knowledge/bot-detection.md`). Instead an op reads the GraphQL responses the page fetches (`app.graphql`), which carry more than the screen shows. The builder finds them with `page:requests`, as the `direct-calls` skill says.
 - **Installed Chrome, one request at a time.** `x/domain.ts` sets `browserChannel: "chrome"` (core falls back to Playwright's Chromium when Chrome isn't installed) and `maxRunning: 1`, so one request's browsers use the account at a time.
+- **Runs don't say they are automated.** `hideAutomation: true` starts every browser without Playwright's `--enable-automation` (so `navigator.webdriver` is false), and a headless one sends the browser's own user agent without `HeadlessChrome`. Playwright still drives the page over DevTools, which a page can notice; Patchright is the step after, if X starts challenging reads.
 - **Signed in for as long as runs need it.** A domain whose app signs out an idle session sets `keepAlive`: while a request runs, the worker opens the app every `signInEveryMs` and saves the fresh cookies, and open sessions nudge their page every `pageEveryMs`. X sets none, since its sessions last weeks. For a domain with `submitSignIn`, a request blocked on signing in is still signed in again by the worker, once per attempt, when `.env.<context>` holds the sign-in. `XCLI_KEEP_ALIVE_PAGE_MS` and `XCLI_KEEP_ALIVE_SIGN_IN_MS` change the two intervals; neither turns on one the domain leaves unset, and 0 turns one off.
 - **A sign-in check runs before every op:** is the context's session still signed in to its URL. If not, it exits 3 with how to sign in again, and no request is filed, because no agent can fix a login.
 

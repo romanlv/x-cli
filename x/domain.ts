@@ -52,7 +52,16 @@ const signedInHandle = async (page: Page): Promise<string | undefined> => {
 /** Is this X's login or sign-up flow? Its path, not the whole URL: an account may be called `logintest`. */
 export const isSignInUrl = (url: string): boolean => {
   try {
-    return /^\/(login|i\/flow\/(login|signup))(\/|$)/.test(new URL(url).pathname);
+    return /^\/(login|i\/flow\/(login|signup)|i\/jf\/onboarding)(\/|$)/.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
+};
+
+/** X's sign-in pages, and the challenges a person clears by hand (an "unusual activity" check, a locked account). */
+const isSignInPage = (url: string): boolean => {
+  try {
+    return isSignInUrl(url) || /^\/account\/access(\/|$)/.test(new URL(url).pathname);
   } catch {
     return false;
   }
@@ -86,12 +95,15 @@ export const xDomain = (overrides: Partial<Domain<Xh>> = {}): Domain<Xh> =>
     root: join(import.meta.dir, ".."),
     helpers: xHelpers,
     // X watches for automation and limits each account (knowledge/bot-detection.md): the installed
-    // Chrome, one request at a time, no calls of the ops' own, and no keep-alive nudges.
+    // Chrome without the automation switch, one request at a time, no calls of the ops' own, and no
+    // keep-alive nudges.
     browserChannel: "chrome",
+    hideAutomation: true,
     maxRunning: 1,
     directCalls: false,
     testIdAttribute: "data-testid",
     signInState,
+    signInPage: isSignInPage,
     // No submitSignIn: X challenges automated logins, so a person always signs in in the window.
     appUrl(_signedInUrl, contextUrl) {
       const { handle } = accountOf(contextUrl);

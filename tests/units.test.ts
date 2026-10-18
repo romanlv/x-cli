@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Type from "typebox";
 import { awfArgs, describeRun, formatCost, runUsage } from "../core/awf";
-import { launch } from "../core/browser";
+import { launch, signedInContext, signIn } from "../core/browser";
 import { callOf, parseArgs } from "../core/cli";
 import { Contexts } from "../core/contexts";
 import type { Domain } from "../core/domain";
@@ -634,6 +634,85 @@ describe("running an op", () => {
     expect(repairs).toEqual([]);
     expect(existsSync(join(t.home, "failures"))).toBe(false);
   });
+});
+
+describe("signing in by hand", () => {
+  let t: ReturnType<typeof tempHome>;
+  let server: ReturnType<typeof Bun.serve>;
+  const page = (body: string, headers: Record<string, string> = {}) =>
+    new Response(body, { headers: { "content-type": "text/html", ...headers } });
+  beforeEach(() => {
+    t = tempHome();
+    // The person: the start page goes to the sign-in form, which signs in and lands on the home page.
+    server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const { pathname } = new URL(request.url);
+        if (pathname === "/login") return page(`<p>password</p><script>setTimeout(() => location.href = "/home", 4000)</script>`);
+        if (pathname === "/home") return page("<h1>Home</h1>", { "set-cookie": "sid=signed-in; Path=/" });
+        return page(`<p>welcome</p><script>setTimeout(() => location.href = "/login", 300)</script>`);
+      },
+    });
+  });
+  afterEach(() => {
+    server.stop(true);
+    t.cleanup();
+  });
+
+  test("saves the session from a browser nothing drives, never looking at a sign-in page", async () => {
+    const looked: string[] = [];
+    const domain: Domain = {
+      name: "t",
+      dir: join(t.home, "t"),
+      root: t.home,
+      home: t.home,
+      helpers: () => ({}),
+      signInPage: (url) => new URL(url).pathname === "/login",
+      async signInState(p) {
+        looked.push(new URL(p.url()).pathname);
+        return (await p.getByRole("heading").count()) ? "signed-in" : "unknown";
+      },
+      appUrl: (signedInUrl) => signedInUrl,
+    };
+    const contexts = new Contexts(t.home, "t");
+    const ctx = contexts.add("acme", server.url.href);
+    await signIn(domain, contexts, ctx, { headless: true, timeoutMs: 30_000 });
+    expect(looked).not.toContain("/login");
+    expect(looked).toContain("/home");
+    expect(JSON.parse(readFileSync(ctx.authFile, "utf8")).cookies).toContainEqual(
+      expect.objectContaining({ name: "sid", value: "signed-in" }),
+    );
+    expect(contexts.get("acme").appUrl).toBe(new URL("/home", server.url).href);
+  }, 45_000);
+});
+
+test("a domain that hides automation runs a browser that doesn't say it is automated or headless", async () => {
+  const t = tempHome();
+  const name = envName("HIDE_AUTOMATION");
+  process.env[name] = "1";
+  const browser = await launch(false);
+  try {
+    const contexts = new Contexts(t.home, "t");
+    const ctx = contexts.add("acme", "https://example.com");
+    mkdirSync(dirname(ctx.authFile), { recursive: true });
+    writeFileSync(ctx.authFile, JSON.stringify({ cookies: [], origins: [] }));
+    const domain: Domain = {
+      name: "t",
+      dir: "/t/t",
+      root: "/t",
+      home: t.home,
+      helpers: () => ({}),
+      signInState: async () => "signed-in",
+      hideAutomation: true,
+    };
+    const p = await (await signedInContext(browser, domain, ctx)).newPage();
+    expect(await p.evaluate(() => navigator.webdriver)).toBe(false);
+    expect(await p.evaluate(() => navigator.userAgent)).not.toContain("Headless");
+  } finally {
+    delete process.env[name];
+    await browser.close();
+    t.cleanup();
+  }
 });
 
 describe("loading ops", () => {

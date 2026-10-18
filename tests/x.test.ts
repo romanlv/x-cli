@@ -14,6 +14,7 @@ describe("x accounts", () => {
     expect(isSignInUrl("https://x.com/login")).toBe(true);
     expect(isSignInUrl("https://x.com/i/flow/login?redirect_after_login=%2Fhome")).toBe(true);
     expect(isSignInUrl("https://x.com/i/flow/signup")).toBe(true);
+    expect(isSignInUrl("https://x.com/i/jf/onboarding/web?mode=login")).toBe(true);
     expect(isSignInUrl("https://x.com/logintest")).toBe(false);
     expect(isSignInUrl("https://x.com/jack/status/1?ref=/login")).toBe(false);
     expect(isSignInUrl("about:blank")).toBe(false);

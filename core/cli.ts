@@ -109,6 +109,7 @@ export const main = async (domain: Domain, argv = process.argv.slice(2)): Promis
   guardStdout();
   // The worker, its runs and their browser server are other processes: they read the browser from here.
   if (domain.browserChannel) process.env[envName("BROWSER_CHANNEL")] ??= domain.browserChannel;
+  if (domain.hideAutomation) process.env[envName("HIDE_AUTOMATION")] ??= "1";
   const json = argv.includes("--json");
   const git = join(domain.root, ".git");
   const worktree = domain.worktree ?? (existsSync(git) && statSync(git).isFile());

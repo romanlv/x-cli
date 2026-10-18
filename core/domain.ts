@@ -72,6 +72,11 @@ export interface Domain<Helpers = unknown> {
    */
   submitSignIn?(page: Page, credentials: Credentials): Promise<void>;
   /**
+   * Is `url` one of the app's sign-in pages (a login form, an MFA step, a challenge)? While a person
+   * signs in by hand, core never attaches to a tab on one; unset, it looks at any tab that holds still.
+   */
+  signInPage?(url: string): boolean;
+  /**
    * Set up every signed-in browser before it loads the app, such as routes that block a page the
    * app would otherwise load to sign out the sign-in every browser of the context shares.
    */
@@ -88,6 +93,12 @@ export interface Domain<Helpers = unknown> {
   refusal?(page: Page): Promise<string | undefined>;
   /** An installed browser to run instead of Playwright's Chromium, such as "chrome", for an app that tells them apart. */
   browserChannel?: string;
+  /**
+   * For an app that watches for automation: browsers start without Playwright's automation switch
+   * (`navigator.webdriver` is false) and a headless one sends a headed one's user agent. Playwright
+   * still drives the pages over DevTools, which a page can notice.
+   */
+  hideAutomation?: boolean;
   /** How many requests the worker builds at once (2); one for an app that limits each account. */
   maxRunning?: number;
   /**
