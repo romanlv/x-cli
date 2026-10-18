@@ -335,15 +335,18 @@ const maxRunningOf = (domain: Domain): number => {
 
 const work = async (env: Env): Promise<Outcome> => {
   const { domain, contexts } = env;
+  const signedIn = async (name: string): Promise<boolean> => {
+    const ctx = contexts.list().contexts.find((c) => c.name === name);
+    return !!ctx && (await keepSignedIn(domain, contexts, ctx));
+  };
   await runWorker(domain.home, domain.root, {
     maxRunning: maxRunningOf(domain),
     runTimeout: envValue("RUN_TIMEOUT"),
     signInEveryMs: envOverride("KEEP_ALIVE_SIGN_IN_MS", domain.keepAlive?.signInEveryMs),
-    // Signed out, a person who left their sign-in in .env.<context> needn't come back for it.
-    keepSignedIn: async (name) => {
-      const ctx = contexts.list().contexts.find((c) => c.name === name);
-      return !!ctx && (await keepSignedIn(domain, contexts, ctx));
-    },
+    keepSignedIn: domain.keepAlive ? signedIn : undefined,
+    // Signed out, a person who left their sign-in in .env.<context> needn't come back for it; an app
+    // only a person signs in to gets no automated visit that can't help.
+    signInAgain: domain.submitSignIn ? signedIn : undefined,
   });
   return ok("worker done");
 };

@@ -127,15 +127,19 @@ test("while a request runs, the worker keeps its context signed in", async () =>
   expect(touched).toEqual([]);
 });
 
-test("a request blocked on signing in gets one sign-in try from the worker", async () => {
+test("a request blocked on signing in gets one sign-in try from the worker, where it can sign in", async () => {
   const r = requests.file({ kind: "intake", text: "a", context: "acme", domain: domain() });
   requests.update(r.id, () => ({ state: "blocked", question: "sign in again: x context:login acme" }));
   const tried: string[] = [];
+  // Keeping a sign-in alive is no sign-in: an app only a person signs in to gets no try.
+  await runWorker(t.home, ROOT, { pollMs: 20, awf: AWF, maxRunning: 2, signInEveryMs: 100, keepSignedIn: async (c) => tried.push(c) > 0 });
+  expect(tried).toEqual([]);
+  expect(requests.get(r.id)!.state).toBe("blocked");
   await runWorker(t.home, ROOT, {
     pollMs: 20,
     awf: AWF,
     maxRunning: 2,
-    keepSignedIn: async (c) => tried.push(c) > 0,
+    signInAgain: async (c) => tried.push(c) > 0,
   });
   expect(tried).toEqual(["acme"]);
   expect(requests.get(r.id)).toMatchObject({ state: "done", answers: [{ text: "signed in again" }] });

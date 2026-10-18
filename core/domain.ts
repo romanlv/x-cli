@@ -67,7 +67,8 @@ export interface Domain<Helpers = unknown> {
   signInState(page: Page, contextUrl: string): Promise<SignInState>;
   /**
    * Fill the sign-in form with a person's username and password and submit it, for
-   * `context:login --username`. Without it, only signing in in the window is offered.
+   * `context:login --username`, and for the worker to sign a request blocked on signing in in
+   * again from `.env.<context>`. Without it, only signing in in the window is offered.
    */
   submitSignIn?(page: Page, credentials: Credentials): Promise<void>;
   /**

@@ -75,6 +75,7 @@ export const runWorker = async (
     runTimeout = "3h",
     keepSignedIn,
     signInEveryMs,
+    signInAgain,
   }: {
     pollMs?: number;
     awf?: string;
@@ -85,10 +86,12 @@ export const runWorker = async (
      * are capped, so this only stops a run that hangs; a build that explores, writes and revises runs past an hour.
      */
     runTimeout?: string;
-    /** Open the app signed in as a context, signing in again if it can; true when it is signed in. */
+    /** Open the app signed in as a context, every `signInEveryMs`, for an app that signs out an idle session; true when it is signed in. */
     keepSignedIn?: (context: string) => Promise<boolean>;
     /** How often the contexts of running requests are kept signed in; unset, they aren't. */
     signInEveryMs?: number;
+    /** Sign in again as a context, for an app that can be signed in to without a person; true when it is signed in. */
+    signInAgain?: (context: string) => Promise<boolean>;
   },
 ): Promise<void> => {
   const requests = new Requests(home);
@@ -154,20 +157,24 @@ export const runWorker = async (
   let touchedAt = Date.now();
   const tried = new Set<string>();
   const signIn = (all: RequestRecord[]): void => {
-    if (!keepSignedIn || signingIn) return;
-    const contexts = new Set<string>();
+    if (signingIn) return;
+    const touch = new Set<string>();
+    const again = new Set<string>();
     const building = all.filter((r) => r.state === "building");
-    if (signInEveryMs && building.length > 0 && Date.now() - touchedAt >= signInEveryMs) {
+    if (keepSignedIn && signInEveryMs && building.length > 0 && Date.now() - touchedAt >= signInEveryMs) {
       touchedAt = Date.now();
-      for (const r of building) contexts.add(r.context);
+      for (const r of building) touch.add(r.context);
     }
-    for (const r of all.filter((b) => b.state === "blocked" && isSignInQuestion(b.question) && !tried.has(`${b.id}/${b.attempts}`))) {
-      tried.add(`${r.id}/${r.attempts}`);
-      contexts.add(r.context);
+    if (signInAgain) {
+      for (const r of all.filter((b) => b.state === "blocked" && isSignInQuestion(b.question) && !tried.has(`${b.id}/${b.attempts}`))) {
+        tried.add(`${r.id}/${r.attempts}`);
+        again.add(r.context);
+      }
     }
-    if (contexts.size === 0) return;
+    if (touch.size === 0 && again.size === 0) return;
     signingIn = (async () => {
-      for (const context of contexts) if (await keepSignedIn(context).catch(() => false)) requests.signedIn(context);
+      for (const context of touch) if (await keepSignedIn!(context).catch(() => false)) requests.signedIn(context);
+      for (const context of again) if (!touch.has(context) && (await signInAgain!(context).catch(() => false))) requests.signedIn(context);
     })()
       // A lock that stays taken must not end the worker, which nothing awaits this for.
       .catch((err) => console.error(`${new Date().toISOString()} signing in: ${(err as Error).message}`))
