@@ -9,7 +9,7 @@ import { chromium } from "playwright";
 import { launchWith } from "./browser";
 import { alive } from "./store";
 
-export const BROWSER_PATH = "/browser";
+const BROWSER_PATH = "/browser";
 
 /** What XCLI_BROWSER is for a server on `socket`. */
 export const browserEndpoint = (socket: string): string => `ws+unix://${socket}:${BROWSER_PATH}`;

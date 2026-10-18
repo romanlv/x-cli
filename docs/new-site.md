@@ -33,8 +33,8 @@ prompt is sent; `prompts.ts` decides what it says; `docs/prompts.md` shows every
    replace the `x x` arguments of `docs:prompts` in `package.json` (the domain folder and the
    command). Rename `ENV_PREFIX` in `core/env.ts` if the `XCLI_` variables should be the CLI's own.
 3. Write `<site>/domain.ts`: `name`, `signInState` (signed in, signed out, signed in elsewhere,
-   unknown) and `helpers` are required; the rest are optional hooks, each described in
-   `core/domain.ts`.
+   unknown: one look at the page, which core repeats while it is unknown) and `helpers` are
+   required; the rest are optional hooks, each described in `core/domain.ts`.
 4. Write a few helpers the first op will need (open a page, search, read a list), and say in
    `knowledge/<name>.md` which of their selectors are confirmed.
 5. Write `<site>/authoring.md`: what the CLI is for and what it must never do in the app, how test

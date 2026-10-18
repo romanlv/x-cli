@@ -165,9 +165,12 @@ const envLine = (env: Record<string, string>): string =>
 const worktreeOf = (request: RequestRecord): string => join(request.domain.home, "worktrees", request.id);
 const branchOf = (request: RequestRecord): string => `req/${request.id}`;
 
-export const pathsFor = (request: RequestRecord, config: WorkflowConfig): Paths => {
+export const pathsFor = (
+  request: RequestRecord,
+  config: WorkflowConfig,
+  sandbox = config.sandbox ? sandboxPaths(request) : undefined,
+): Paths => {
   const worktree = worktreeOf(request);
-  const sandbox = config.sandbox ? sandboxPaths(request) : undefined;
   return {
     worktree,
     branch: branchOf(request),

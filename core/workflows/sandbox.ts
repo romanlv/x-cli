@@ -27,9 +27,10 @@ export const shellEnv = (paths: SandboxPaths): Record<string, string> => ({
   TMPDIR: paths.sockets,
 });
 
-export const sandboxPaths = (request: RequestRecord): SandboxPaths => {
+/** `tmp` is /tmp by its real path; docs/prompts.md gives it as is, to read the same on every machine. */
+export const sandboxPaths = (request: RequestRecord, tmp = realpathSync("/tmp")): SandboxPaths => {
   // Named for the CLI, cut short: a session's socket path goes under it.
-  const sockets = join(realpathSync("/tmp"), `${request.domain.name.slice(0, 8)}-${request.id}`);
+  const sockets = join(tmp, `${request.domain.name.slice(0, 8)}-${request.id}`);
   return { home: join(request.domain.home, "sandboxes", request.id), sockets, browserSocket: join(sockets, "browser.sock") };
 };
 

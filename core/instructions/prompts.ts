@@ -114,7 +114,7 @@ export const plannerInstructions = (run: PromptRun): string => md`
 
   Rules:
   - You decide what gets built and say what the person wants; the builder then surveys the app for it, and you write the spec from what it found. Don't open a browser or run the CLI.
-  - Read nothing outside the worktree. Each prompt says what you need about other requests; don't look them up in ${join(run.request.domain.home, "requests")}.
+  - Don't read other requests' records in ${join(run.request.domain.home, "requests")}: each prompt says what you need about them. The files a prompt names, such as the builder's trace, are yours to read.
 `;
 
 /** The builder's and the troubleshooter's. */
@@ -205,7 +205,7 @@ export const spec = (run: PromptRun, op: string, summary: string, change: boolea
   - its inputs, each a flag, typed, with which values differ between contexts
   - its outputs, as the app gives them back
   - what done looks like in ${run.request.domain.name}, so someone can check it there
-  authoring.md says which spec to follow. Say only what the notes show of the app. If another way the builder found serves the intent better, choose it in the spec and say why: the op is written to the spec.${answers(run.request)}
+  Follow the shape of the spec.md of the reference op that authoring.md names, once there is one. Say only what the notes show of the app. If another way the builder found serves the intent better, choose it in the spec and say why: the op is written to the spec.${answers(run.request)}
 `;
 
 export const write = (run: PromptRun, op: string, summary: string): string => {

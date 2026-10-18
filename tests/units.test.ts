@@ -16,7 +16,7 @@ import { formatSnapshot, suggestLocator, takeSnapshot } from "../core/snapshot";
 import { lineText, requestLines } from "../core/watch";
 import { DEFAULTS, loadConfig } from "../core/workflows/config";
 import { renderPrompts } from "../core/workflows/prompts-doc";
-import { tempHome } from "./helpers";
+import { cli, tempHome } from "./helpers";
 
 describe("parseArgs", () => {
   test("splits global flags from the op's, and booleans from values", () => {
@@ -35,6 +35,18 @@ describe("parseArgs", () => {
   test("--key=value, and a flag before another flag is true", () => {
     expect(parseArgs(["--a=1", "--b", "--c", "x", "pos"]).flags).toEqual({ a: "1", b: true, c: "x" });
     expect(parseArgs(["R-0001", "--wait"]).positionals).toEqual(["R-0001"]);
+  });
+
+  test("--timeout without a number is bad input, not one second", async () => {
+    const t = tempHome();
+    try {
+      await cli(t.home, ["context:add", "acme", "--url", "https://example.com"]);
+      const bare = await cli(t.home, ["request", "the replies under a post", "--wait", "--timeout"]);
+      expect(bare.code).toBe(2);
+      expect(bare.stderr).toContain("--timeout needs a number of seconds");
+    } finally {
+      t.cleanup();
+    }
   });
 });
 
