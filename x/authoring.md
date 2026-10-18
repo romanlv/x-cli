@@ -22,7 +22,7 @@ Ops are named for what they read: `posts:search`, `post:thread`, `account:posts`
 ## A sketch of an op
 
 ```ts
-import { Entry, entryText, Page, PostId } from "../../model";
+import { Entry, Page, PostId, pageText } from "../../model";
 import { defineOp, Type } from "../../op";
 
 export default defineOp({
@@ -43,7 +43,7 @@ export default defineOp({
       }),
     );
   },
-  format: (page) => page.items.map(entryText).join("\n\n"),
+  format: pageText,
 });
 ```
 
@@ -77,7 +77,7 @@ This is a sketch, not a built op: the first real one replaces it here.
   until })` reads the same timeline from the DOM, with handles but no account ids and rounded
   counts. Both take `open` (`() => app.search(query)`, `() => app.profile(handle)`) so they hear
   the call that loads the first page; an op never opens the page before calling them.
-- **`format` is `entryText`** for posts, so a person reads who, when, the text and the counts.
+- **`format` is `pageText`** for posts (`entryText` per entry): blocks of who, when, the cut text and the counts.
 - **The first op to use a mapper confirms it.** The mappers follow open-source clients, not this
   account's responses yet: the first op that uses one compares its output with what the page
   received (`page:requests <n> body`), fixes the mapper and its fixture where they differ, and

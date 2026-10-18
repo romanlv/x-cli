@@ -128,7 +128,7 @@ describe("x helpers: reading the page", () => {
       viewer: { liked: false, reposted: false, bookmarked: false },
     });
     // A person sees which counts are rounded.
-    expect(entryText(entries[0]!)).toContain("3 replies · 1204 reposts and quotes · ~12000 likes · 25900 views");
+    expect(entryText(entries[0]!)).toContain("3 replies · 1204 reposts and quotes · ~12K likes · 25.9K views");
   });
 
   test("readPosts: a repost is by the reposter's handle, the account's own state read from the buttons", async () => {

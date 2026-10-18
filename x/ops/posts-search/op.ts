@@ -1,4 +1,4 @@
-import { Entry, entryText, Page, PostId } from "../../model";
+import { Entry, Page, PostId, pageText } from "../../model";
 import { defineOp, InputError, Type } from "../../op";
 
 export default defineOp({
@@ -26,5 +26,5 @@ export default defineOp({
       }),
     );
   },
-  format: (page) => page.items.map(entryText).join("\n\n"),
+  format: pageText,
 });

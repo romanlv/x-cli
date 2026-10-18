@@ -71,3 +71,28 @@ column before the wheel. With it `--limit 45` read 45 in 44 s, sorted, no duplic
 ## Direct way
 
 None: x/authoring.md rules it out. Layers 1 and 2 done; the call is above. `page:fetch` not used.
+
+## Change R-0002: compact text output (no new way in X)
+
+Only how the result prints changes; the way in X stays search's Latest, read through `SearchTimeline`.
+Checked 2026-10-18 on `me` (`page:search "from:NASA" latest`, `page:posts 4`): the page and the
+data are as above, and nothing in the app serves a "compact view": X has none, it is the op's print.
+
+- What the entries give for a text view: `author.name` and `author.handle`, `createdAt` (else the
+  time of the id), `text` with its own newlines and bare URLs split onto their own lines
+  ("https://\nnasa.gov/maxpower/" from the DOM), `counts` (replies, reposts or repostsAndQuotes,
+  likes, views), `quoted`, and for a repost `by` and `post`. `entryText` printed only the handle
+  and the ISO time, the whole text, and the counts line, with one blank line between posts.
+- Replies by the account appear in `from:` searches, so a header line may need "replying" context
+  that the model lacks only if `reply` is absent; none is needed to separate posts.
+- The text view lives in `model.ts` (`entryText`, shared by every post-reading op); `--json` is the
+  `Page(Entry)` untouched.
+
+### Built: the print (R-0002)
+
+`pageText` in `model.ts` (the op's `format`) builds on `entryText`: header, text folded and cut to
+4 lines / 280 chars, `┃` quote cut to 2 lines / 140, a counts line (10K and over rounded), the link,
+a `─` rule between blocks, `no posts` for an empty page, and a closing `n posts · more: pass --until
+<first id>` when `more`. Plain text, no colour: the text is made in the worker and kept. Ran on `me`:
+`from:NASA --limit 5` (5 blocks, closing line), `--until` example, the 30-post links query (30
+blocks), the empty query result (`no posts`), a blank query (exit 2), `--json` still whole.

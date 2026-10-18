@@ -383,18 +383,98 @@ export const postOf = (entry: Entry): Post | Unavailable => (entry.kind === "rep
 /** "@handle" or the id: how a person reads an account reference. */
 export const who = (u: UserRef): string => (u.handle ? `@${u.handle}` : (u.id ?? "?"));
 
-const n = (c?: Count) => (c ? `${c.exact ? "" : "~"}${c.value}` : "?");
+const RULE = "─".repeat(60);
+const WIDTH = 80;
+const TEXT_LINES = 4;
+const TEXT_CHARS = 280;
+const QUOTE_LINES = 2;
+const QUOTE_CHARS = 140;
 
-/** One entry as a person reads it in the terminal: who, when, the text, and the counts. */
+/** A count as a person reads it: 10,000 and over rounded ("12K", "1.5M"), "~" when X rounded it already. */
+const n = (c?: Count) => {
+  if (!c) return "?";
+  const v = c.value;
+  const short = (d: number, unit: string) => `${(v / d).toFixed(1).replace(/\.0$/, "")}${unit}`;
+  const shown = v >= 1_000_000 ? short(1_000_000, "M") : v >= 10_000 ? short(1000, "K") : String(v);
+  return `${c.exact ? "" : "~"}${shown}`;
+};
+
+/**
+ * A post's text for a terminal: newlines folded into spaces (a URL the text splits across lines is
+ * rejoined), wrapped at `width`, and cut at a word after `maxLines` lines or `maxChars` characters,
+ * with an ellipsis. `cut` marks text already cut where it was read.
+ */
+const clip = (text: string, width: number, maxLines: number, maxChars: number, cut = false): string[] => {
+  let folded = text
+    .replace(/(https?:\/\/)\s+/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+  let truncated = cut;
+  if (folded.length > maxChars) {
+    const head = folded.slice(0, maxChars);
+    const space = head.lastIndexOf(" ");
+    folded = (space > 0 ? head.slice(0, space) : head).trimEnd();
+    truncated = true;
+  }
+  const lines: string[] = [];
+  for (const word of folded.split(" ").filter(Boolean)) {
+    const last = lines.length - 1;
+    if (last >= 0 && lines[last]!.length + 1 + word.length <= width) lines[last] += ` ${word}`;
+    else lines.push(word);
+  }
+  if (lines.length > maxLines) {
+    lines.length = maxLines;
+    truncated = true;
+  }
+  if (truncated) {
+    if (lines.length === 0) lines.push("");
+    lines[lines.length - 1] += "…";
+  }
+  return lines;
+};
+
+const unavailableText = (u: Unavailable) => `[${u.reason}] ${u.message ?? "post unavailable"}${u.id ? ` ${postUrl(u.id)}` : ""}`;
+
+/** "Ada Lovelace @ada · 2026-10-18 14:05": who, and when in UTC, from the post or else from its id. */
+const header = (post: { id: string; author: UserRef; createdAt?: string }): string => {
+  const time = (post.createdAt ?? timeOfId(post.id))?.slice(0, 16).replace("T", " ");
+  const name = post.author.name && post.author.handle ? `${post.author.name} ` : "";
+  return `${name}${who(post.author)}${time ? ` · ${time}` : ""}`;
+};
+
+/**
+ * One entry as a person reads it in the terminal: a block of a header (who, when), the text cut to a
+ * few lines, a quoted post indented under it, one line of counts, and the link. Plain text, so it
+ * can be kept and shown later; `--json` has everything.
+ */
 export const entryText = (entry: Entry): string => {
-  if (entry.kind === "unavailable")
-    return `[${entry.reason}] ${entry.message ?? "post unavailable"}${entry.id ? ` ${postUrl(entry.id)}` : ""}`;
-  if (entry.kind === "repost") return `${who(entry.by)} reposted:\n${entryText(entry.post)}`;
+  if (entry.kind === "unavailable") return unavailableText(entry);
+  if (entry.kind === "repost") {
+    const name = entry.by.name && entry.by.handle ? `${entry.by.name} ` : "";
+    return `↻ ${name}${who(entry.by)} reposted\n${entryText(entry.post)}`;
+  }
+  const lines = [header(entry)];
+  lines.push(...clip(entry.text, WIDTH, TEXT_LINES, TEXT_CHARS, entry.truncated).filter(Boolean));
+  const q = entry.quoted;
+  if (q?.kind === "unavailable") lines.push(`  ┃ ${unavailableText(q)}`);
+  else if (q) {
+    lines.push(`  ┃ ${header(q)}`);
+    for (const l of clip(q.text, WIDTH - 4, QUOTE_LINES, QUOTE_CHARS, q.truncated)) if (l) lines.push(`  ┃ ${l}`);
+  }
   const c = entry.counts;
-  const counts = c
-    ? `  ${n(c.replies)} replies · ${c.reposts || !c.repostsAndQuotes ? `${n(c.reposts)} reposts` : `${n(c.repostsAndQuotes)} reposts and quotes`} · ${n(c.likes)} likes${c.views ? ` · ${n(c.views)} views` : ""}`
-    : "";
-  const quoted = entry.quoted ? `\n  > ${entryText(entry.quoted).replace(/\n/g, "\n  > ")}` : "";
-  const time = entry.createdAt ?? timeOfId(entry.id);
-  return `${who(entry.author)} · ${time ? `${time} · ` : ""}${postUrl(entry.id)}\n${entry.text}${quoted}${counts ? `\n${counts}` : ""}`;
+  if (c) {
+    const reposts = c.reposts || !c.repostsAndQuotes ? `${n(c.reposts)} reposts` : `${n(c.repostsAndQuotes)} reposts and quotes`;
+    lines.push(`  ${n(c.replies)} replies · ${reposts} · ${n(c.likes)} likes${c.views ? ` · ${n(c.views)} views` : ""}`);
+  }
+  lines.push(`  ${postUrl(entry.id)}`);
+  return lines.join("\n");
+};
+
+/** A page of entries: blocks with a rule between them, and when there is more, how to read on. */
+export const pageText = (page: { items: Entry[]; more?: boolean }): string => {
+  if (page.items.length === 0) return "no posts";
+  const blocks = page.items.map(entryText);
+  const newest = page.items.map((e) => e.id).find(Boolean);
+  if (page.more && newest) blocks.push(`${page.items.length} posts · more: pass --until ${newest}`);
+  return blocks.join(`\n${RULE}\n`);
 };

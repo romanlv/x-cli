@@ -12,7 +12,21 @@ import {
   usersPage,
   xTime,
 } from "../x/map/graphql";
-import { Draft, Entry, entryText, Page, type Post, postUrl, type Repost, Thread, timeOfId, User, UserUnavailable, XList } from "../x/model";
+import {
+  Draft,
+  Entry,
+  entryText,
+  Page,
+  type Post,
+  pageText,
+  postUrl,
+  type Repost,
+  Thread,
+  timeOfId,
+  User,
+  UserUnavailable,
+  XList,
+} from "../x/model";
 import {
   adsOnly,
   followers,
@@ -311,14 +325,16 @@ describe("x model: helpers and writes", () => {
 
   test("text for a person leaves out a time it does not have", () => {
     const old: Post = { kind: "post", id: "20", source: "dom", author: { handle: "jack" }, text: "just setting up my twttr" };
-    expect(entryText(old)).toBe("@jack · https://x.com/i/status/20\njust setting up my twttr");
+    expect(entryText(old)).toBe("@jack\njust setting up my twttr\n  https://x.com/i/status/20");
   });
 
   test("text for a person: a repost and a quote", () => {
     const { items } = postsPage(userTweets);
-    const text = items.map(entryText).join("\n\n");
-    expect(text).toContain("@ada reposted:\n@carol · ");
-    expect(text).toContain("  > @bob · ");
+    const text = pageText({ items, more: true });
+    expect(text).toContain("↻ Name ada @ada reposted\n");
+    expect(text).toContain("  ┃ ");
+    expect(text).toContain("\n────");
+    expect(text).toMatch(/\d+ posts · more: pass --until \d+$/);
     expect(text).toContain("[deleted] This Post was deleted");
   });
 
