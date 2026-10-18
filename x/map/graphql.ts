@@ -33,6 +33,7 @@ import type {
   UserUnavailable,
   XList,
 } from "../model";
+import { postOf } from "../model";
 
 type Json = Record<string, unknown>;
 
@@ -40,6 +41,8 @@ const isObj = (x: unknown): x is Json => typeof x === "object" && x !== null && 
 const obj = (x: unknown): Json => (isObj(x) ? x : {});
 const arr = (x: unknown): unknown[] => (Array.isArray(x) ? x : []);
 const str = (x: unknown): string | undefined => (typeof x === "string" ? x : undefined);
+/** An array of strings, or undefined when X sent none: `[]` stays `[]`. */
+const strings = (x: unknown): string[] | undefined => (Array.isArray(x) ? x.filter((s): s is string => typeof s === "string") : undefined);
 const bool = (x: unknown): boolean | undefined => (typeof x === "boolean" ? x : undefined);
 /** X writes some numbers as strings ("25900", "5"). */
 const int = (x: unknown): number | undefined => {
@@ -52,8 +55,8 @@ const count = (x: unknown): Count | undefined => {
   return value === undefined ? undefined : { value, exact: true };
 };
 /** Drops keys whose value is undefined, so an absent field stays absent in JSON and in Value.Check. */
-const clean = <T extends object>(o: T): T => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
-const nonEmpty = <T extends object>(o: T): T | undefined => {
+export const clean = <T extends object>(o: T): T => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
+export const nonEmpty = <T extends object>(o: T): T | undefined => {
   const c = clean(o);
   return Object.keys(c).length ? c : undefined;
 };
@@ -97,7 +100,7 @@ const userFields = (u: Json) => {
 };
 
 /** How a post names an account: its id, handle and name, from a user result. */
-export const userRefFromResult = (result: unknown): UserRef | undefined => {
+const userRefFromResult = (result: unknown): UserRef | undefined => {
   const u = obj(result);
   if (u.__typename === "UserUnavailable") return undefined;
   const { id, handle, name } = userFields(u);
@@ -156,12 +159,9 @@ export const userFromResult = (result: unknown): User | UserUnavailable | undefi
       likes: count(at(u, "action_counts", "favorites_count") ?? l.favourites_count),
       listed: count(l.listed_count),
     }),
-    pinned: (() => {
-      const ids = at(u, "pinned_items", "tweet_ids_str") ?? l.pinned_tweet_ids_str;
-      return Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : undefined;
-    })(),
+    pinned: strings(at(u, "pinned_items", "tweet_ids_str") ?? l.pinned_tweet_ids_str),
     relationship,
-    withheldIn: Array.isArray(l.withheld_in_countries) ? l.withheld_in_countries.map(String) : undefined,
+    withheldIn: strings(l.withheld_in_countries),
   });
 };
 
@@ -276,13 +276,13 @@ const cardOf = (name: string, values: Map<string, Json>): Card => {
 const editsOf = (t: Json): Edits | undefined => {
   const ec = obj(t.edit_control);
   const src = Array.isArray(ec.edit_tweet_ids) ? ec : obj(ec.edit_control_initial);
-  const versions = arr(src.edit_tweet_ids).filter((x): x is string => typeof x === "string");
+  const versions = strings(src.edit_tweet_ids) ?? [];
   if (!versions.length) return undefined;
   return clean({ versions, editableUntil: msTime(src.editable_until_msecs), remaining: int(src.edits_remaining) });
 };
 
 /** X's tombstone sentence → why the post is gone. The sentences are X's and may change: unknown is the fallback. */
-const reasonOfText = (text = ""): UnavailableReason => {
+export const reasonOfText = (text = ""): UnavailableReason => {
   if (/deleted/i.test(text)) return "deleted";
   if (/suspended/i.test(text)) return "suspended";
   if (/limits who can view|protected/i.test(text)) return "protected";
@@ -395,7 +395,7 @@ const postFrom = (r: Json, f: Json, id: string, author: UserRef, createdAt: stri
   }
 
   const birdwatch = obj(r.birdwatch_pivot);
-  const noteText2 = str(at(birdwatch, "subtitle", "text"));
+  const communityNote = str(at(birdwatch, "subtitle", "text"));
   return clean({
     kind: "post" as const,
     id,
@@ -421,10 +421,10 @@ const postFrom = (r: Json, f: Json, id: string, author: UserRef, createdAt: stri
     card: cardName && !poll ? cardOf(cardName, values) : undefined,
     poll,
     hasNote: bool(r.has_birdwatch_notes),
-    note: noteText2 ? clean({ id: str(at(birdwatch, "note", "rest_id")), text: noteText2 }) : undefined,
+    note: communityNote ? clean({ id: str(at(birdwatch, "note", "rest_id")), text: communityNote }) : undefined,
     edits: editsOf(r),
     sensitive: bool(f.possibly_sensitive),
-    withheldIn: Array.isArray(f.withheld_in_countries) ? f.withheld_in_countries.map(String) : undefined,
+    withheldIn: strings(f.withheld_in_countries),
     limitedActions: limited?.length ? limited : undefined,
     viewer: nonEmpty({ liked: bool(f.favorited), reposted: bool(f.retweeted), bookmarked: bool(f.bookmarked) }),
   });
@@ -563,13 +563,12 @@ export const usersPage = (json: unknown): Page<User | UserUnavailable> => page(r
  */
 export const threadOf = (json: unknown, focalId: string): Thread => {
   const t = readTimeline(json);
-  const asPost = (v: Entry): Post | Unavailable => (v.kind === "repost" ? v.post : v);
   let focal: Post | Unavailable | undefined;
   const ancestors: (Post | Unavailable)[] = [];
   const groups = new Map<string, ReplyGroup>();
   for (const { entryId, module, display, value } of t.items) {
     if (!isEntry(value)) continue;
-    const post = asPost(value);
+    const post = postOf(value);
     if (!focal) {
       if (idOfEntry(entryId) === focalId || post.id === focalId) focal = post;
       else ancestors.push(post);

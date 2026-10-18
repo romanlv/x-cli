@@ -227,7 +227,7 @@ export const UserUnavailable = Type.Object({
 
 export const XList = Type.Object({
   kind: Type.Literal("list"),
-  id: Type.String({ pattern: "^[0-9]+$" }),
+  id: Id("a list's id, a decimal string"),
   source: Source,
   name: Type.String(),
   description: Type.Optional(Type.String()),
@@ -258,7 +258,6 @@ export const Notification = Type.Object({
   text: Type.Optional(Type.String({ description: 'X\'s sentence for it, e.g. "Ada and 3 others liked your post"' })),
   actors: Type.Array(UserRef),
   targets: Type.Array(PostId),
-  post: Type.Optional(Post),
 });
 
 /**
@@ -383,6 +382,6 @@ export const entryText = (entry: Entry): string => {
   const counts = c
     ? `  ${n(c.replies)} replies · ${n(c.reposts)} reposts · ${n(c.likes)} likes${c.views ? ` · ${n(c.views)} views` : ""}`
     : "";
-  const quoted = entry.quoted ? `\n  > ${entryText({ ...entry.quoted } as Entry).replace(/\n/g, "\n  > ")}` : "";
+  const quoted = entry.quoted ? `\n  > ${entryText(entry.quoted).replace(/\n/g, "\n  > ")}` : "";
   return `${who(entry.author)} · ${entry.createdAt ?? timeOfId(entry.id)} · ${postUrl(entry.id)}\n${entry.text}${quoted}${counts ? `\n${counts}` : ""}`;
 };
