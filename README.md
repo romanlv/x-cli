@@ -12,4 +12,8 @@ bin/x request "the replies under a post, oldest first"
 bin/x request:status R-0001 --wait
 ```
 
+Builds run Claude in a sandbox (`"sandbox": true` in `workflows.json`), where it can't use the
+keychain login. Give it a token: run `claude setup-token` and put the token in the checkout's
+`.env`, as `CLAUDE_CODE_OAUTH_TOKEN=…`, or export it.
+
 See `DESIGN.md`.
