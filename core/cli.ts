@@ -3,7 +3,7 @@
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { formatCost, runActivity, runRoot, runUsage, stopRun, sumUsage } from "./awf";
-import { keepSignedIn, signIn } from "./browser";
+import { keepSignedIn, type OpenBrowser, signIn } from "./browser";
 import { Contexts } from "./contexts";
 import { savedCredentials } from "./credentials";
 import type { Domain } from "./domain";
@@ -13,7 +13,7 @@ import { isCliNoun, kebab, OP_NAME, opFolder } from "./names";
 import { domainRef, type HistoryLine, lastRun, loadOps, type OpEntry, opHelp, parseInput, type RunEnv, runOp } from "./ops";
 import { ago, commandLine, EXIT, fail, finish, firstLine, formatDuration, guardStdout, type NextHint, type Outcome, ok } from "./output";
 import { isTerminal, RETRYABLE, type RequestRecord, type RequestState, Requests } from "./requests";
-import { pageCommand, pageCommandsOf, runSessionDaemon, sessionContext } from "./session";
+import { codeStamp, opsSession, pageCommand, pageCommandsOf, runSessionDaemon, sessionContext } from "./session";
 import { requestLines, stateOf, statusBoard } from "./watch";
 import { ensureWorker, runWorker } from "./worker";
 
@@ -415,7 +415,14 @@ const COMMANDS: Record<string, Command> = {
   "page:daemon": {
     run: async (env, args) => {
       const ctx = env.contexts.resolve(contextFlag(args));
-      await runSessionDaemon(env.domain, env.contexts, String(flag(args, "session")), ctx, args.global.headed === true);
+      // An op call sent here (`keepBrowser`) runs as it would in its own process, in this browser.
+      const runCall = async (open: OpenBrowser, call: string[]) => {
+        const { op, input, browser, argv } = JSON.parse(call[0] ?? "{}") as KeptCall;
+        const entry = (await loadOps(env.domain)).ops.get(op);
+        if (!entry) return fail(`there is no op ${op}`, EXIT.USAGE);
+        return runOp(env, entry, input, env.contexts.get(ctx.name), { browser, call: argv, kept: open });
+      };
+      await runSessionDaemon(env.domain, env.contexts, String(flag(args, "session")), ctx, args.global.headed === true, runCall);
       // The daemon serves until it is closed or idle; it exits itself.
       return new Promise<never>(() => {});
     },
@@ -517,12 +524,21 @@ const callOp = async (env: Env, name: string, rest: string[]): Promise<Outcome> 
   const flags = args.global["input-json"] ? jsonFlags(String(args.global["input-json"])) : args.flags;
   const input = parseInput(cli, entry, flags);
 
-  const outcome = await runOp(env, entry, input, ctx, {
-    headed: args.global.headed === true,
-    dryRun: args.global["dry-run"] === true,
-    browser: args.global.browser === true,
-    call,
-  });
+  const headed = args.global.headed === true;
+  const dryRun = args.global["dry-run"] === true;
+  const browser = args.global.browser === true;
+  // A domain that keeps its browser runs the call in it; a watched call, a dry run or an op with a
+  // direct way starts its own.
+  const kept = env.domain.keepBrowser && envValue("KEEP_BROWSER") !== "0" && !headed && !dryRun && !entry.definition.direct;
+  const outcome = kept
+    ? await pageCommand(
+        env.domain,
+        env.entry,
+        { session: opsSession(env.domain.root, ctx.name), context: ctx, headed: false, stamp: codeStamp(env.domain) },
+        "op:run",
+        [JSON.stringify({ op: name, input, browser, argv: call } satisfies KeptCall)],
+      )
+    : await runOp(env, entry, input, ctx, { headed, dryRun, browser, call });
   // A repair the call filed or joined is taken up, the direct way's beside a done call too; only a pending call waits on it.
   if (outcome.request && env.fileRepairs) {
     startWorker(env);
@@ -530,6 +546,14 @@ const callOp = async (env: Env, name: string, rest: string[]): Promise<Outcome> 
   }
   return outcome;
 };
+
+/** An op call as the CLI sends it to the daemon keeping the context's browser. */
+interface KeptCall {
+  op: string;
+  input: Record<string, unknown>;
+  browser: boolean;
+  argv: string[];
+}
 
 const refuseInWorktree = (env: Env, what = "requests are filed"): void => {
   if (env.worktree) throw new InputError(`${what} from the main checkout, not from the worktree ${env.domain.root}`);

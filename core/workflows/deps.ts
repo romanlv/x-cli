@@ -10,6 +10,7 @@ import { savedCredentials } from "../credentials";
 import { ENV_PREFIX, envName } from "../env";
 import { opFolder } from "../names";
 import type { RequestRecord } from "../requests";
+import { opsSession } from "../session";
 import { type SandboxPaths, sandboxSpec, shellEnv } from "./sandbox";
 
 export interface VerifyRun {
@@ -198,6 +199,9 @@ const stable = (value: unknown): string =>
     v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b))) : v,
   ) ?? "";
 
+/** Between two of verify's calls on the app. */
+const VERIFY_PAUSE_MS = 3_000;
+
 const verify = async (worktree: string, request: RequestRecord, op: string): Promise<Verified> => {
   const dir = opDirIn(domainIn(worktree, request), op);
   let mine: Example[];
@@ -214,6 +218,8 @@ const verify = async (worktree: string, request: RequestRecord, op: string): Pro
   const direct = existsSync(opFile) && /^\s*(async\s+)?direct\s*[(:]/m.test(readFileSync(opFile, "utf8"));
   const ways = direct ? [false, true] : [false];
   for (const [example, browser] of mine.flatMap((e) => ways.map((b) => [e, b] as const))) {
+    // At a person's pace: a merge verifies every op when shared code changed, and the app limits each account.
+    if (runs.length) await Bun.sleep(VERIFY_PAUSE_MS);
     const { stdout, exitCode } = await runCli(worktree, request, [
       op,
       "--input-json",
@@ -320,6 +326,10 @@ export const realDeps: Deps = {
     if (!existsSync(entryIn(worktree, request))) return;
     for (const session of sessions)
       await runCli(worktree, request, ["page:close", "--session", session, "--context", request.context], sandbox);
+    // The browser the worktree's op calls kept (`keepBrowser`): the agents' in their home, verify's in the domain's.
+    const kept = ["page:close", "--session", opsSession(worktree, request.context), "--context", request.context];
+    await runCli(worktree, request, kept, sandbox);
+    if (sandbox) await runCli(worktree, request, kept);
   },
   async signIn(request) {
     if (!savedCredentials(request.domain.root, request.context)) return false;

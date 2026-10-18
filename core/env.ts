@@ -14,6 +14,7 @@ export type EnvName =
   | "HEADLESS_LOGIN"
   | "HIDE_AUTOMATION"
   | "KEEP_ALIVE_PAGE_MS"
+  | "KEEP_BROWSER"
   | "KEEP_ALIVE_SIGN_IN_MS"
   | "MAX_RUNNING"
   | "NO_REPAIRS"

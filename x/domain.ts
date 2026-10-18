@@ -92,6 +92,7 @@ export const xDomain = (overrides: Partial<Domain<Xh>> = {}): Domain<Xh> =>
     browserChannel: "chrome",
     hideAutomation: true,
     readOnly: true,
+    keepBrowser: true,
     maxRunning: 1,
     directCalls: false,
     testIdAttribute: "data-testid",

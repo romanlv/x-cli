@@ -471,15 +471,65 @@ export const signedInHandle = async (page: Page): Promise<string | undefined> =>
 /** A handle as X writes it in a URL: without the "@" people type. */
 const bare = (handle: string): string => handle.replace(/^@/, "");
 
+/** How long a call may take to come after a move within the app before the page is loaded afresh. */
+const MOVED_CALL_MS = 8_000;
+
 export const xHelpers = (page: Page) => {
+  /**
+   * Whether the last `open` moved within the app (a kept page, `keepBrowser`) instead of loading
+   * x.com afresh: every fresh load calls `Viewer`, which X limits (knowledge/x.md). A move may show
+   * what X already had without calling for it again, so `called` loads the page afresh then.
+   */
+  let moved = false;
+
+  /** The response `pending` waits for, the call the last `open` made; after a move that made none, a fresh load makes it. */
+  const called = async (match: RegExp, timeout: number, pending: Promise<Response>): Promise<Response> => {
+    if (!moved) return pending;
+    pending.catch(() => {});
+    const quick = await Promise.race([pending, page.waitForTimeout(MOVED_CALL_MS).then(() => undefined)]);
+    if (quick) return quick;
+    moved = false;
+    const [response] = await Promise.all([
+      page.waitForResponse((r) => match.test(r.url()), { timeout }),
+      page.reload({ waitUntil: "domcontentloaded" }),
+    ]);
+    return response;
+  };
+
   const helpers = {
     /** The handle the page is signed in as. */
     me: () => signedInHandle(page),
 
     /** Open a path on x.com and wait for its main column. */
     async open(path: string): Promise<void> {
-      await page.goto(new URL(path, ORIGIN).toString(), { waitUntil: "domcontentloaded" });
-      await page.locator(SEL.primaryColumn).first().waitFor({ state: "visible", timeout: 30_000 });
+      const target = new URL(path, ORIGIN).toString();
+      // On a page that already shows the app, a person's click moves within it, with no fresh load;
+      // the page it leaves must be gone first, so nothing reads it as the new one. Between pages of
+      // one kind (two searches, two profile tabs) X keeps the column and swaps what is in it, so
+      // nothing goes: then the page is loaded afresh.
+      const column = page.locator(SEL.primaryColumn).first();
+      const leaving = page.url().startsWith(`${ORIGIN}/`) && page.url() !== target && (await column.isVisible().catch(() => false));
+      const left = leaving
+        ? await column
+            .locator("> *")
+            .first()
+            .elementHandle({ timeout: 1_000 })
+            .catch(() => null)
+        : null;
+      moved = false;
+      if (left) {
+        await page.evaluate((href) => {
+          history.pushState(null, "", href);
+          dispatchEvent(new PopStateEvent("popstate", { state: null }));
+        }, target);
+        moved = await left
+          .waitForElementState("hidden", { timeout: 1_500 })
+          .then(() => true)
+          .catch(() => false);
+        await left.dispose();
+      }
+      if (!moved) await page.goto(target, { waitUntil: "domcontentloaded" });
+      await column.waitFor({ state: "visible", timeout: 30_000 });
       const refused = await helpers.errors();
       if (refused.length) throw new RefusedError(refused.join("; "));
     },
@@ -637,7 +687,10 @@ export const xHelpers = (page: Page) => {
      */
     async graphql<T = unknown>(operation: string, act: () => Promise<unknown>, timeout = 30_000): Promise<T> {
       const match = callOf(operation);
-      const [response] = await Promise.all([page.waitForResponse((r) => match.test(r.url()), { timeout }), act()]);
+      const pending = page.waitForResponse((r) => match.test(r.url()), { timeout });
+      pending.catch(() => {});
+      await act();
+      const response = await called(match, timeout, pending);
       return (await bodyOf(operation, response)).body as T;
     },
 
@@ -662,7 +715,12 @@ export const xHelpers = (page: Page) => {
       try {
         const read = gather(bound);
         await open();
-        if (!responses.length) await page.waitForResponse((r) => match.test(r.url()), { timeout });
+        if (!responses.length)
+          await called(
+            match,
+            timeout,
+            page.waitForResponse((r) => match.test(r.url()), { timeout }),
+          );
         let more: boolean | undefined;
         let done = false;
         let atEnd = false;
@@ -774,7 +832,12 @@ export const xHelpers = (page: Page) => {
       try {
         const seen = new Map<string, User | UserUnavailable>();
         await open();
-        if (!responses.length) await page.waitForResponse((r) => match.test(r.url()), { timeout });
+        if (!responses.length)
+          await called(
+            match,
+            timeout,
+            page.waitForResponse((r) => match.test(r.url()), { timeout }),
+          );
         let more: boolean | undefined;
         let done = false;
         let atEnd = false;
@@ -833,7 +896,12 @@ export const xHelpers = (page: Page) => {
       page.on("response", listen);
       try {
         await helpers.open(`/i/status/${id}`);
-        if (!responses.length) await page.waitForResponse((r) => match.test(r.url()), { timeout });
+        if (!responses.length)
+          await called(
+            match,
+            timeout,
+            page.waitForResponse((r) => match.test(r.url()), { timeout }),
+          );
         let thread: Thread | undefined;
         const groups = new Map<string, ReplyGroup>();
         const count = () => [...groups.values()].reduce((sum, g) => sum + g.posts.length, 0);

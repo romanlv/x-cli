@@ -3,7 +3,7 @@
 // CLI sends it one command per call. Every command is logged, with the locator Playwright used, to
 // the session's trace.jsonl, so writing an op starts from what worked.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Locator } from "playwright";
@@ -13,12 +13,15 @@ import type { Domain, PageCommand, PageCommandContext } from "./domain";
 import { envName, envNumber, envOverride } from "./env";
 import { InputError, OpError, outcomeOf } from "./errors";
 import { formatCall, formatNetwork } from "./network";
-import { EXIT, fail, type Outcome, plain } from "./output";
+import { EXIT, fail, type Outcome, plain, progress, progressInto } from "./output";
 import { formatNode, formatSnapshot, refLocator, type Snapshot, type SnapshotNode, suggestLocator, takeSnapshot } from "./snapshot";
 import { alive, appendJsonLine, readJson, timestamp, writeJson } from "./store";
 
 const SESSION_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 const IDLE_MS = envNumber("SESSION_IDLE_MS", 30 * 60_000);
+/** A kept browser for op calls (`keepBrowser`) closes sooner: nobody is exploring in it. */
+const OPS_IDLE_MS = envNumber("SESSION_IDLE_MS", 10 * 60_000);
+const OPS_PREFIX = "ops-";
 /** How long a daemon may take to start: a browser, and the sign-in check. A start older than that died. */
 const START_MS = 90_000;
 
@@ -28,6 +31,8 @@ interface SessionState {
   context: string;
   headed: boolean;
   startedAt: string;
+  /** The code it runs (`codeStamp`): a daemon on code that has since changed is closed and started again. */
+  stamp?: string;
   /** Why the daemon could not start, as the CLI that started it answers. */
   error?: Outcome;
   ready?: boolean;
@@ -194,7 +199,32 @@ interface Reply {
   ok: boolean;
   text: string;
   exitCode?: number;
+  /** An op call's outcome, and the progress it printed on the way. */
+  outcome?: Outcome;
+  progress?: string[];
 }
+
+/** The code a daemon runs: core's and the domain's `.ts` files, by count and newest change. */
+export const codeStamp = (domain: Domain): string => {
+  let newest = 0;
+  let count = 0;
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (entry.name.endsWith(".ts")) {
+        count++;
+        newest = Math.max(newest, statSync(path).mtimeMs);
+      }
+    }
+  };
+  for (const dir of [import.meta.dir, domain.dir]) if (existsSync(dir)) walk(dir);
+  return `${count}:${Math.floor(newest)}`;
+};
+
+/** The session that keeps a context's browser for op calls, one per checkout, so a worktree's code never serves main's calls. */
+export const opsSession = (root: string, context: string): string =>
+  `${OPS_PREFIX}${context}-${createHash("sha1").update(root).digest("hex").slice(0, 8)}`.slice(0, 64);
 
 /** The context a running session was opened on. */
 export const sessionContext = (home: string, session: string): string | undefined => {
@@ -206,7 +236,7 @@ export const sessionContext = (home: string, session: string): string | undefine
 export const pageCommand = async (
   domain: Domain,
   entry: string[],
-  { session, context, headed }: { session: string; context: Context; headed: boolean },
+  { session, context, headed, stamp }: { session: string; context: Context; headed: boolean; stamp?: string },
   cmd: string,
   args: string[],
 ): Promise<Outcome> => {
@@ -223,7 +253,13 @@ export const pageCommand = async (
     rmSync(stateFile(home, session), { force: true });
     return { ok: true, data: `session ${session} is not running` };
   }
-  if (!running) {
+  let live = running;
+  if (live && stamp && state!.stamp !== stamp) {
+    // Its code has changed since it started: the next call runs the new code, in a new daemon.
+    await stopDaemon(home, session, state!);
+    live = false;
+  }
+  if (!live) {
     const started = await startSession(domain, entry, session, context, headed);
     if (!started.ok) return started.outcome;
     state = started.state;
@@ -247,7 +283,18 @@ export const pageCommand = async (
       { hint: "close it and start over", cmd: `${domain.name} page:close --session ${session}` },
     ]);
   }
+  for (const line of reply.progress ?? []) progress(line);
+  if (reply.outcome) return reply.outcome;
   return reply.ok ? { ok: true, data: reply.text } : fail(reply.text, reply.exitCode ?? EXIT.ERROR);
+};
+
+/** Stop a running daemon and wait until it is gone, so the next start doesn't find its socket. */
+const stopDaemon = async (home: string, session: string, state: SessionState): Promise<void> => {
+  process.kill(state.pid, "SIGTERM");
+  const deadline = Date.now() + 10_000;
+  while (alive(state.pid) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
+  rmSync(state.socket, { force: true });
+  rmSync(stateFile(home, session), { force: true });
 };
 
 const startSession = async (
@@ -319,10 +366,19 @@ export const runSessionDaemon = async (
   session: string,
   context: Context,
   headed: boolean,
+  /** Runs an op call (`op:run`) in the session's browser. */
+  runCall?: (open: OpenBrowser, args: string[]) => Promise<Outcome>,
 ): Promise<void> => {
   const home = domain.home;
   const socket = socketPath(domain, session);
-  const base: SessionState = { pid: process.pid, socket, context: context.name, headed, startedAt: timestamp() };
+  const base: SessionState = {
+    pid: process.pid,
+    socket,
+    context: context.name,
+    headed,
+    startedAt: timestamp(),
+    stamp: codeStamp(domain),
+  };
 
   // The page command a call started under, for page:requests.
   let during: string | undefined;
@@ -367,7 +423,7 @@ export const runSessionDaemon = async (
   };
   const touch = () => {
     clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => void shutdown(), IDLE_MS);
+    idleTimer = setTimeout(() => void shutdown(), session.startsWith(OPS_PREFIX) ? OPS_IDLE_MS : IDLE_MS);
   };
 
   /** Wait for the page to go quiet: no network for half a second, at most five seconds. */
@@ -429,6 +485,16 @@ export const runSessionDaemon = async (
         const { cmd, args } = (await request.json()) as { cmd: string; args: string[] };
         const result = queue.then(async (): Promise<Reply> => {
           try {
+            if (cmd === "op:run" && runCall) {
+              const lines: string[] = [];
+              progressInto((line) => lines.push(line));
+              try {
+                const outcome = await runCall(open, args);
+                return { ok: outcome.ok, text: "", outcome, progress: lines };
+              } finally {
+                progressInto(undefined);
+              }
+            }
             const command = commands[cmd];
             if (!command) throw new InputError(`unknown page command ${cmd}`);
             if (!command.reads) during = [cmd, ...args].join(" ");

@@ -108,7 +108,10 @@ Confirmed against this account:
   `Viewer`, and when X answers it 429, x.com renders nothing, neither the side nav nor a message. About
   30 fresh browsers in ten minutes did it, and it had reset ten minutes later. `x/domain.ts` keeps
   each page's 429s (`watchLimits`), so the sign-in check and triage call it X's refusal (exit 4), not
-  a page that showed neither x's pages nor a sign-in (exit 3). While building, space the runs out.
+  a page that showed neither x's pages nor a sign-in (exit 3). So `keepBrowser` is on: op calls share
+  one kept browser and `open` moves within the app (history.pushState and a popstate, as a click does),
+  loading afresh only between two pages of one kind or when the move made no call. While building,
+  space the runs out.
 - `HomeTimeline` and `HomeLatestTimeline` (2026-10-18, `home:posts`): the home page's For you tab calls
   `HomeTimeline` (GET, `count: 20`, `includePromotedContent: true`), a click on Following calls
   `HomeLatestTimeline` (POST, a JSON body with `variables.enableRanking: true` and `seenTweetIds`).

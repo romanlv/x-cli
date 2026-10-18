@@ -4,17 +4,17 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Type from "typebox";
 import { awfArgs, describeRun, earlierSpans, formatCost, runUsage } from "../core/awf";
-import { launch, readSignIn, signedInContext } from "../core/browser";
+import { launch, openSignedIn, readSignIn, signedInContext } from "../core/browser";
 import { callOf, parseArgs } from "../core/cli";
 import { Contexts } from "../core/contexts";
 import type { Domain } from "../core/domain";
 import { envName, envOverride } from "../core/env";
 import { InputError, OpError } from "../core/errors";
 import { callArgv, loadOps, type OpEntry, opHelp, parseInput, runOp } from "../core/ops";
-import { EXIT, formatDuration } from "../core/output";
+import { EXIT, formatDuration, progress, progressInto } from "../core/output";
 import { browserBinary, startPlain } from "../core/plain-browser";
 import { flakyReason, Requests } from "../core/requests";
-import { pageCommandsOf } from "../core/session";
+import { codeStamp, opsSession, pageCommandsOf } from "../core/session";
 import { formatSnapshot, type SnapshotNode, suggestLocator, takeSnapshot } from "../core/snapshot";
 import { lineText, requestLines } from "../core/watch";
 import { DEFAULTS, loadConfig } from "../core/workflows/config";
@@ -594,6 +594,34 @@ test("docs/prompts.md is what prompts.ts writes now: `bun run docs:prompts` upda
   expect(await Bun.file(join(root, "docs/prompts.md")).text()).toBe(renderPrompts(cli!, folder!, loadConfig(root)));
 });
 
+test("a kept browser's daemon is one per checkout and context, and knows when its code changed", () => {
+  const t = tempHome();
+  try {
+    const dir = join(t.home, "t");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "op.ts"), "");
+    const domain = { name: "t", dir, root: t.home, home: t.home, helpers: () => ({}), signInState: async () => "signed-in" as const };
+    const before = codeStamp(domain);
+    writeFileSync(join(dir, "helper.ts"), "");
+    expect(codeStamp(domain)).not.toBe(before);
+    expect(opsSession("/a", "me")).not.toBe(opsSession("/b", "me"));
+    expect(opsSession("/a", "me")).toMatch(/^ops-me-[0-9a-f]{8}$/);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("progress goes back to the caller while a daemon runs its call", () => {
+  const lines: string[] = [];
+  progressInto((line) => lines.push(line));
+  try {
+    progress("› read posts");
+  } finally {
+    progressInto(undefined);
+  }
+  expect(lines).toEqual(["› read posts"]);
+});
+
 test("a domain whose ops make no calls of their own has no page:fetch to make one with", () => {
   const domain = { name: "t", dir: "/t/t", root: "/t", home: "/t", helpers: () => ({}), signInState: async () => "signed-in" as const };
   expect(Object.keys(pageCommandsOf(domain))).toContain("page:fetch");
@@ -614,7 +642,7 @@ describe("running an op", () => {
     t.cleanup();
   });
 
-  const run = async (body: () => unknown, format?: (output: never) => string) => {
+  const setUp = () => {
     const domain: Domain = {
       name: "t",
       dir: join(t.home, "t"),
@@ -627,7 +655,11 @@ describe("running an op", () => {
     const ctx = contexts.add("acme", server.url.href);
     mkdirSync(dirname(ctx.authFile), { recursive: true });
     writeFileSync(ctx.authFile, JSON.stringify({ cookies: [], origins: [] }));
-    const requests = new Requests(t.home);
+    return { domain, contexts, requests: new Requests(t.home) };
+  };
+
+  const run = async (body: () => unknown, format?: (output: never) => string) => {
+    const { domain, contexts, requests } = setUp();
     const op: OpEntry = {
       ...entry(),
       dir: join(t.home, "op"),
@@ -660,6 +692,29 @@ describe("running an op", () => {
     const bundle = repairs[0]!.failure!.bundle;
     expect(existsSync(join(bundle, "screenshot.png"))).toBe(true);
     expect(readFileSync(join(bundle, "snapshot.txt"), "utf8")).toContain('alert "Something broke"');
+  });
+
+  test("a kept browser runs one call after another on its page, and stays open", async () => {
+    const { domain, contexts, requests } = setUp();
+    const open = await openSignedIn(domain, contexts, contexts.get("acme"));
+    const op: OpEntry = {
+      ...entry(),
+      dir: join(t.home, "op"),
+      definition: {
+        ...entry().definition,
+        run: async ({ page }) => ({
+          id: String(
+            await page.evaluate(() => ((window as unknown as { n: number }).n = ((window as unknown as { n?: number }).n ?? 0) + 1)),
+          ),
+        }),
+      },
+    };
+    const call = () =>
+      runOp({ domain, contexts, requests, fileRepairs: true }, op, { query: "q", kind: "a" }, contexts.get("acme"), { kept: open });
+    expect((await call()).data).toEqual({ id: "1" });
+    expect((await call()).data).toEqual({ id: "2" });
+    expect(open.page.isClosed()).toBe(false);
+    await open.close();
   });
 
   test("an error the op raises on purpose files nothing", async () => {

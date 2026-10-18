@@ -211,6 +211,7 @@ $ x contexts
 Playwright does all the browser work, behind the CLI.
 
 - **Each call and each run gets its own browser.** An op call launches the domain's browser (for X, the installed Chrome) headless with its context's saved sign-in, runs, and closes. Each awf run, and the checker inside it, gets its own browser the same way, so two runs never share a page.
+- **Unless the domain keeps one.** X limits fresh page loads (each one calls `Viewer`, and about 30 in ten minutes leave x.com blank), so `x/domain.ts` sets `keepBrowser`: a context's op calls run one at a time in one signed-in browser that a daemon keeps between them (`ops-<context>-<checkout>`, a session like the exploring ones), and the helpers move within the app instead of loading it again. The daemon starts again when core's or the domain's code changes, closes after ten idle minutes, and a build's is closed with its worktree; a merge's verify calls share one and come a few seconds apart. `--headed`, `--dry-run`, an op with a direct way and `XCLI_KEEP_BROWSER=0` start a browser of their own.
 - **Headless by default, `--headed` to watch.** A person can watch any op or run, and step in on a stuck screen.
 - **Exploring uses the same CLI.** Agents drive the page through `x page` commands, attached to a named session that stays open between calls. The session comes from `--session` or `XCLI_SESSION`, which the workflow sets for each agent (`R-0012`, and `R-0012-check` for the checker).
 

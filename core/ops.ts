@@ -251,6 +251,8 @@ export const runOp = async (
     browser?: boolean;
     /** The call as the caller made it, to run again once a repair is done. */
     call?: string[];
+    /** A signed-in browser kept between calls, which the op runs in and leaves open. */
+    kept?: OpenBrowser;
   } = {},
 ): Promise<Outcome> => {
   const { domain, requests } = env;
@@ -286,21 +288,22 @@ export const runOp = async (
   // A direct way that failed may only have met a sign-in that ended, which this finds.
   let open: OpenBrowser;
   try {
-    open = await openSignedIn(domain, env.contexts, ctx, { headed });
+    open = options.kept ?? (await openSignedIn(domain, env.contexts, ctx, { headed }));
   } catch (err) {
     // No op code has run yet: a sign-in or a browser that won't start is never the op's fault.
     if (err instanceof OpError) return outcomeOf(err);
     throw err;
   }
+  const release = () => (options.kept ? Promise.resolve() : open.close());
   const run = attempt(entry, ctx, started, dryRun);
   if (fellBack) {
     // The direct way met a session that had ended, not a changed call: it runs again, signed in.
     if (open.signedInNow) {
-      await open.close();
+      await release();
       return runOp(env, entry, input, env.contexts.get(ctx.name), { headed, dryRun, call });
     }
     if (!env.fileRepairs) {
-      await open.close();
+      await release();
       // Through the direct attempt, so the line has its steps' times.
       directRun.history({ ok: false, step: fellBack.step, error: firstLine(fellBack.error.message), direct: true });
       return fail(`${entry.name}: ${fellBack.error.message}`, EXIT.ERROR);
@@ -339,7 +342,7 @@ export const runOp = async (
     error.message = plain(error.message);
     return await fileRepair(env, entry, input, ctx, captured, run.at, error, call);
   } finally {
-    await open.close();
+    await release();
   }
 };
 

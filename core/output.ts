@@ -56,9 +56,18 @@ export const guardStdout = (): void => {
     (process.stderr.write as (...args: unknown[]) => boolean)(chunk, encoding, cb)) as typeof process.stdout.write;
 };
 
+let progressTo: ((line: string) => void) | undefined;
+
+/** While set, progress goes to `to` instead of stderr: a daemon running a call sends it back to the caller. */
+export const progressInto = (to: ((line: string) => void) | undefined): void => {
+  progressTo = to;
+};
+
 /** Progress for a person watching; never part of the result. */
 export const progress = (line: string): void => {
-  if (!envValue("QUIET")) stderr(`${line}\n`, () => {});
+  if (envValue("QUIET")) return;
+  if (progressTo) progressTo(line);
+  else stderr(`${line}\n`, () => {});
 };
 
 const write = (writer: Writer, text: string): Promise<void> => new Promise((resolve) => void writer(text, resolve));

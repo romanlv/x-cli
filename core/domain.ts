@@ -94,6 +94,13 @@ export interface Domain<Helpers = unknown> {
    * still drives the pages over DevTools, which a page can notice.
    */
   hideAutomation?: boolean;
+  /**
+   * For an app that limits fresh page loads: op calls on a context share one signed-in browser, kept
+   * by a daemon between calls (`ops-<context>-…`, closed after ten idle minutes or when the code
+   * changes), instead of each starting its own and loading the app again. `--headed` and
+   * `XCLI_KEEP_BROWSER=0` start one of their own.
+   */
+  keepBrowser?: boolean;
   /** Its ops only read: there is no submit for `--dry-run` to stop before, so help leaves it out. */
   readOnly?: boolean;
   /** How many requests the worker builds at once (2); one for an app that limits each account. */
