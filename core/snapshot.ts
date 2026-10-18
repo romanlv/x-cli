@@ -227,6 +227,45 @@ export const formatSnapshot = (snapshot: Snapshot, previous?: Snapshot): string 
 
 export const refLocator = (page: Page, ref: string): Locator => page.locator(`[data-ref="${ref}"]`);
 
+/** Roles whose accessible name is their text, so `getByRole` with the snapshot's name finds them. */
+const NAMED_BY_CONTENT = new Set([
+  "button",
+  "cell",
+  "checkbox",
+  "columnheader",
+  "gridcell",
+  "heading",
+  "link",
+  "menuitem",
+  "menuitemcheckbox",
+  "menuitemradio",
+  "option",
+  "radio",
+  "row",
+  "rowheader",
+  "switch",
+  "tab",
+  "tooltip",
+  "treeitem",
+]);
+/** Roles the snapshot names by their label alone, as the accessible name does. */
+const NAMED_BY_LABEL = new Set([
+  "textbox",
+  "combobox",
+  "searchbox",
+  "spinbutton",
+  "listbox",
+  "form",
+  "table",
+  "grid",
+  "menu",
+  "tablist",
+  "dialog",
+  "alertdialog",
+]);
+/** The length `collect` cuts a name to, ending it with an ellipsis. */
+const NAME_MAX = 80;
+
 /**
  * The Playwright locator an op should use for this node, preferring what survives a reload:
  * a unique test id, then the label, then role and name. Exploring logs it, so writing `op.ts`
@@ -235,8 +274,18 @@ export const refLocator = (page: Page, ref: string): Locator => page.locator(`[d
 export const suggestLocator = (node: SnapshotNode): string => {
   const q = JSON.stringify;
   if (node.testId && node.testIdUnique) return `page.getByTestId(${q(node.testId)})`;
+  // A name cut short matches only as the start of the whole one, so it is matched as text, not exactly.
+  const cut = (name: string): string | undefined => (name.length === NAME_MAX && name.endsWith("…") ? name.slice(0, -1) : undefined);
   const label = node.label ?? (["textbox", "combobox", "searchbox", "checkbox", "radio"].includes(node.role) ? node.name : undefined);
-  if (label) return `page.getByLabel(${q(label)}, { exact: true })`;
-  if (node.name) return `page.getByRole(${q(node.role)}, { name: ${q(node.name)}, exact: true })`;
-  return node.testId ? `page.getByTestId(${q(node.testId)})` : `page.getByRole(${q(node.role)})`;
+  if (label) return cut(label) ? `page.getByLabel(${q(cut(label))})` : `page.getByLabel(${q(label)}, { exact: true })`;
+  if (!node.name) return node.testId ? `page.getByTestId(${q(node.testId)})` : `page.getByRole(${q(node.role)})`;
+  const name = cut(node.name) ?? node.name;
+  if (NAMED_BY_CONTENT.has(node.role) || NAMED_BY_LABEL.has(node.role)) {
+    return `page.getByRole(${q(node.role)}, { name: ${q(name)}${cut(node.name) ? "" : ", exact: true"} })`;
+  }
+  // Any other role (an article, a region, an element that is a control only by taking focus) is
+  // named by its aria-label alone, not by the text the snapshot shows: its test id, narrowed by that text, finds it.
+  const hasText = `.filter({ hasText: ${q(name)} })`;
+  if (node.testId) return `page.getByTestId(${q(node.testId)})${hasText}`;
+  return node.role === "generic" || node.role === "text" ? `page.getByText(${q(name)})` : `page.getByRole(${q(node.role)})${hasText}`;
 };

@@ -12,7 +12,7 @@ import { InputError, OpError } from "../core/errors";
 import { callArgv, loadOps, type OpEntry, opHelp, parseInput } from "../core/ops";
 import { formatDuration } from "../core/output";
 import { Requests } from "../core/requests";
-import { formatSnapshot, suggestLocator, takeSnapshot } from "../core/snapshot";
+import { formatSnapshot, type SnapshotNode, suggestLocator, takeSnapshot } from "../core/snapshot";
 import { lineText, requestLines } from "../core/watch";
 import { DEFAULTS, loadConfig } from "../core/workflows/config";
 import { renderPrompts } from "../core/workflows/prompts-doc";
@@ -433,7 +433,6 @@ describe("snapshot", () => {
       ]);
       expect(suggestLocator(before.nodes[2]!)).toBe(`page.getByLabel("Name", { exact: true })`);
       expect(suggestLocator(before.nodes[4]!)).toBe(`page.getByTestId("okButton")`);
-
       await page.locator('[data-ref="e3"]').click();
       const after = await takeSnapshot(page);
       const diff = formatSnapshot(after, before);
@@ -441,6 +440,29 @@ describe("snapshot", () => {
       expect(diff).toContain('+ - alert "Saved"');
       // Refs stay put across snapshots of one page.
       expect(after.nodes.find((n) => n.name === "OK")?.ref).toBe("e3");
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test("the suggested locator finds its element alone: a post that shares its test id, a name cut short", async () => {
+    const browser = await launch(false);
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`
+        <article role="article" tabindex="0" data-testid="tweet"><a href="/ada">Ada</a> posted</article>
+        <article role="article" tabindex="0" data-testid="tweet"><a href="/bob">Bob</a> replied</article>
+        <button>${"a long name ".repeat(10)}</button>`);
+      const { nodes } = await takeSnapshot(page);
+      const find = (n: SnapshotNode) => new Function("page", `return ${suggestLocator(n)}.count()`)(page) as Promise<number>;
+      const post = nodes.find((n) => n.role === "article" && n.name === "Ada posted")!;
+      // An article isn't named by its text, so getByRole with it would match nothing.
+      expect(suggestLocator(post)).toBe(`page.getByTestId("tweet").filter({ hasText: "Ada posted" })`);
+      expect(await find(post)).toBe(1);
+      const button = nodes.find((n) => n.role === "button")!;
+      expect(button.name.endsWith("…")).toBe(true);
+      expect(suggestLocator(button)).not.toContain("exact");
+      expect(await find(button)).toBe(1);
     } finally {
       await browser.close();
     }
