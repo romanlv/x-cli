@@ -441,6 +441,48 @@ export const tweetDetail = {
   },
 };
 
+/**
+ * The post 2111179364872466706 on @NASA (2026-10-18): `counts` replies counted, none in the page, a "Show probable spam"
+ * fold (3001 with its ancestor and the ShowMoreThreads cursor of `tweetDetail`).
+ */
+export const foldedDetail = (counts: number) => {
+  const t = JSON.parse(JSON.stringify(tweetDetail));
+  const ins = t.data.threaded_conversation_with_injections_v2.instructions;
+  const entries = ins[1].entries.filter((e: { entryId: string }) => e.entryId.startsWith("tweet-3001") || e.entryId.startsWith("cursor-"));
+  entries[0].content.itemContent.tweet_results.result.legacy.reply_count = counts;
+  entries[1].content.itemContent.displayTreatment = { actionText: "Show probable spam" };
+  ins[1].entries = entries;
+  return t;
+};
+/** What the fold's button fetches: a "Probable spam" heading, the reply, and the end of the replies. */
+export const spamDetail = () => ({
+  data: {
+    threaded_conversation_with_injections_v2: {
+      instructions: [
+        {
+          type: "TimelineAddEntries",
+          entries: [
+            {
+              entryId: "label-0",
+              content: {
+                entryType: "TimelineTimelineItem",
+                itemContent: { itemType: "TimelineLabel", __typename: "TimelineLabel", text: "Probable spam" },
+              },
+            },
+            module("conversationthread-3100", [
+              moduleItem(
+                "conversationthread-3100-tweet-3100",
+                tweet("3100", bob, { conversation_id_str: "2999", in_reply_to_status_id_str: "3001" }),
+              ),
+            ]),
+          ],
+        },
+        { type: "TimelineTerminateTimeline", direction: "Bottom" },
+      ],
+    },
+  },
+});
+
 const selfReply = (id: string, conversation: string, parent?: string) =>
   tweet(id, ada, { full_text: `post ${id}`, conversation_id_str: conversation, in_reply_to_status_id_str: parent });
 

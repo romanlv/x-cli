@@ -276,6 +276,9 @@ export const ReplyGroup = Type.Object({
   posts: Type.Array(Type.Union([Post, Unavailable])),
   selfThread: Type.Optional(Type.Literal(true, { description: "the focal author continuing their own thread" })),
   more: Type.Optional(Type.Boolean({ description: "X folds more replies under this group" })),
+  section: Type.Optional(
+    Type.String({ description: 'the heading X put over these replies, which it folds away until a person opens them ("Probable spam")' }),
+  ),
 });
 
 /** A post with what it replies to and what replies to it, as TweetDetail (`/<handle>/status/<id>`) gives it. */
@@ -284,7 +287,24 @@ export const Thread = Type.Object({
   focal: Type.Union([Post, Unavailable]),
   ancestors: Type.Array(Type.Union([Post, Unavailable]), { description: "the chain above the focal post, oldest first" }),
   replies: Type.Array(ReplyGroup),
-  more: Type.Optional(Type.Boolean({ description: "X has more reply groups past these" })),
+  more: Type.Optional(Type.Boolean({ description: "X has more reply groups past these: raising the limit, or scrolling, reads them" })),
+  folded: Type.Optional(
+    Type.String({
+      description:
+        'the button X leaves closed under the replies ("Show probable spam", "Show additional replies"); empty when X gives no text. Set while `more` is true because of it',
+    }),
+  ),
+  unshown: Type.Optional(
+    Type.Object(
+      {
+        count: Type.Integer({ minimum: 1, description: "replies X counts on the post that this read has none of" }),
+        reason: Type.Optional(Type.String({ description: "what X says about them, when it says anything" })),
+      },
+      {
+        description: "X counts replies on the post that it does not show, folds included; only when X ended the replies (`more` is false)",
+      },
+    ),
+  ),
 });
 
 // Writes, for later: what a write op takes. Each references what it acts on by id, and its output is
@@ -593,10 +613,29 @@ export const threadText = (thread: Thread): string => {
   const posts = thread.replies.reduce((sum, g) => sum + g.posts.length, 0);
   if (thread.replies.length) {
     blocks.push(`↓ ${posts} ${posts === 1 ? "reply" : "replies"}, in X's order`);
-    for (const g of thread.replies)
+    let section: string | undefined;
+    for (const g of thread.replies) {
+      if (g.section !== section && g.section) blocks.push(`under X's "${g.section}" fold`);
+      section = g.section;
       blocks.push(...g.posts.map((p, i) => (g.selfThread && i === 0 ? `the author continues\n${entryText(p)}` : entryText(p))));
-  } else if (thread.focal.kind === "post") blocks.push("no replies");
-  if (thread.more) blocks.push("more replies than these: raise --limit, or see the post on x.com");
+    }
+  } else if (thread.focal.kind === "post" && !thread.unshown && !thread.more) blocks.push("no replies");
+  const u = thread.unshown;
+  if (u) {
+    const of = thread.focal.kind === "post" ? thread.focal.counts?.replies?.value : undefined;
+    const why = u.reason ? `: ${u.reason}` : "; X gives no reason";
+    blocks.push(
+      `X counts ${of ?? u.count} ${of === 1 ? "reply" : "replies"} on this post and ${posts ? `shows ${posts}` : "shows none of them"}${why}`,
+    );
+  }
+  if (thread.more) {
+    const fold = thread.folded;
+    blocks.push(
+      fold
+        ? `more replies than these, folded under "${fold}": raise --limit to open it, or see the post on x.com`
+        : "more replies than these: raise --limit, or see the post on x.com",
+    );
+  }
   return blocks.join(`\n${RULE}\n`);
 };
 

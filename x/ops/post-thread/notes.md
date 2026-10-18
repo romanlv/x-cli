@@ -87,3 +87,74 @@ The ancestor example is NASA's own post 2108221043743793212 (2026-10-08, "They'r
 splashed down…"), a reply to NASA's own post 2108201013681303933: a large, long-lived account's old
 post, with a video, one ancestor and 41 replies (20 read by default). An earlier example, a reply
 by a small account, was replaced: it could go away.
+
+## R-0011: replies X counts but shows none of (2026-10-18, `me`)
+
+The request: 2111179364872466706 (@NASA, "@GampSairy @NASAHubble Oh yeah 😎", a reply to a reply, 1 reply
+counted) printed `no replies` and `more replies than these: raise --limit`.
+
+### Ways to do it in the app
+
+- **The post's page, as today**: shows the post and no reply, then a button "Show probable spam"
+  under the composer. Lacks: the reply, which is under that button.
+- **The same page, pressing "Show probable spam"** (picked): a heading "Probable spam" and the one
+  reply (`@Ryanlucyphone1`, "@NASA @GampSairy @NASAHubble", 0 replies, 0 likes, 2 views). A person
+  reads it that way; the button only opens a fold (a read, like "Show more" on a long post).
+- **Search `conversation_id:<id>` / `to:NASA`**: not tried; search leaves out the same low-quality
+  replies for most viewers, and it has no ancestors. No reason for the fold either.
+- **The reply's own page** (`/i/status/<reply id>`): reads once the id is known, but the id is only
+  in the fold, so it adds nothing.
+
+### What X does with it
+
+- The first `TweetDetail` (`rankingMode: "Relevance"`) has `tweet-<ancestor>` ×2, `tweet-<focal>`, then
+  **no module**, and `cursor-showmorethreads-<id>` with `content.cursorType: "ShowMoreThreads"` and
+  **`displayTreatment.actionText: "Show probable spam"`**, then `TimelineTerminateTimeline` Top only (no
+  Bottom cursor). `readTimeline` called that `more` (a ShowMoreThreads cursor, no Bottom, not ended); so
+  `more: true` with `replies: []`, and the text said `no replies` too.
+- Pressing the button (`getByRole("button", { name: "Show probable spam", exact: true })` in
+  `primaryColumn`; no test id, no confirmation) makes **one `TweetDetail`**: the same variables plus
+  `cursor` (the ShowMoreThreads value) and `referrer: "tweet"`. It answers `TimelineAddEntries` of
+  `label-0` (`TimelineLabel`, `text: "Probable spam"`), `conversationthread-<id>` (a module, its
+  `clientEventInfo.details.conversationDetails.conversationSection: "LowQuality"`), a `cursor-top` and a
+  `cursor-bottom`, then `TimelineTerminateTimeline` Bottom: the end. The page draws a "Probable spam"
+  heading over the reply.
+- So **X's reason is its own label**: "Probable spam" (`LowQuality`), given by the heading and the button
+  text; X says nothing more (no per-reply reason, no filter name, nothing about who may see it). The
+  same page does not say whether it is the same for another viewer; this one is the signed-in
+  account's, which does not follow @NASA.
+- The "Show additional replies" fold (NASA's 76-reply post) is the same cursor type with another
+  `actionText`; the op presses it by the same rule (only when scrolling is done). Not pressed on a
+  real page in this build (it would be ~35 s of reads on a big post): the rule is the one proved on
+  the spam fold, the button name comes from X's `actionText`.
+- Not seen: a reply that is counted but sits in no fold (deleted since, hidden by its author or the
+  post's, an account the viewer blocked or muted, limited replies). Nothing in the page or its calls
+  would name the reason, so the output says `unshown` with no reason rather than guess.
+
+### Waits and pace
+
+- The button is on the page once `TweetDetail` has arrived; the op scrolls it into view, pauses as a
+  person would (2 to 6 s), presses, and waits for the next `TweetDetail` (15 s at most). If the button
+  isn't found (scrolled out of a virtualised list), one scroll and a second try; then `unshown` with
+  the fold's name as the reason, and no `more`.
+- `more` is true only if `limit` was reached before the fold was opened (then `folded` names it) or
+  scrolls ran out.
+
+Checked afterwards on the 76-reply NASA post (2110823965954637903, `--limit 120`, ~53 s): after the
+scrolls the fold left was also "Show probable spam" (not "Show additional replies"; the earlier note's
+button name was a guess). The op pressed it once: 68 replies read, 6 or more of them under the "Probable
+spam" section, `more: false`, and `unshown: { count: 8 }` with no reason (76 counted, 68 shown; X's page and
+calls say nothing about the 8). So the rule for "Show additional replies" itself is still unseen.
+
+### Verify and the `Viewer` limit (2026-10-18, troubleshooter)
+
+- A verify run failed every post:thread example with exit 4, `rate limited (Viewer, status 429)`,
+  and so did the posts:search example that came right after them. The op was not at fault: the
+  builder's runs had used up X's page loads (knowledge/x.md, "A rate-limited `Viewer`"). After the
+  reset, with the runs spaced out, every example passed without a change to the op.
+- On 2108221043743793212 (41 replies counted) the default `--limit 20` filled up before the fold was
+  reached: 20 replies, `more: true`, `folded: "Show probable spam"`, and the text closes with
+  `more replies than these, folded under "Show probable spam": raise --limit to open it`.
+- On the page, 2111179364872466706 shows "1 Reply" and only the button "Show probable spam".
+  Pressed, it shows a "Probable spam" heading over @Ryanlucyphone1's reply 2111213769502212255,
+  which is the op's one reply with `section: "Probable spam"`, `more: false` and no `unshown`.

@@ -452,6 +452,10 @@ export interface Timeline {
   cursors: Record<string, string>;
   /** Modules (by entryId) that X folds more replies into ("Show replies"), with their ShowMore cursor. */
   more: Record<string, string>;
+  /** The button's text on the `ShowMoreThreads` cursor ("Show probable spam", "Show additional replies"), when X gives one. */
+  fold?: string;
+  /** The heading X put above the replies a fold opened ("Probable spam"): a `TimelineLabel` entry. */
+  label?: string;
   /** Entry ids X pinned to the top (a profile's pinned post). */
   pinned: string[];
   /** X said there is nothing past this: a TimelineTerminateTimeline at the bottom, or no entries but cursors. */
@@ -513,9 +517,11 @@ export const readTimeline = (json: unknown): Timeline => {
     if (cursor) {
       if (module && cursor.type === "ShowMore") t.more[module] = cursor.value;
       else t.cursors[cursor.type] = cursor.value;
+      if (cursor.type === "ShowMoreThreads") t.fold = str(at(content, "displayTreatment", "actionText"));
       return;
     }
     sent++;
+    if (content.itemType === "TimelineLabel" || content.__typename === "TimelineLabel") t.label = str(content.text);
     if (NOISE.test(entryId)) return;
     const value = itemValue(content, entryId);
     if (value) t.items.push(clean({ entryId, module, display: str(content.tweetDisplayType), value }));
@@ -574,12 +580,13 @@ export const postsPage = (json: unknown): Page<Entry> => page(readTimeline(json)
 export const usersPage = (json: unknown): Page<User | UserUnavailable> => page(readTimeline(json), isAccount);
 
 /** Reply groups of a TweetDetail's items: a group per conversation module (or lone entry), in the order X sent them. */
-const groupsOf = (items: TimelineItem[], more: Record<string, string>): ReplyGroup[] => {
+const groupsOf = (items: TimelineItem[], more: Record<string, string>, section?: string): ReplyGroup[] => {
   const groups = new Map<string, ReplyGroup>();
   for (const { entryId, module, display, value } of items) {
     if (!isEntry(value)) continue;
     const key = module ?? entryId;
     const group = groups.get(key) ?? { posts: [] };
+    if (section) group.section = section;
     group.posts.push(postOf(value));
     if (display === "SelfThread") group.selfThread = true;
     if (module && more[module]) group.more = true;
@@ -590,6 +597,13 @@ const groupsOf = (items: TimelineItem[], more: Record<string, string>): ReplyGro
 
 /** X has more replies to offer past this TweetDetail response: a cursor it didn't end (it sends a Bottom one on the last page too). */
 const moreReplies = (t: Timeline): boolean => !t.ended && !!(t.cursors.Bottom || t.cursors.ShowMoreThreads);
+
+/**
+ * The button X leaves closed under the replies, when it is all that is left: a `ShowMoreThreads` cursor
+ * and no Bottom one, so scrolling has nothing more to ask for (an empty text when X gives none).
+ */
+const foldOf = (t: Timeline): string | undefined =>
+  !t.ended && t.cursors.ShowMoreThreads && !t.cursors.Bottom ? (t.fold ?? "") : undefined;
 
 /**
  * TweetDetail as a Thread around `focalId`: the entries before the focal post are its ancestors, each
@@ -618,14 +632,16 @@ export const threadOf = (json: unknown, focalId: string): Thread => {
     ancestors: focal ? ancestors : [],
     replies: focal ? groupsOf(t.items.slice(after), t.more) : [],
     more: moreReplies(t),
+    folded: foldOf(t),
   });
 };
 
 /**
  * The reply groups of a TweetDetail call that scrolling made (a `cursor` in its variables): all
- * replies, no focal post or ancestors. `more` is true when X offers more past it.
+ * replies, no focal post or ancestors. `more` is true when X offers more past it, `folded` the button
+ * it leaves closed. The call a fold's button makes has a heading, which is each group's `section`.
  */
-export const moreRepliesOf = (json: unknown): { replies: ReplyGroup[]; more: boolean } => {
+export const moreRepliesOf = (json: unknown): { replies: ReplyGroup[]; more: boolean; folded?: string } => {
   const t = readTimeline(json);
-  return { replies: groupsOf(t.items, t.more), more: moreReplies(t) };
+  return clean({ replies: groupsOf(t.items, t.more, t.label), more: moreReplies(t), folded: foldOf(t) });
 };

@@ -156,7 +156,12 @@ Confirmed against this account:
   `ended`. About 36 replies of 76 come in the first call, about 8 more in a second when the page is
   scrolled (`cursor` in its variables, no ancestors or post: `moreRepliesOf`), and then a
   `cursor-showmorethreads-…` that is the button "Show additional replies". The order is X's ranking and
-  varies between loads. A post that doesn't exist: `tweet_results: {}` and "Hmm...this page doesn't
+  varies between loads. **A fold X holds replies in** (2026-10-18, R-0011) is that same cursor with
+  `displayTreatment.actionText`: "Show additional replies", or "Show probable spam" for what X's quality filter
+  (`conversationSection: "LowQuality"`) set aside. A post can have *all* its counted replies there (2111179364872466706:
+  no reply module, no Bottom cursor, only that cursor). Pressing the button is a read: one more `TweetDetail` with
+  `cursor` and `referrer: "tweet"`, answering a `label-0` `TimelineLabel` ("Probable spam"), the modules, and the end.
+  X names no reason beyond that label. A post that doesn't exist: `tweet_results: {}` and "Hmm...this page doesn't
   exist".
 
 The first op that reads another operation through a mapper adds it here, with the date and what

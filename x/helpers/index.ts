@@ -154,6 +154,8 @@ export const readPosts = async (page: Page): Promise<Entry[]> => (await readCell
 
 /** Scrolls one call makes at most (bot-detection.md, recommendation 5). */
 const MAX_SCROLLS = 10;
+/** Folds ("Show probable spam") one read presses. */
+const MAX_FOLDS = 2;
 
 /** Where a read stops: at most `limit` entries, before the post `until`, after at most `scrolls` scrolls. */
 export interface Bound {
@@ -280,6 +282,55 @@ export const gather = ({ limit = 20, until, newestFirst }: Bound) => {
       });
     },
   };
+};
+
+/**
+ * Press the button X leaves closed under a post's replies (`text` is what it says; any "Show …" when X
+ * gave none). It only opens a fold. False when it can't be found or pressed, after one scroll to look for it.
+ */
+const openFold = async (page: Page, text: string): Promise<boolean> => {
+  const button = page
+    .getByTestId("primaryColumn")
+    .getByRole("button", text ? { name: text, exact: true } : { name: /^Show (more|additional|hidden|probable)/i })
+    .first();
+  for (const attempt of [0, 1]) {
+    try {
+      await button.scrollIntoViewIfNeeded({ timeout: 4_000 });
+      await pause(page);
+      await button.click({ timeout: 5_000 });
+      return true;
+    } catch {
+      if (attempt === 0) await scroll(page);
+    }
+  }
+  return false;
+};
+
+/**
+ * A thread's end, from what the read left: `more` only when raising the limit or scrolling would read
+ * more, so not when a fold could not be pressed (`stuck`, its text, empty when X gave none: test for
+ * undefined, not truthiness). When X ended the replies and counts more direct ones than were read,
+ * `unshown` says by how many, and why when a fold it would not open is the reason.
+ */
+export const settle = (
+  thread: Thread,
+  id: string,
+  replies: ReplyGroup[],
+  end: { cut: boolean; more: boolean; fold?: string; stuck?: string },
+): Thread => {
+  const left = end.stuck === undefined && (end.cut || end.more);
+  let unshown: Thread["unshown"];
+  const counted = thread.focal.kind === "post" ? thread.focal.counts?.replies?.value : undefined;
+  if (!left && counted) {
+    const shown = replies.flatMap((g) => g.posts).filter((p) => p.kind === "unavailable" || p.replyTo?.post === id).length;
+    if (counted > shown) {
+      unshown = clean({
+        count: counted - shown,
+        reason: end.stuck !== undefined ? `X folds them under "${end.stuck || "a button"}", which could not be opened` : undefined,
+      });
+    }
+  }
+  return clean({ ...thread, replies, more: left, folded: left ? end.fold : undefined, unshown });
 };
 
 /** A pause a person might take, 2 to 6 s; X watches for machine-regular timing. */
@@ -751,7 +802,10 @@ export const xHelpers = (page: Page) => {
     /**
      * A post with its ancestors and replies, from the TweetDetail calls its page makes: the first when
      * it opens, then one more each time a scroll near the bottom asks for the next replies (X's ranked
-     * ones; its "Show additional replies" button, which holds the lower-ranked, is never pressed). The
+     * ones). Once scrolling has nothing more to ask for and X leaves a button closed ("Show additional
+     * replies", "Show probable spam"), the read presses it, as a person reading the page would: it
+     * only opens a fold, and those replies are marked with its `section`. A button it can't press leaves
+     * `unshown` and no `more`. The
      * replies are in the order X ranks them, cut to `limit` posts (every post of every group counts,
      * a self-thread's continuation and sub-replies too); `more` says X had more. Limits are
      * `timeline`'s: a rate limit or a lock is `RefusedError`, a budget down to a tenth ends the read.
@@ -781,6 +835,9 @@ export const xHelpers = (page: Page) => {
           }
         };
         let more = false;
+        let fold: string | undefined;
+        let stuck: string | undefined;
+        let opened = 0;
         let low: string | undefined;
         let atEnd = false;
         for (let used = 0, idle = 0, scrolls = 0; ; scrolls++) {
@@ -792,14 +849,38 @@ export const xHelpers = (page: Page) => {
               thread = threadOf(answer.body, id);
               add(thread.replies);
               more = !!thread.more;
+              fold = thread.folded;
             } else {
               const next = moreRepliesOf(answer.body);
               add(next.replies);
               more = next.more;
+              fold = next.folded;
             }
           }
           if (!thread || thread.focal.kind === "unavailable" || !more || count() >= limit) break;
           if (low) break;
+          if (fold !== undefined) {
+            // Nothing left to scroll for: the fold is what X keeps back. One press per fold, a person's pace.
+            if (opened >= MAX_FOLDS) {
+              stuck = fold;
+              break;
+            }
+            const next = page.waitForResponse((r) => match.test(r.url()), { timeout: 15_000 });
+            next.catch(() => {});
+            if (!(await openFold(page, fold))) {
+              stuck = fold;
+              break;
+            }
+            opened++;
+            try {
+              await next;
+            } catch {
+              stuck = fold;
+              break;
+            }
+            await pause(page);
+            continue;
+          }
           // Only a scroll that reached the bottom without a new call counts as idle.
           idle = used !== before ? 0 : atEnd ? idle + 1 : idle;
           if (idle >= 3) break;
@@ -824,7 +905,7 @@ export const xHelpers = (page: Page) => {
           replies.push(g);
           room -= g.posts.length;
         }
-        return clean({ ...thread!, replies, more: cut || more });
+        return settle(thread!, id, replies, { cut, more, fold, stuck });
       } finally {
         page.off("response", listen);
       }

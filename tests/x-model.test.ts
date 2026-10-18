@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import Type, { type TSchema } from "typebox";
 import Value from "typebox/value";
+import { settle } from "../x/helpers";
 import {
   entryFromResult,
   iso,
@@ -33,12 +34,14 @@ import {
 } from "../x/model";
 import {
   adsOnly,
+  foldedDetail,
   followers,
   lastPage,
   legacyUser,
   listResult,
   profileConversations,
   searchTimeline,
+  spamDetail,
   tweetDetail,
   unavailableTweet,
   userByScreenName,
@@ -260,6 +263,63 @@ describe("x model: GraphQL threads", () => {
     expect(next.replies.length).toBe(4);
     expect(next.replies.flatMap((g) => g.posts.map((p) => p.id))).toContain("3004");
     expect(next.more).toBe(true);
+  });
+
+  test("replies X counts but folds under a button: the button is `folded`, the fold's heading the `section`", () => {
+    const t = threadOf(foldedDetail(1), "3001");
+    expect(t.replies).toEqual([]);
+    expect(t.more).toBe(true);
+    expect(t.folded).toBe("Show probable spam");
+    const opened = moreRepliesOf(spamDetail());
+    expect(opened.more).toBe(false);
+    expect(opened.folded).toBeUndefined();
+    expect(opened.replies.map((g) => ({ ids: g.posts.map((p) => p.id), section: g.section }))).toEqual([
+      { ids: ["3100"], section: "Probable spam" },
+    ]);
+    // With a Bottom cursor left, scrolling is what comes first: no fold yet.
+    const scrolling = JSON.parse(JSON.stringify(foldedDetail(1)));
+    scrolling.data.threaded_conversation_with_injections_v2.instructions[1].entries.push({
+      entryId: "cursor-bottom-1",
+      content: { entryType: "TimelineTimelineCursor", __typename: "TimelineTimelineCursor", value: "B", cursorType: "Bottom" },
+    });
+    expect(threadOf(scrolling, "3001").folded).toBeUndefined();
+  });
+
+  test("a thread prints what X counts and doesn't show: never `no replies` with `raise --limit`", () => {
+    const t = threadOf(foldedDetail(1), "3001");
+    const closed = threadText(t);
+    expect(closed).toContain('more replies than these, folded under "Show probable spam"');
+    expect(closed).not.toContain("no replies");
+    const read = threadText({ ...t, replies: moreRepliesOf(spamDetail()).replies, more: false, folded: undefined });
+    expect(read).toContain(`under X's "Probable spam" fold`);
+    expect(read).not.toContain("raise --limit");
+    const none = { ...t, replies: [], more: false, folded: undefined, unshown: { count: 1 } };
+    valid(Thread, none);
+    const text = threadText(none);
+    expect(text).toContain("X counts 1 reply on this post and shows none of them; X gives no reason");
+    expect(text).not.toContain("no replies");
+    expect(text).not.toContain("raise --limit");
+    expect(
+      threadText({ ...none, unshown: { count: 1, reason: 'X folds them under "Show probable spam", which could not be opened' } }),
+    ).toContain("shows none of them: X folds them under");
+    // A post with none counted still says so.
+    expect(threadText({ ...threadOf(foldedDetail(0), "3001"), more: false, folded: undefined })).toContain("no replies");
+  });
+
+  test("a fold that could not be pressed is `unshown`, never `more`, named or not", () => {
+    const named = threadOf(foldedDetail(1), "3001");
+    expect(settle(named, "3001", [], { cut: false, more: true, fold: "Show probable spam", stuck: "Show probable spam" })).toMatchObject({
+      more: false,
+      unshown: { count: 1, reason: 'X folds them under "Show probable spam", which could not be opened' },
+    });
+    // X gave the fold no text: stuck is "", which still counts as stuck.
+    const bare = settle(named, "3001", [], { cut: false, more: true, fold: "", stuck: "" });
+    expect(bare.more).toBe(false);
+    expect(bare.folded).toBeUndefined();
+    expect(bare.unshown).toEqual({ count: 1, reason: 'X folds them under "a button", which could not be opened' });
+    expect(threadText(bare)).not.toContain("raise --limit");
+    // Not stuck: the limit was reached first, so a larger one opens the fold.
+    expect(settle(named, "3001", [], { cut: false, more: true, fold: "", stuck: undefined })).toMatchObject({ more: true, folded: "" });
   });
 
   test("a focal post the response lacks is Unavailable, not an error", () => {

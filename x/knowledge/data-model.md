@@ -25,7 +25,7 @@ User ◄─author── Post ──quoted (one level)──► QuotedPost | Unav
  ├── owner ── XList ── members: Page<User>          Notification ─ actors: UserRef[], targets: PostId[]
  └── Page<User | UserUnavailable>   (followers, following, list members, reposters, follow requests)
 
-Thread = { focal, ancestors[], replies: ReplyGroup[] }      Page<T> = { items, more?, cursor?, pinned? }
+Thread = { focal, ancestors[], replies: ReplyGroup[], more?, folded?, unshown? }      Page<T> = { items, more?, cursor?, pinned? }
 Writes: Draft (text, replyTo?, quote?, media?, poll?), PostAction, UserAction, MessageDraft
 ```
 
@@ -138,6 +138,17 @@ A user's counts are followers, following, posts, likes, media and listed. The ne
     `ShowMoreThreads` cursor ("Show more replies", the lower-ranked section)
     **[confirmed: card_poll.json, article.json]**, unless X ended the timeline (Terminate Bottom, which
     comes with a Bottom cursor on the last page too) **[confirmed on this account, 2026-10-18]**.
+  - A **fold**: `ShowMoreThreads` carries the button's text in `displayTreatment.actionText` ("Show
+    additional replies", "Show probable spam") **[confirmed on this account, 2026-10-18, R-0011]**.
+    When it is the only cursor left (no Bottom), `thread.folded` is that text (empty when X gives none).
+    The call a press makes has a `TimelineLabel` entry (`label-0`, `text: "Probable spam"`) over its modules;
+    `moreRepliesOf` sets each group's `section` to it. `more` is true only if raising the limit or scrolling
+    reads more, a fold the read couldn't press is not.
+  - `thread.unshown = { count, reason? }`: when X ended the replies and `focal.counts.replies` is more than the
+    direct replies read (posts whose `replyTo.post` is the focal, and unavailable entries), `count` is the
+    difference. `reason` only when X gave one (a fold the read couldn't open); a reply that is counted but sits
+    in no fold has none in the page or its calls (deleted, blocked or muted author, limited, hidden), so
+    none is guessed.
   - Ads (`…-promoted-tweet-…`) and "you might also like" modules are left out.
 - A profile (its Posts tab too, for a self-thread, and "with replies") and a list timeline also
   group conversations into modules (`profile-conversation-<id>`, `list-conversation-<id>`), oldest
