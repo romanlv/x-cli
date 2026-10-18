@@ -242,10 +242,24 @@ export const gather = ({ limit = 20, until, newestFirst }: Bound) => {
 /** A pause a person might take, 2 to 6 s; X watches for machine-regular timing. */
 const pause = (page: Page) => page.waitForTimeout(2_000 + Math.random() * 4_000);
 
-/** A person's scroll down a timeline, then a pause to read. */
-const scroll = async (page: Page) => {
+/**
+ * A person's scroll down a timeline, then a pause to read. True when the page ends below the
+ * viewport now: X asks for the next page only near the bottom, so a scroll that is not there yet
+ * has had no chance to bring one.
+ */
+const scroll = async (page: Page): Promise<boolean> => {
+  // The wheel goes to what is under the pointer: over the timeline, not the page's corner.
+  // boundingBox is relative to the viewport, and the column is taller than it: aim at the part in view.
+  const column = await page.locator(SEL.primaryColumn).first().boundingBox();
+  const view = await page.evaluate(() => innerHeight);
+  if (column) {
+    const top = Math.max(column.y, 0);
+    const bottom = Math.min(column.y + column.height, view);
+    if (bottom > top) await page.mouse.move(column.x + column.width / 2, (top + bottom) / 2);
+  }
   await page.mouse.wheel(0, 1800);
   await pause(page);
+  return page.evaluate(() => scrollY + innerHeight >= document.documentElement.scrollHeight - 200);
 };
 
 /** X's GraphQL error codes that mean the account, not the op: 88 rate limited, 326 locked (an Arkose challenge). */
@@ -439,6 +453,7 @@ export const xHelpers = (page: Page) => {
         if (!responses.length) await page.waitForResponse((r) => match.test(r.url()), { timeout });
         let more: boolean | undefined;
         let done = false;
+        let atEnd = false;
         for (let used = 0, idle = 0, scrolls = 0; ; scrolls++) {
           const before = used;
           while (!done && used < responses.length) {
@@ -460,13 +475,14 @@ export const xHelpers = (page: Page) => {
             }
           }
           if (done) break;
-          idle = used === before ? idle + 1 : 0;
+          // Only a scroll that reached the bottom without a new call counts as idle.
+          idle = used !== before ? 0 : atEnd ? idle + 1 : idle;
           if (idle >= 3) break;
           if (scrolls >= (bound.scrolls ?? MAX_SCROLLS)) {
             more = true;
             break;
           }
-          await scroll(page);
+          atEnd = await scroll(page);
         }
         return read.page(more);
       } finally {

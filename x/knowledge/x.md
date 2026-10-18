@@ -86,8 +86,19 @@ with X's releases, so ops read these responses as the page receives them (`app.g
 send their own (`authoring.md`). Every response has `x-rate-limit-limit`, `-remaining` and `-reset`.
 Where each operation puts its timeline is in data-model.md; `map/graphql.ts` reads them all.
 
-Confirmed against this account: none yet. The first op that reads an operation through a mapper
-adds it here, with the date and what differed from the mapper.
+Confirmed against this account:
+
+- `SearchTimeline` on Latest (2026-10-18, `posts:search`): `variables.rawQuery`, `count: 20`,
+  `product: "Latest"`; the timeline is at `data.search_by_raw_query.search_timeline.timeline`, one
+  `TimelineAddEntries` of `tweet-<id>` items newest first by id, plus `cursor-top-…` and
+  `cursor-bottom-…`. `postsPage`/`readTimeline` read it as it came; nothing differed. A search that
+  matches nothing is an empty page, and a dangling operator (`from:`) is searched as text.
+- A timeline's next page loads only when the page is scrolled near its bottom (20 posts are about
+  8000 px), so a read can't count early scrolls without a new call as the end: `app.timeline` counts
+  one only at the page's bottom.
+
+The first op that reads another operation through a mapper adds it here, with the date and what
+differed from the mapper.
 
 ## Staying under X's limits
 

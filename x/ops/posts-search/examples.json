@@ -1,0 +1,6 @@
+[
+  { "context": "me", "input": { "query": "from:NASA", "limit": 5 } },
+  { "context": "me", "input": { "query": "from:NASA filter:links since:2026-09-01", "limit": 30 } },
+  { "context": "me", "input": { "query": "from:NASA", "limit": 10, "until": "2111093273800356092" } },
+  { "context": "me", "input": { "query": "from:NASA xqzvkwjh9917" } }
+]
