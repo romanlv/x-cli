@@ -68,15 +68,15 @@ export const runWorker = async (
   {
     pollMs = 2000,
     awf = awfCommand(),
-    maxRunning = 2,
+    maxRunning,
     runTimeout = "3h",
     keepSignedIn,
     keepSignedInMs,
   }: {
     pollMs?: number;
     awf?: string;
-    /** Runs at once. */
-    maxRunning?: number;
+    /** Runs at once: the domain's, which the CLI decides. */
+    maxRunning: number;
     /**
      * An attempt's whole budget, as awf takes it. Each turn has its own timeout and revise rounds
      * are capped, so this only stops a run that hangs; a build that explores, writes and revises runs past an hour.
@@ -86,7 +86,7 @@ export const runWorker = async (
     keepSignedIn?: (context: string) => Promise<boolean>;
     /** How often the contexts of running requests are kept signed in; unset, they aren't. */
     keepSignedInMs?: number;
-  } = {},
+  },
 ): Promise<void> => {
   const requests = new Requests(home);
   if (!claimWorker(home, () => process.pid)) return;
@@ -94,6 +94,20 @@ export const runWorker = async (
   const running = new Map<string, Bun.Subprocess>();
   const start = (request: RequestRecord): void => {
     const args = awfArgs(home, root, request, runTimeout);
+    // Recorded before awf starts, so nothing the run records itself (its stage, its end) is
+    // overwritten. A redo keeps saying so until its first stage starts; its old stage goes meanwhile.
+    const started = requests.update(
+      request.id,
+      (r) => ({
+        state: "building",
+        attempts: r.attempts + 1,
+        waitingFor: undefined,
+        ...(request.redo && { redo: true, stage: undefined }),
+      }),
+      "started",
+    );
+    // Cancelled since the queue was read: its update was dropped, and there is nothing to run.
+    if (started.state !== "building") return;
     let child: Bun.Subprocess;
     try {
       child = Bun.spawn([awf, ...args], {
@@ -110,18 +124,8 @@ export const runWorker = async (
       return;
     }
     running.set(request.id, child);
-    // A redo keeps saying so until its first stage starts; its old stage goes meanwhile.
-    requests.update(
-      request.id,
-      (r) => ({
-        state: "building",
-        attempts: r.attempts + 1,
-        pid: child.pid,
-        waitingFor: undefined,
-        ...(request.redo && { redo: true, stage: undefined }),
-      }),
-      "started",
-    );
+    // Only the pid, and only while this attempt hasn't ended: a fast run may have recorded its end already.
+    requests.update(request.id, (r) => (r.attempts === started.attempts && !isTerminal(r.state) ? { pid: child.pid } : {}), "pid");
     console.error(`${new Date().toISOString()} ${request.id}: awf ${args.join(" ")}`);
   };
 
@@ -131,7 +135,7 @@ export const runWorker = async (
       .reverse()
       // A request that blocked or waits on a lock keeps the pid of the awf that is still closing its agents.
       .filter((r) => !running.has(r.id) && !alive(r.pid) && ready(all, r))
-      // A run that completed (deferred, declined, flaky) takes another attempt only to redo a stage: from the first.
+      // A run that completed (deferred, flaky) takes another attempt only to redo a stage: from the first.
       .map((r) => (!r.redo && runOutput(home, r.id)?.outcome === "completed" ? { ...r, redo: true } : r));
 
   // Agents can go longer than an app's idle timeout without touching it (writing code, reviewing),

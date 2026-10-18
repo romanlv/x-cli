@@ -38,7 +38,7 @@ Before anything else, read:
 
 Rules:
 - You decide what gets built and say what the person wants; the builder then surveys the app for it, and you write the spec from what it found. Don't open a browser or run the CLI.
-- Read only the worktree. Each prompt says what you need about other requests; don't look them up in /repo/.state/requests.
+- Read nothing outside the worktree. Each prompt says what you need about other requests; don't look them up in /repo/.state/requests.
 ````
 
 ### Builder
@@ -100,7 +100,7 @@ Other requests are open, and one may already be building this:
 </open-requests>
 
 Read it against the ops in /repo/.state/worktrees/R-0001/x/ops/ and the knowledge, then decide, without opening a browser:
-- build: name the op (noun:verb), whether it changes an existing one, and the intent: what the person wants and why, what they expect back, and what is unclear. Nobody has opened the app yet, so say nothing of its screens or what it can't do: the builder surveys it next.
+- build: name the op (noun:verb), an existing one to change or a new one, and give the intent: what the person wants and why, what they expect back, and what is unclear. Nobody has opened the app yet, so say nothing of its screens or what it can't do: the builder surveys it next.
 - duplicate: an op already does it; give the command that does.
 - same: one of the open requests above already asks for this; name it, and this one ends as its duplicate.
 - deferred: it needs something the tool can't get yet; say what.
@@ -201,7 +201,7 @@ Then try it as a caller would, `env XCLI_HOME=/repo/.state XCLI_NO_REPAIRS=1 XCL
 
 ## Repair
 
-Filed by the runner when an op failed; there is no intake. The summary in the brief is the failure.
+Filed by the runner when an op failed; there is no intake. The request in the brief is the failure, as the runner filed it.
 
 ### diagnose
 
@@ -209,10 +209,10 @@ The builder. It answers reproduced or flaky.
 
 ````text
 <request id="R-0002" kind="repair" context="sandbox">
-timeout at read results (at "open search")
+thing:find failed at "open search": timeout at read results
 </request>
 <intent>
-a repair of thing:find, which failed at the step "open search": timeout at read results
+a repair of thing:find, which failed at the step "open search"
 </intent>
 The op: thing:find, in /repo/.state/worktrees/R-0002/x/ops/thing-find (spec.md, notes.md, op.ts, examples.json).
 The builder's exploring trace: /repo/.state/sessions/R-0002/trace.jsonl
@@ -222,8 +222,7 @@ timeout at read results
 The failure bundle is /repo/.state/failures/F-1: error.json (the inputs and the page URL), screenshot.png and snapshot.txt at the moment it failed, network.txt, and history.jsonl, the op's last runs, which show whether it ever worked.
 
 - Read /repo/.state/worktrees/R-0002/x/ops/thing-find/op.ts, spec.md and notes.md.
-- Reproduce the failure in your own browser session with the page commands, and find what changed: a label, a screen, a wait, an endpoint.
-- Reproduce it on test data (as authoring.md says) with the same shape as the failed input, never on the failed input's own records; where a step would save something, stop before it.
+- Reproduce the failure in your own browser session with the page commands, on test data (as authoring.md says) shaped like the failed input, never on the failed input's own records, and find what changed: a label, a screen, a wait, an endpoint. Where a step would save something, stop before it.
 - Write what changed in /repo/.state/worktrees/R-0002/x/ops/thing-find/notes.md (append).
 - Answer reproduced with the diagnosis, or flaky if it works every time you try, with what you tried.
 ````
@@ -234,10 +233,10 @@ The builder.
 
 ````text
 <request id="R-0002" kind="repair" context="sandbox">
-timeout at read results (at "open search")
+thing:find failed at "open search": timeout at read results
 </request>
 <intent>
-a repair of thing:find, which failed at the step "open search": timeout at read results
+a repair of thing:find, which failed at the step "open search"
 </intent>
 The op: thing:find, in /repo/.state/worktrees/R-0002/x/ops/thing-find (spec.md, notes.md, op.ts, examples.json).
 The builder's exploring trace: /repo/.state/sessions/R-0002/trace.jsonl
@@ -296,7 +295,7 @@ Verify ran it on every example for context "sandbox" and it passed:
 
 Each finding says where and what is wrong, and how severe it is:
 - blocking: the op is wrong, unsafe, or breaks the spec, the authoring rules or another op; it needs another look.
-- minor: wording, a doc line, a name; the builder fixes it and nobody looks again.
+- minor: wording, a doc line, a name, style; the builder fixes it and nobody looks again.
 No findings approves it.
 ````
 
@@ -434,7 +433,7 @@ List the things that match the query, newest first, with their name, time and li
 The op: thing:find, in /repo/.state/worktrees/R-0001/x/ops/thing-find (spec.md, notes.md, op.ts, examples.json).
 The builder's exploring trace: /repo/.state/sessions/R-0001/trace.jsonl
 
-The rounds for thing:find stopped getting further, and it is still not right. What each round found, oldest first:
+The rounds for thing:find ran out, or stopped getting further, and it is still not right. What each round found, oldest first:
 <round n="1">
 Verify ran the ops on every example for context "sandbox" and it failed:
 <verify>

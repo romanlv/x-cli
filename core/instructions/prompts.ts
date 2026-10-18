@@ -114,7 +114,7 @@ export const plannerInstructions = (run: PromptRun): string => md`
 
   Rules:
   - You decide what gets built and say what the person wants; the builder then surveys the app for it, and you write the spec from what it found. Don't open a browser or run the CLI.
-  - Read only the worktree. Each prompt says what you need about other requests; don't look them up in ${join(run.request.domain.home, "requests")}.
+  - Read nothing outside the worktree. Each prompt says what you need about other requests; don't look them up in ${join(run.request.domain.home, "requests")}.
 `;
 
 /** The builder's and the troubleshooter's. */
@@ -172,7 +172,7 @@ export const intake = ({ request, paths }: PromptRun, others: RequestRecord[], e
     ${[asked(request, { id: request.id, context: request.context }), ...facts].join("\n")}${open}
 
     Read it against the ops in ${paths.domainDir}/ops/ and the knowledge, then decide, without opening a browser:
-    - build: name the op (noun:verb), whether it changes an existing one, and the intent: what the person wants and why, what they expect back, and what is unclear. Nobody has opened the app yet, so say nothing of its screens or what it can't do: the builder surveys it next.
+    - build: name the op (noun:verb), an existing one to change or a new one, and give the intent: what the person wants and why, what they expect back, and what is unclear. Nobody has opened the app yet, so say nothing of its screens or what it can't do: the builder surveys it next.
     - duplicate: an op already does it; give the command that does.${same}
     - deferred: it needs something the tool can't get yet; say what.
     - declined: out of scope, unsafe, or too vague to act on; say why.${answers(request)}
@@ -228,15 +228,16 @@ export const write = (run: PromptRun, op: string, summary: string): string => {
 // ── Repair: the builder ───────────────────────────────────────────────────────────────────────────
 type Failure = NonNullable<RequestRecord["failure"]>;
 
-/** A repair's summary, standing in for intake's plan. */
+/** A repair's summary, standing in for intake's plan; the error itself is the request's text. */
 export const repairSummary = (op: string, failure: Failure): string =>
-  `a repair of ${op}, which failed${failure.step ? ` at the step "${failure.step}"` : ""}: ${failure.error.split("\n")[0]}`;
+  `a repair of ${op}, which failed${failure.step ? ` at the step "${failure.step}"` : ""}`;
 
 export const diagnose = (run: PromptRun, op: string, failure: Failure): string => {
   const { request } = run;
+  const onTestData = "on test data (as authoring.md says) shaped like the failed input, never on the failed input's own records";
   const how = failure.fellBack
-    ? "Its direct way failed and the browser way worked, so the bundle has no screenshot. Run the op as the caller did, without `--browser`, to see it fail, then do the task in the browser and compare the calls it makes now with those in notes.md, as the direct-calls skill says: a URL, a header, a token, a response's shape."
-    : "Reproduce the failure in your own browser session with the page commands, and find what changed: a label, a screen, a wait, an endpoint.";
+    ? `Its direct way failed and the browser way worked, so the bundle has no screenshot. Run the op without \`--browser\`, ${onTestData}, to see it fail; then do the task in the browser and compare the calls it makes now with those in notes.md, as the direct-calls skill says: a URL, a header, a token, a response's shape.`
+    : `Reproduce the failure in your own browser session with the page commands, ${onTestData}, and find what changed: a label, a screen, a wait, an endpoint.`;
   const joined = request.joined?.length
     ? `\n${request.joined.length} later call(s) failed the same way; their bundles:\n${request.joined.map((j) => `- ${j.bundle}`).join("\n")}`
     : "";
@@ -246,8 +247,7 @@ export const diagnose = (run: PromptRun, op: string, failure: Failure): string =
     The failure bundle is ${failure.bundle}: error.json (the inputs and the page URL), screenshot.png and snapshot.txt at the moment it failed, network.txt, and history.jsonl, the op's last runs, which show whether it ever worked.${joined}
 
     - Read ${opDir(run, op)}/op.ts, spec.md and notes.md.
-    - ${how}
-    - Reproduce it on test data (as authoring.md says) with the same shape as the failed input, never on the failed input's own records; where a step would save something, stop before it.
+    - ${how} Where a step would save something, stop before it.
     - Write what changed in ${opDir(run, op)}/notes.md (append).
     - Answer reproduced with the diagnosis, or flaky if it works every time you try, with what you tried.${answers(request)}
   `;
@@ -269,17 +269,25 @@ const describeVerify = (results: Verified[], context: string): string =>
     "verify",
     results
       .map((v) =>
-        v.noExamples
-          ? `- ${v.op}: examples.json has no example for context "${context}"`
-          : v.runs
-              .map(
-                (r) =>
-                  `- ${v.op} ${JSON.stringify(r.input)}${r.browser ? " --browser" : ""} → ${r.ok ? "ok" : `exit ${r.exitCode}: ${r.error ?? "no error"}`}`,
-              )
-              .join("\n"),
+        v.problem
+          ? `- ${v.op}: ${v.problem}`
+          : v.noExamples
+            ? `- ${v.op}: examples.json has no example for context "${context}"`
+            : v.runs
+                .map(
+                  (r) =>
+                    `- ${v.op} ${JSON.stringify(r.input)}${r.browser ? " --browser" : ""} → ${r.ok ? "ok" : `exit ${r.exitCode}: ${r.error ?? "no error"}`}`,
+                )
+                .join("\n"),
       )
       .join("\n"),
   );
+
+/** What makes a review finding blocking or minor: the review prompt says it, and so does the answer's schema. */
+export const SEVERITY = {
+  blocking: "the op is wrong, unsafe, or breaks the spec, the authoring rules or another op; it needs another look",
+  minor: "wording, a doc line, a name, style; the builder fixes it and nobody looks again",
+} as const;
 
 /** The checker's turn, once verify and the checks passed. */
 export const review = (run: PromptRun, op: string, summary: string, verified: Verified[], said?: string): string => {
@@ -305,8 +313,8 @@ export const review = (run: PromptRun, op: string, summary: string, verified: Ve
        - an op that reads every record and matches them itself: look in the app yourself for a search or filter that would do it, even when spec.md or notes.md says there is none; blocking unless notes.md shows each way tried
 
     Each finding says where and what is wrong, and how severe it is:
-    - blocking: the op is wrong, unsafe, or breaks the spec, the authoring rules or another op; it needs another look.
-    - minor: wording, a doc line, a name; the builder fixes it and nobody looks again.
+    - blocking: ${SEVERITY.blocking}.
+    - minor: ${SEVERITY.minor}.
     No findings approves it.${answers(request)}
   `;
 };
@@ -358,14 +366,14 @@ export const revise = (run: PromptRun, op: string, summary: string, problems: st
   `;
 };
 
-/** Every round used: the troubleshooter writes the question for a person. */
+/** The rounds ran out or stalled: the troubleshooter writes the question for a person. */
 export const stuck = (run: PromptRun, op: string, summary: string, problems: string[]): string => md`
   ${brief(run, op, summary)}
 
-  The rounds for ${op} stopped getting further, and it is still not right. What each round found, oldest first:
+  The rounds for ${op} ran out, or stopped getting further, and it is still not right. What each round found, oldest first:
   ${rounds(problems)}
 
-  Write the one specific question a person must answer for this to go on, with what you would recommend.
+  Write the one specific question a person must answer for this to go on, with what you would recommend.${answers(run.request)}
 `;
 
 // ── Merge: the builder ────────────────────────────────────────────────────────────────────────────
@@ -377,6 +385,6 @@ export const rebase = (run: PromptRun, op: string, summary: string, conflict: st
     main moved while ${request.id} was built, and rebasing ${paths.branch} on it conflicts in:
     ${tag("conflicts", conflict)}
 
-    Run \`git rebase main\` in ${paths.worktree} and resolve the conflicts, keeping both changes' intent; committing is how a rebase finishes. Answer done once the rebase is finished.
+    Run \`git rebase main\` in ${paths.worktree} and resolve the conflicts, keeping both changes' intent; committing is how a rebase finishes. Answer done once the rebase is finished.${answers(request)}
   `;
 };

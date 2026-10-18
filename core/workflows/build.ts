@@ -16,7 +16,7 @@ import { WORKFLOWS } from "../awf";
 import * as prompts from "../instructions/prompts";
 import { OP_NAME } from "../names";
 import { opDirIn, realDeps } from "./deps";
-import { ask, DONE, defineRequestWorkflow, EXPLORED, INTAKE, LIMITS, land } from "./shared";
+import { ask, DONE, defineRequestWorkflow, EXPLORED, INTAKE, LIMITS, land, PLAN } from "./shared";
 
 export const defineBuild = defineRequestWorkflow(
   { name: "op-build", description: "Build a new op, or change one, for a request in the ledger.", version: "1.0.0" },
@@ -26,7 +26,7 @@ export const defineBuild = defineRequestWorkflow(
     // Intake decides whether there is anything to build; a duplicate costs one short turn.
     const plan = await run.stage(
       WORKFLOWS.build.firstStage,
-      INTAKE,
+      PLAN,
       (p) => (p.kind === "build" ? `${p.change ? "change" : "new"} ${p.op}` : `${p.kind}: ${p.reason}`),
       async () => {
         const others = run.others();
@@ -36,7 +36,7 @@ export const defineBuild = defineRequestWorkflow(
           return run.workflow.stop(`intake named ${decided.request}, which is not one of the open requests it was shown`);
         if (decided.kind !== "build") return decided;
         if (!OP_NAME.test(decided.op)) return run.workflow.stop(`intake named "${decided.op}", which is not a noun:verb op name`);
-        // Whether it changes an op is whether that op is there, whatever intake thought.
+        // Whether it changes an op is whether that op is there, which the run sees and intake needn't say.
         const change = existsSync(opDirIn(request.domain.dir, decided.op));
         run.ledger.update(run.id, () => ({ op: decided.op, kind: change ? "change" : "new" }), "intake");
         return { ...decided, change };
@@ -72,7 +72,7 @@ export const defineBuild = defineRequestWorkflow(
       async () => ask(run, await team.builder(), DONE, "write", prompts.write(run, op, summary), LIMITS.longTurnMs),
     );
 
-    return land(run, team, op, change ? "change" : "build", { summary, said: written.summary, what: summary });
+    return land(run, team, op, change ? "change" : "new", { summary, said: written.summary, what: summary });
   },
 );
 

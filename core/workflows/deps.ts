@@ -30,6 +30,8 @@ export interface Verified {
   signedOut: boolean;
   /** examples.json has nothing for this context. */
   noExamples: boolean;
+  /** Why verify ran nothing: an examples.json it can't read. */
+  problem?: string;
 }
 
 export interface Git {
@@ -151,10 +153,21 @@ interface Example {
   input: Record<string, unknown>;
 }
 
-/** An op's examples.json; none when it has no such file yet. */
+const isExample = (e: unknown): e is Example =>
+  typeof e === "object" && e !== null && typeof (e as Example).context === "string" && typeof (e as Example).input === "object";
+
+/** An op's examples.json; none when it has no such file yet. Throws, saying why, when it isn't a list of examples. */
 export const examplesIn = (opDir: string): Example[] => {
   const file = join(opDir, "examples.json");
-  return existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Example[]) : [];
+  if (!existsSync(file)) return [];
+  let examples: unknown;
+  try {
+    examples = JSON.parse(readFileSync(file, "utf8"));
+  } catch (err) {
+    throw new Error(`not JSON: ${(err as Error).message}`);
+  }
+  if (!Array.isArray(examples) || !examples.every(isExample)) throw new Error('not a list of { "context": "…", "input": { … } }');
+  return examples;
 };
 
 /**
@@ -187,7 +200,13 @@ const stable = (value: unknown): string =>
 
 const verify = async (worktree: string, request: RequestRecord, op: string): Promise<Verified> => {
   const dir = opDirIn(domainIn(worktree, request), op);
-  const mine = examplesIn(dir).filter((e) => e.context === request.context);
+  let mine: Example[];
+  try {
+    mine = examplesIn(dir).filter((e) => e.context === request.context);
+  } catch (err) {
+    // An agent wrote the file, so an agent fixes it: a failed verify, not a run that dies.
+    return { op, ok: false, runs: [], signedOut: false, noExamples: false, problem: `examples.json: ${(err as Error).message}` };
+  }
   const runs: VerifyRun[] = [];
   let signedOut = false;
   // An op with a direct way runs each example both ways, so the browser way it falls back to works too.
