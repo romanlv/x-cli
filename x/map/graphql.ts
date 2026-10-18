@@ -146,7 +146,8 @@ export const userFromResult = (result: unknown): User | UserUnavailable | undefi
     name: name ?? "",
     bio: str(bio.description) ?? str(l.description),
     location,
-    website: str(at(urls[0], "expanded_url")) ?? str(at(u, "website", "url")),
+    // X sends "" for an account without one.
+    website: str(at(urls[0], "expanded_url")) || str(at(u, "website", "url")) || undefined,
     createdAt: xTime(core.created_at ?? l.created_at),
     avatar: str(at(u, "avatar", "image_url")) || str(l.profile_image_url_https),
     banner: str(at(u, "banner", "image_url")) ?? str(l.profile_banner_url),

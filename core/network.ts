@@ -22,7 +22,9 @@ export interface NetworkEntry {
   body?: string;
 }
 
-const SKIP = new Set(["image", "font", "stylesheet", "media", "manifest"]);
+const SKIP = new Set(["image", "font", "stylesheet", "script", "media", "manifest"]);
+/** Assets a service worker fetches, which Playwright types as `other`: X loads a hundred scripts so. */
+const ASSET = /\.(m?js|css|png|jpe?g|gif|webp|svg|ico|woff2?|ttf|mp4|m3u8|ts)(\?|$)/i;
 const BODY_MAX = 5_000_000;
 /** Characters of bodies kept at once, newest first: older calls keep their line, not their body. */
 const BODIES_BUDGET = 30_000_000;
@@ -41,7 +43,7 @@ export const recordNetwork = (
   let n = 0;
   if (during) context.on("request", (request) => started.set(request, during()));
   const record = async (request: Request, failed?: string): Promise<void> => {
-    if (SKIP.has(request.resourceType())) return;
+    if (SKIP.has(request.resourceType()) || ASSET.test(new URL(request.url()).pathname)) return;
     const entry: NetworkEntry = {
       n: ++n,
       at: timestamp(),

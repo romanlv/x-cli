@@ -120,7 +120,7 @@ describe("x helpers: reading the page", () => {
       lang: "en",
       counts: {
         replies: { value: 3, exact: true },
-        reposts: { value: 1204, exact: true },
+        repostsAndQuotes: { value: 1204, exact: true },
         likes: { value: 12000, exact: false },
         // "Bookmark" names no count, and the bookmark button's label never does: unknown, not 0.
         views: { value: 25900, exact: true },
@@ -128,7 +128,7 @@ describe("x helpers: reading the page", () => {
       viewer: { liked: false, reposted: false, bookmarked: false },
     });
     // A person sees which counts are rounded.
-    expect(entryText(entries[0]!)).toContain("3 replies · 1204 reposts · ~12000 likes · 25900 views");
+    expect(entryText(entries[0]!)).toContain("3 replies · 1204 reposts and quotes · ~12000 likes · 25900 views");
   });
 
   test("readPosts: a repost is by the reposter's handle, the account's own state read from the buttons", async () => {
@@ -141,7 +141,7 @@ describe("x helpers: reading the page", () => {
       author: { handle: "carol" },
       counts: {
         replies: { value: 0, exact: true },
-        reposts: { value: 5, exact: true },
+        repostsAndQuotes: { value: 5, exact: true },
         likes: { value: 1, exact: true },
         bookmarks: { value: 2, exact: true },
       },
@@ -156,7 +156,7 @@ describe("x helpers: reading the page", () => {
     expect(entries.map((e) => e.kind === "post" && e.id)).toEqual(["900", "1010", "1009", "1007"]);
     expect((entries[2] as Post).counts).toEqual({
       replies: { value: 3, exact: true },
-      reposts: { value: 5, exact: true },
+      repostsAndQuotes: { value: 5, exact: true },
       likes: { value: 152, exact: true },
       bookmarks: { value: 175, exact: true },
       views: { value: 45025, exact: true },

@@ -89,7 +89,8 @@ export const entryFromArticle = (a: Article): Entry | undefined => {
   const g = a.group;
   const counts: PostCounts | undefined = nonEmpty({
     replies: inGroup(g, "repl") ?? button(l.reply),
-    reposts: inGroup(g, "repost") ?? button(l.retweet ?? l.unretweet),
+    // X's repost count beside the button includes quotes (checked against GraphQL, 2026-10-18).
+    repostsAndQuotes: inGroup(g, "repost") ?? button(l.retweet ?? l.unretweet),
     likes: inGroup(g, "like") ?? button(l.like ?? l.unlike),
     bookmarks: inGroup(g, "bookmark") ?? count(l.bookmark ?? l.removeBookmark),
     views: inGroup(g, "view") ?? count(a.views),

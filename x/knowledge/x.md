@@ -22,21 +22,26 @@ pages" below.
   core reads the sign-in from that profile once the person says they are done.
 - What is particular to one account (its lists, who it follows) goes in `contexts/<context>.md`.
 
-## Pages _(unconfirmed)_
+## Pages
+
+Search (Latest), a profile and a post's page are **confirmed** (2026-10-18); the rest are not yet.
 
 | What | URL |
 | --- | --- |
 | home timeline | `/home` |
 | search | `/search?q=<query>&src=typed_query` plus `&f=live` (Latest), `&f=user` (People), `&f=media` |
 | a profile | `/<handle>`; replies at `/<handle>/with_replies`, media at `/<handle>/media` |
-| a post and its replies | `/<handle>/status/<id>` |
+| a post and its replies | `/<handle>/status/<id>`; `/i/status/<id>` redirects there, so an id alone is enough |
 | bookmarks | `/i/bookmarks` |
 | lists | `/<handle>/lists`, a list at `/i/lists/<id>` |
 | notifications | `/notifications`, mentions at `/notifications/mentions` |
 
-## Controls _(unconfirmed)_
+## Controls
 
-X marks controls with `data-testid`; class names are generated and change every release.
+X marks controls with `data-testid`; class names are generated and change every release. Seen on
+this account (2026-10-18): `SideNav_AccountSwitcher_Button`, `SearchBox_Search_Input`, `tweet`,
+`reply`, `retweet`, `like`, `bookmark`, `caret`, the analytics link, and `AppTabBar_*_Link` in the
+side nav. The rest are from secondary sources.
 
 | testid | What |
 | --- | --- |
@@ -49,7 +54,7 @@ X marks controls with `data-testid`; class names are generated and change every 
 | `User-Name` | a post's author: display name, `@handle`, time; an embedded quote has its own |
 | `UserName` | a profile's name and `@handle` above its timeline; `profile()` waits for it or "This account doesn't exist", which X draws after the main column |
 | `socialContext` | the line above a post: "Ada reposted" (a repost, linking to the reposter), "Pinned" |
-| `reply`, `retweet`, `like`, `bookmark` | a post's buttons; the counts are in their `aria-label` ("12 Likes. Like"), none when 0; `bookmark`'s is just "Bookmark" |
+| `reply`, `retweet`, `like`, `bookmark` | a post's buttons; the counts are in their `aria-label`, exact even where the screen rounds ("1407 Likes. Like" under "1.4K"), 0 included ("0 Replies. Reply"); `retweet`'s counts reposts and quotes together; `bookmark`'s is just "Bookmark" **[confirmed 2026-10-18]** |
 | `unretweet`, `unlike`, `removeBookmark` | the same buttons when the signed-in account has reposted, liked or bookmarked it |
 | `div[role=group]` (no testid) | a post's action bar around the buttons; its `aria-label` names the counts in full: "3 replies, 5 reposts, 152 likes, 175 bookmarks, 45025 views" (secondary sources, data-model.md) |
 | `placementTracking` | wraps an ad's `article` (an ad is the article inside one); a post's video has one inside the article too (typefully/minimal-twitter) |
@@ -61,14 +66,21 @@ X marks controls with `data-testid`; class names are generated and change every 
   means scrolling and collecting (`app.posts`), keyed by the post's id.
 - A post's permalink is the `a` around its `time` (`/<handle>/status/<id>`); `time[datetime]` is ISO
   8601. Views are in the aria-label of the `a` to `…/analytics`.
-- The DOM shows no account ids and no repost ids, and large counts rounded ("12K"): an op that
-  needs those reads GraphQL. Whether the aria-labels carry exact numbers where the text is rounded
-  is data-model.md's open question 1.
+- The DOM shows no account ids and no repost ids, and splits no quotes from reposts: an op that
+  needs those reads GraphQL. Its counts are exact: `app.posts` matched GraphQL to the unit on
+  @NASA's posts (2026-10-18), with `repostsAndQuotes` where GraphQL has `reposts` and `quotes`.
 
 ## The calls behind the pages
 
 The web app reads through GraphQL: `GET /i/api/graphql/<queryId>/<Operation>?variables=…&features=…`
-(`SearchTimeline`, `UserByScreenName`, `UserTweets`, `TweetDetail`, `Bookmarks`, `ListLatestTweetsTimeline`).
+(`SearchTimeline`, `UserByScreenName`, `UserOriginalsTimeline`, `TweetDetail`, `Bookmarks`,
+`ListLatestTweetsTimeline`). Seen on this account (2026-10-18): search's Latest tab calls
+`SearchTimeline`; a profile calls `UserByScreenName`, and its Posts tab `UserOriginalsTimeline`, not
+`UserTweets` as the open-source clients say; a post's page calls `TweetDetail` (and
+`TweetResultByRestId` first). `map/graphql.ts` reads all four as they came: `postsPage`,
+`userFromResult`, `threadOf`. A page also makes dozens of calls of its own (badge counts, Grok,
+sidebars), and loads over a hundred scripts through its service worker, which `page:requests`
+leaves out.
 Each call carries a signature (`x-client-transaction-id`) the app computes, and query ids rotate
 with X's releases, so ops read these responses as the page receives them (`app.graphql`) and never
 send their own (`authoring.md`). Every response has `x-rate-limit-limit`, `-remaining` and `-reset`.

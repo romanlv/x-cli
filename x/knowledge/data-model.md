@@ -52,7 +52,8 @@ Bookmarks and likes have no type of their own. `bookmarks:list` is a `Page<Entry
   account was called when it was read. Ops dedupe, compare and join by id. A handle is input only:
   an op resolves it to an id and then works with the id.
 - `postUrl(id)` gives `https://x.com/i/status/<id>`, which works whatever the author is now called
-  **[inferred: X redirects /i/status/ to the canonical URL]**. No URL is stored.
+  **[confirmed 2026-10-18: X redirects it to `/<handle>/status/<id>` and loads TweetDetail]**. No URL
+  is stored.
 - `timeOfId(id)` gives a post's time from its id (snowflake bits 22+, epoch 1288834974657)
   **[confirmed: X's snowflake format]**. When `createdAt` is missing, text output (`entryText`)
   falls back to it; no mapper fills `createdAt` from it. Ids from before snowflakes (2010-11-04,
@@ -85,14 +86,17 @@ Bookmarks and likes have no type of their own. `bookmarks:list` is a `Page<Entry
 ## Counts and exactness
 
 `Count = { value, exact }`. GraphQL and the API give exact integers: `exact: true`, exact when read,
-since counts keep moving. The DOM writes "12K", which becomes `{ value: 12000, exact: false }`.
-Text output prefixes an inexact count with `~`.
+since counts keep moving. The DOM's screen text says "12K", but the labels the reader uses carry
+the exact number, so DOM counts are exact too **[confirmed 2026-10-18: equal to GraphQL's on four
+@NASA posts, 2142 to 958905 views]**; a label with "12K" in it would still become
+`{ value: 12000, exact: false }`. Text output prefixes an inexact count with `~`.
 
 | Count | GraphQL (`legacy` or top level) | API v2 `public_metrics` | DOM |
 | --- | --- | --- | --- |
 | replies | `reply_count` | `reply_count` | action bar label, else `reply` button aria-label |
-| reposts | `retweet_count` | `retweet_count` | action bar label, else `retweet` / `unretweet` aria-label |
-| quotes | `quote_count` | `quote_count` | not shown in the timeline |
+| reposts | `retweet_count` | `retweet_count` | not shown apart from quotes |
+| quotes | `quote_count` | `quote_count` | not shown apart from reposts |
+| repostsAndQuotes | not set (it has the two apart) | not set | action bar label, else `retweet` / `unretweet` aria-label: X's number beside the button is reposts plus quotes **[confirmed 2026-10-18: 216 = 194 + 22, 258 = 242 + 16]** |
 | likes | `favorite_count` | `like_count` | action bar label, else `like` / `unlike` aria-label |
 | bookmarks | `bookmark_count` | `bookmark_count` | action bar label, else a number in `removeBookmark`'s label; `bookmark`'s is just "Bookmark" |
 | views | `views.count`, a string; absent unless `state` is `EnabledWithCount` | `impression_count` | action bar label, else the analytics link's aria-label |
@@ -231,6 +235,7 @@ operations **[paths confirmed: twscrape fixtures]**:
 | Operation | Path | Entries |
 | --- | --- | --- |
 | SearchTimeline | `data.search_by_raw_query.search_timeline.timeline` | `tweet-<id>` (or `user-<id>` on People) |
+| UserOriginalsTimeline (a profile's Posts tab) | `data.user.result.timeline.timeline` | `tweet-`, `profile-originals-conversation-`, `who-to-follow-` (left out) **[confirmed 2026-10-18]** |
 | UserTweets, UserTweetsAndReplies, UserMedia, Likes | `data.user.result.timeline.timeline` (older: `timeline_v2`) | `tweet-`, `profile-conversation-`, `who-to-follow-` (left out) |
 | TweetDetail | `data.threaded_conversation_with_injections_v2` | `tweet-`, `conversationthread-`, `cursor-showmorethreads-` |
 | Followers, Following, BlueVerifiedFollowers | `data.user.result.timeline.timeline` | `user-<id>` |
@@ -274,7 +279,7 @@ raw_user_by_login.json, 2026]**. The mapper reads both. "—" means the source d
 | `poll` | radio list with %, not counts | card `poll<n>choice_*`: `choiceN_label`, `choiceN_count`, `end_datetime_utc`, `duration_minutes`, `counts_are_final` | `attachments.poll_ids` + `includes.polls` (`options[].votes`, `voting_status`, `end_datetime`) |
 | `hasNote` / `note` | `birdwatch-pivot` box (inferred) | `has_birdwatch_notes`; `birdwatch_pivot.{note.rest_id, subtitle.text}` (inferred: twikit) | — (the API documents none) |
 | `edits` | "Last edited" label (inferred) | `edit_control.edit_tweet_ids` or `edit_control.edit_control_initial.edit_tweet_ids`, `editable_until_msecs`, `edits_remaining` | `edit_history_tweet_ids` (oldest first), `edit_controls.{editable_until, edits_remaining}` |
-| `counts` | aria-labels, approximate | see Counts | `public_metrics` |
+| `counts` | aria-labels, exact; reposts and quotes as one | see Counts | `public_metrics` |
 | `viewer` | `unlike` / `unretweet` / `removeBookmark` testids mean on (inferred) | `favorited`, `retweeted`, `bookmarked` | — (separate liking/bookmark lookups) |
 | `sensitive` | the "sensitive content" interstitial (inferred) | `possibly_sensitive` | `possibly_sensitive` |
 | `limitedActions` | — | `TweetWithVisibilityResults.limitedActionResults.limited_actions[].action` | `reply_settings` (related, not the same) |
@@ -314,10 +319,10 @@ sent them.
   `tweet-text-show-more-link` is there.
 - `counts` from the action bar's aria-label where it names one (see Counts), else the buttons'
   aria-labels, via `count()`: `exact: false` when the number has K or M, else `exact: true`, since X
-  rounds only with a suffix (open question 1 confirms it). A reply, repost or like button whose
-  label has no number ("Reply") is 0 **[inferred]**; a button with no label says nothing, and the
-  bookmark button's label ("Bookmark") never has a number, so bookmarks come only from the action
-  bar or a number in a label. Views come from the analytics link; quotes aren't shown.
+  rounds only with a suffix. The action bar's label was there on every post read so far (bookmarks
+  came through, which only it gives). The repost count is `repostsAndQuotes`. A reply, repost or like
+  button whose label has no number ("Reply") is 0 **[inferred: X writes "0 Replies. Reply"]**; a
+  button with no label says nothing. Views come from the analytics link.
 - An article inside `[data-testid="placementTracking"]` is an ad and is left out, as GraphQL's
   promoted entries are **[secondary: typefully/minimal-twitter css/main.css hides
   `[data-testid="placementTracking"] article`, 2026-08; it notes that a post's video has a
@@ -361,8 +366,8 @@ API v2's `non_public_metrics`/`organic_metrics`. Add each when an op needs it, f
 
 ## Open questions
 
-1. **DOM counts**: does the action bar's label always carry exact numbers, and leave 0 out? Do the
-   buttons' aria-labels carry exact numbers? This decides `exact` and 0 for DOM counts.
+1. ~~**DOM counts**~~ answered 2026-10-18: the action bar's label and the buttons' aria-labels
+   carry exact numbers, 0 included, and the repost count includes quotes (`repostsAndQuotes`).
 2. **Notifications**: which call does `/notifications` make today: REST `notifications/all.json`
    (twikit) or a GraphQL `NotificationsTimeline`? Check with `page:requests`, then write its mapper.
 3. **Bookmarks path**: the GraphQL operation name and path (`Bookmarks`,

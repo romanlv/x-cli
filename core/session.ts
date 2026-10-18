@@ -180,6 +180,8 @@ export const pageCommandsOf = (domain: Domain): Record<string, PageCommand> => (
         async run(s, args) {
           const text = await command.run(s, args);
           s.trace();
+          // One that only reads changed nothing on the page: what it read is the whole answer.
+          if (command.reads && text !== undefined) return text;
           const after = await s.snapshot();
           return text ? `${text}\n${after}` : after;
         },

@@ -102,6 +102,8 @@ export const PostCounts = Type.Object({
   replies: Type.Optional(Count),
   reposts: Type.Optional(Count),
   quotes: Type.Optional(Count),
+  /** The number beside the repost button, which counts quotes too: the DOM's only one, where GraphQL splits them. */
+  repostsAndQuotes: Type.Optional(Count),
   likes: Type.Optional(Count),
   bookmarks: Type.Optional(Count),
   views: Type.Optional(Count),
@@ -390,7 +392,7 @@ export const entryText = (entry: Entry): string => {
   if (entry.kind === "repost") return `${who(entry.by)} reposted:\n${entryText(entry.post)}`;
   const c = entry.counts;
   const counts = c
-    ? `  ${n(c.replies)} replies · ${n(c.reposts)} reposts · ${n(c.likes)} likes${c.views ? ` · ${n(c.views)} views` : ""}`
+    ? `  ${n(c.replies)} replies · ${c.reposts || !c.repostsAndQuotes ? `${n(c.reposts)} reposts` : `${n(c.repostsAndQuotes)} reposts and quotes`} · ${n(c.likes)} likes${c.views ? ` · ${n(c.views)} views` : ""}`
     : "";
   const quoted = entry.quoted ? `\n  > ${entryText(entry.quoted).replace(/\n/g, "\n  > ")}` : "";
   const time = entry.createdAt ?? timeOfId(entry.id);

@@ -34,7 +34,7 @@ export interface PageCommand {
   usage: string;
   /** It only reads what the session has, so the calls made meanwhile belong to the command before. */
   reads?: boolean;
-  /** What it prints. A domain's commands print the page after it, with what changed marked. */
+  /** What it prints. A domain's commands print the page after it, with what changed marked, unless they only read. */
   run(ctx: PageCommandContext, args: string[]): Promise<string | undefined>;
 }
 
