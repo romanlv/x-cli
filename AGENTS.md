@@ -18,7 +18,8 @@ command reference. The machinery comes from `../workday-cli`; only `x/` is X's.
   `docs/new-site.md` says where each thing goes when starting a CLI for another site.
 - `docs/prompts.md` shows every prompt filled in. After changing a prompt or `workflows.json`, run
   `bun run docs:prompts` and read its diff: it is what agents will see.
-- `workflows.json` names each agent's model and turns the agents' sandbox on (DESIGN.md, "Models and the sandbox").
+- `workflows.json` turns the agents' sandbox on, and names an agent's model where it differs from the
+  defaults in `core/workflows/config.ts` (DESIGN.md, "Models and the sandbox").
 - `bun run ci:fast` is everything but browser e2e tests (seconds), `ci:sandbox` that without the
   workflow tests (what sandboxed agents run); `bun run ci:check` runs Biome, tsc, the bun tests and
   the workflow tests (`awf test core/workflows`). There are no e2e tests yet: they need a mock X.

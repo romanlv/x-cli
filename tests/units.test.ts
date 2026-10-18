@@ -203,6 +203,13 @@ describe("workflows.json", () => {
     expect(loadConfig(t.home)).toEqual(DEFAULTS);
   });
 
+  test("the checkout's names only what differs from the defaults, so they are named in one place", () => {
+    const raw = JSON.parse(readFileSync(join(import.meta.dir, "..", "workflows.json"), "utf8"));
+    for (const [role, runtime] of Object.entries(raw.agents ?? {})) {
+      expect(runtime).not.toEqual(DEFAULTS.agents[role as keyof typeof DEFAULTS.agents]);
+    }
+  });
+
   test("an agent it names replaces that default whole; the rest stay", () => {
     write({ sandbox: true, agents: { checker: "cheap", builder: { harness: "pi", model: "m" } } });
     expect(loadConfig(t.home)).toEqual({

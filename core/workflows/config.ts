@@ -1,5 +1,6 @@
 // workflows.json at the checkout's root: which harness and model each agent runs on, and whether
-// agents run in a sandbox. Read when a run starts; a missing file means the defaults below.
+// agents run in a sandbox, where the checkout differs from the defaults below, the one place they
+// are named. Read when a run starts; a missing file means the defaults.
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { RuntimeSelection } from "agentswf/workflow";
@@ -34,7 +35,7 @@ export const DEFAULTS: WorkflowConfig = {
   agents: {
     planner: { harness: "claude", model: "claude-opus-5-5" },
     builder: { harness: "claude", model: "claude-sonnet-5-5" },
-    checker: { harness: "codex", model: "gpt-6-sol", placement: "headless" },
+    checker: { harness: "codex", model: "gpt-6.1-sol", placement: "headless" },
     troubleshooter: { harness: "claude", model: "claude-opus-5-5", effort: "high" },
   },
 };

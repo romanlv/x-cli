@@ -246,7 +246,7 @@ Three agents work in it, and all run on their own: the **planner**, on a strong 
 
 ### Models and the sandbox: `workflows.json`
 
-`workflows.json` at the checkout's root names each agent's harness and model (`planner`, `builder`, `checker`, `troubleshooter`, each as awf takes a runtime, an alias included) and whether agents run in a sandbox. An agent it leaves out keeps its default; a run reads the file once, when it starts.
+`workflows.json` at the checkout's root names each agent's harness and model (`planner`, `builder`, `checker`, `troubleshooter`, each as awf takes a runtime, an alias included) and whether agents run in a sandbox. An agent it leaves out keeps its default, from `core/workflows/config.ts`, the one place the defaults are named; this checkout's file only turns the sandbox on. A run reads the file once, when it starts.
 
 With `"sandbox": true` the team shares one srt sandbox per run:
 

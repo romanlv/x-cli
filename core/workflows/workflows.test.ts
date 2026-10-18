@@ -282,7 +282,7 @@ test("agents run unsandboxed on the default models when there is no workflows.js
   expect(run.agentOf("builder").sandbox).toBeUndefined();
   expect(run.agentOf("planner").execution).toMatchObject({ harness: "claude", model: "claude-opus-5-5" });
   expect(run.agentOf("builder").execution).toMatchObject({ harness: "claude", model: "claude-sonnet-5-5" });
-  expect(run.agentOf("checker").execution).toMatchObject({ harness: "codex", model: "gpt-6-sol" });
+  expect(run.agentOf("checker").execution).toMatchObject({ harness: "codex", model: "gpt-6.1-sol" });
   expect(sandboxed).toEqual([]);
 });
 
@@ -306,7 +306,7 @@ test("workflows.json puts the team in one sandbox, on the models it names", asyn
   );
   expect(run.value).toMatchObject({ state: "done" });
   expect(run.agentOf("builder").execution).toMatchObject({ harness: "codex", model: "gpt-cheap" });
-  expect(run.agentOf("checker").execution).toMatchObject({ harness: "codex", model: "gpt-6-sol" });
+  expect(run.agentOf("checker").execution).toMatchObject({ harness: "codex", model: "gpt-6.1-sol" });
   expect(run.agentOf("planner").execution).toMatchObject({ harness: "claude", model: "claude-opus-5-5" });
   expect(run.agentOf("planner").sandbox).toEqual(run.agentOf("builder").sandbox);
   const box = run.agentOf("builder").sandbox!;
