@@ -1,7 +1,6 @@
 import { join } from "node:path";
 import type { Page } from "playwright";
 import { type Domain, defineDomain, type SignInState } from "../core/domain";
-import { envNumber } from "../core/env";
 import { InputError } from "../core/errors";
 import { HANDLE, ORIGIN, readPosts, SEARCH_TABS, SEL, type SearchTab, type Xh, xHelpers } from "./helpers";
 
@@ -50,30 +49,33 @@ const signedInHandle = async (page: Page): Promise<string | undefined> => {
   return handle && HANDLE.test(handle) ? handle.toLowerCase() : undefined;
 };
 
+/** Is this X's login or sign-up flow? Its path, not the whole URL: an account may be called `logintest`. */
+export const isSignInUrl = (url: string): boolean => {
+  try {
+    return /^\/(login|i\/flow\/(login|signup))(\/|$)/.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
+};
+
 /**
  * Signed in shows the side nav's account switcher; signed out lands on the login flow or shows the
- * sign-in buttons. Anything else, after the wait, is unknown: a slow page is not a signed-out one.
+ * sign-in buttons. Anything else is unknown, which core asks again: a slow page is not a signed-out one.
  */
 const signInState = async (page: Page, contextUrl: string): Promise<SignInState> => {
   const expected = accountOf(contextUrl).handle;
-  const switcher = page.locator(SEL.accountSwitcher).first();
-  const signInButtons = page.locator(SEL.signInButtons).first();
-  const password = page.locator('input[type="password"]').first();
-  const deadline = Date.now() + envNumber("SIGNIN_WAIT_MS", 15_000);
-  for (;;) {
-    const at = accountOf(page.url());
-    if (await switcher.isVisible().catch(() => false)) {
-      if (!at.onX) return "elsewhere";
-      if (!expected) return "signed-in";
-      const actual = await signedInHandle(page);
-      if (!actual) return "unknown";
-      return actual === expected ? "signed-in" : "elsewhere";
-    }
-    if (/\/(login|i\/flow\/(login|signup))/.test(page.url())) return "signed-out";
-    if ((await signInButtons.isVisible().catch(() => false)) || (await password.isVisible().catch(() => false))) return "signed-out";
-    if (Date.now() > deadline) return "unknown";
-    await page.waitForTimeout(250).catch(() => {});
+  if (await page.locator(SEL.accountSwitcher).first().isVisible()) {
+    if (!accountOf(page.url()).onX) return "elsewhere";
+    if (!expected) return "signed-in";
+    // The switcher shows before its handle does.
+    const actual = await signedInHandle(page);
+    if (!actual) return "unknown";
+    return actual === expected ? "signed-in" : "elsewhere";
   }
+  if (isSignInUrl(page.url())) return "signed-out";
+  const signInShown =
+    (await page.locator(SEL.signInButtons).first().isVisible()) || (await page.locator('input[type="password"]').first().isVisible());
+  return signInShown ? "signed-out" : "unknown";
 };
 
 export const xDomain = (overrides: Partial<Domain<Xh>> = {}): Domain<Xh> =>

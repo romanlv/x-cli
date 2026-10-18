@@ -210,7 +210,7 @@ describe("request ledger", () => {
     expect(requests.list({ state: "building" }).map((r) => r.id)).toEqual(["R-0001"]);
   });
 
-  test("only a blocked request takes an answer, and only failed or deferred ones are retried", () => {
+  test("only a blocked request takes an answer, and only failed, deferred or cancelled ones are retried", () => {
     const r = requests.file({ kind: "intake", text: "x", context: "acme", domain: domain() });
     expect(() => requests.answer(r.id, "yes")).toThrow("not blocked");
     requests.update(r.id, () => ({ state: "blocked", question: "which?" }));

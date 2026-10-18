@@ -30,6 +30,12 @@ export const envValue = (name: EnvName): string | undefined => process.env[envNa
 /** A number from the environment, or the fallback when it isn't set. */
 export const envNumber = (name: EnvName, fallback: number): number => Number(envValue(name) ?? fallback);
 
-/** A setting the domain makes, changed by the environment; one the domain leaves unset stays unset. */
-export const envOverride = (name: EnvName, value: number | undefined): number | undefined =>
-  value === undefined ? undefined : envNumber(name, value);
+/**
+ * A setting the domain makes, changed by the environment; one the domain leaves unset stays unset,
+ * and zero (or what isn't a number) unsets it.
+ */
+export const envOverride = (name: EnvName, value: number | undefined): number | undefined => {
+  if (value === undefined) return undefined;
+  const n = envNumber(name, value);
+  return n > 0 ? n : undefined;
+};

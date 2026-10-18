@@ -1,6 +1,6 @@
 // What the tool knows of awf: the command line and environment of a request's run, how to stop
 // one, and what awf keeps of a run (its folder under `.state/runs/`), read back for status.
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { envName, envValue } from "./env";
 import { formatDuration } from "./output";
@@ -32,10 +32,16 @@ const runDir = (home: string, id: string): string | undefined => {
     .find((dir) => existsSync(dir));
 };
 
-/** awf's record of a run's last attempt: how it ended and why. */
-export const runOutput = (home: string, id: string): { outcome?: string; reason?: string } | undefined => {
+/**
+ * awf's record of a run's last attempt: how it ended and why. awf keeps an attempt's record until
+ * the next attempt ends, so with `since`, an attempt's start, a record written before it is none.
+ */
+export const runOutput = (home: string, id: string, since?: number): { outcome?: string; reason?: string } | undefined => {
   const dir = runDir(home, id);
-  return dir ? readJson(join(dir, "output.json"), undefined) : undefined;
+  if (!dir) return undefined;
+  const file = join(dir, "output.json");
+  if (since !== undefined && (!existsSync(file) || statSync(file).mtimeMs < since)) return undefined;
+  return readJson(file, undefined);
 };
 
 /**

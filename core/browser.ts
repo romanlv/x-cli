@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { type Browser, type BrowserContext, chromium, type LaunchOptions, type Page, selectors } from "playwright";
 import { type Context, type Contexts, loginHint } from "./contexts";
 import { type Credentials, type SignInWait, savedCredentials, submitCredentials } from "./credentials";
-import type { Domain } from "./domain";
+import type { Domain, SignInState } from "./domain";
 import { envNumber, envValue } from "./env";
 import { BrowserError, InputError, PreconditionError } from "./errors";
 import { type NetworkEntry, recordNetwork } from "./network";
@@ -26,6 +26,31 @@ class SignedOut extends PreconditionError {}
 const VIEWPORT = { width: 1440, height: 900 };
 /** How long one Playwright action, or one direct call, waits before the step fails. */
 export const STEP_TIMEOUT_MS = envNumber("STEP_TIMEOUT_MS", 15_000);
+/** How long a loaded page may take to show the app signed in or a sign-in. */
+const SIGNIN_WAIT_MS = envNumber("SIGNIN_WAIT_MS", 15_000);
+
+/**
+ * A browser context on the context's saved sign-in, set up as the domain sets up every one that is
+ * signed in, so no page of it signs out the sign-in the others share.
+ */
+export const signedInContext = async (browser: Browser, domain: Domain, ctx: Context): Promise<BrowserContext> => {
+  const context = await browser.newContext({ storageState: ctx.authFile, viewport: VIEWPORT });
+  await domain.prepareBrowser?.(context);
+  return context;
+};
+
+/**
+ * Whether the page is signed in, asked of the domain again while it can't tell, up to
+ * SIGNIN_WAIT_MS: a slow page is not a signed-out one.
+ */
+export const signInStateOf = async (domain: Domain, page: Page, contextUrl: string): Promise<SignInState> => {
+  const deadline = Date.now() + SIGNIN_WAIT_MS;
+  for (;;) {
+    const state = await domain.signInState(page, contextUrl).catch(() => "unknown" as const);
+    if (state !== "unknown" || page.isClosed() || Date.now() > deadline) return state;
+    await page.waitForTimeout(250).catch(() => {});
+  }
+};
 
 /**
  * Save a signed-in browser's cookies as the context's sign-in. The app may keep its idle timer in
@@ -124,8 +149,7 @@ const openOnce = async (
   const browser = await launch(headed);
   const close = () => browser.close().catch(() => {});
   try {
-    const context = await browser.newContext({ storageState: ctx.authFile, viewport: VIEWPORT });
-    await domain.prepareBrowser?.(context);
+    const context = await signedInContext(browser, domain, ctx);
     const network = recordNetwork(context, recording);
     const page = await context.newPage();
     try {
@@ -133,7 +157,7 @@ const openOnce = async (
     } catch (err) {
       throw new PreconditionError(`could not reach ${ctx.appUrl}: ${firstLine((err as Error).message)}`);
     }
-    const state = await domain.signInState(page, ctx.appUrl);
+    const state = await signInStateOf(domain, page, ctx.appUrl);
     if (state === "signed-out") {
       contexts.markSignedOut(ctx.name);
       throw new SignedOut(`context "${ctx.name}" is signed out: its saved session has expired`, login);

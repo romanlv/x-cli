@@ -39,7 +39,16 @@ test("the worker runs every received request, oldest first, and exits when idle"
   ).toEqual([a.id, b.id]);
   expect(calls().find((c) => c.id === b.id)!.args[1]).toBe(join(ROOT, "core/workflows/repair.ts"));
   expect(requests.get(a.id)).toMatchObject({ state: "done", attempts: 1 });
-  expect(requests.ledger(a.id).map((e) => e.event)).toEqual(["received", "started", "pid", "done"]);
+  expect(requests.ledger(a.id).map((e) => e.event)).toEqual(["received", "started", "pid", "done", "exited"]);
+  expect(requests.get(a.id)!.pid).toBeUndefined();
+});
+
+test("a run that blocks and exits leaves no pid on its request, for another process to pass as it", async () => {
+  process.env.FAKE_AWF = "block";
+  const r = requests.file({ kind: "intake", text: "a", context: "acme", domain: domain() });
+  await runWorker(t.home, ROOT, { pollMs: 20, awf: AWF, maxRunning: 2 });
+  expect(requests.get(r.id)).toMatchObject({ state: "blocked", question: "which one?" });
+  expect(requests.get(r.id)!.pid).toBeUndefined();
 });
 
 test("at most maxRunning runs at a time", async () => {
@@ -81,6 +90,16 @@ test("a run that dies without recording an end leaves its request failed", async
   expect(requests.get(r.id)).toMatchObject({ state: "failed", reason: "the run ended without a result: awf exited 1" });
 });
 
+test("a run that dies is not given the reason the attempt before it ended with", async () => {
+  process.env.FAKE_AWF = "crash";
+  const r = requests.file({ kind: "intake", text: "a", context: "acme", domain: domain() });
+  mkdirSync(join(t.home, "runs", "op-build", r.id), { recursive: true });
+  writeFileSync(join(t.home, "runs", "op-build", r.id, "output.json"), JSON.stringify({ outcome: "failed", reason: "the attempt before" }));
+  await Bun.sleep(5);
+  await runWorker(t.home, ROOT, { pollMs: 20, awf: AWF, maxRunning: 2 });
+  expect(requests.get(r.id)).toMatchObject({ state: "failed", reason: "the run ended without a result: awf exited 1" });
+});
+
 test("a request waiting on another's op lock is left until the holder ends", async () => {
   const holder = requests.file({ kind: "new", op: "x:y", text: "a", context: "acme", domain: domain() });
   requests.update(holder.id, () => ({ state: "blocked", question: "?" }));
@@ -105,6 +124,10 @@ test("while a request runs, the worker keeps its context signed in", async () =>
   touched.length = 0;
   requests.file({ kind: "intake", text: "b", context: "acme", domain: domain() });
   await runWorker(t.home, ROOT, { pollMs: 20, awf: AWF, maxRunning: 2, keepSignedIn });
+  expect(touched).toEqual([]);
+  // Nor does one whose interval was turned off with 0.
+  requests.file({ kind: "intake", text: "c", context: "acme", domain: domain() });
+  await runWorker(t.home, ROOT, { pollMs: 20, awf: AWF, maxRunning: 2, signInEveryMs: 0, keepSignedIn });
   expect(touched).toEqual([]);
 });
 

@@ -321,6 +321,8 @@ const cancelRequest = async (env: Env, args: ParsedArgs): Promise<Outcome> => {
   refuseInWorktree(env);
   const cancelled = env.requests.cancel(record.id, args.positionals[1] ?? "cancelled");
   await stopRun(cancelled);
+  // A request waiting on this one's op lock can start now.
+  startWorker(env);
   return ok(`${cancelled.id} cancelled`, [{ hint: "take it up again", cmd: `${env.domain.name} request:retry ${cancelled.id}` }]);
 };
 
@@ -521,6 +523,8 @@ const waitSeconds = (global: Record<string, string | boolean>): number | undefin
 };
 
 const seconds = (raw: string | boolean): number => {
+  // A bare --timeout parses as true, which Number makes 1.
+  if (typeof raw !== "string") throw new InputError("--timeout needs a number of seconds");
   const value = Number(raw);
   return Number.isFinite(value) && value > 0
     ? value

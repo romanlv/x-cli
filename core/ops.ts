@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { Page } from "playwright";
 import type { Static, TObject, TSchema } from "typebox";
 import Value from "typebox/value";
-import { type OpenBrowser, openSignedIn } from "./browser";
+import { type OpenBrowser, openSignedIn, signedInContext, signInStateOf } from "./browser";
 import { type Context, type ContextRef, type Contexts, loginHint } from "./contexts";
 import { type DirectContext, type FellBack, tryDirect } from "./direct";
 import type { Domain } from "./domain";
@@ -280,7 +280,8 @@ export const runOp = async (
     return { ok: true, data: entry.definition.format ? entry.definition.format(output as never) : output };
   };
 
-  const direct = browser ? {} : await tryDirect(env, entry, input, ctx, attempt(entry, ctx, started, dryRun), check);
+  const directRun = attempt(entry, ctx, started, dryRun);
+  const direct = browser ? {} : await tryDirect(env, entry, input, ctx, directRun, check);
   if ("outcome" in direct) return direct.outcome;
   const { fellBack } = direct;
 
@@ -302,7 +303,8 @@ export const runOp = async (
     }
     if (!env.fileRepairs) {
       await open.close();
-      run.history({ ok: false, step: fellBack.step, error: firstLine(fellBack.error.message), direct: true });
+      // Through the direct attempt, so the line has its steps' times.
+      directRun.history({ ok: false, step: fellBack.step, error: firstLine(fellBack.error.message), direct: true });
       return fail(`${entry.name}: ${fellBack.error.message}`, EXIT.ERROR);
     }
     progress(`› ${firstLine(fellBack.error.message)}; in the browser`);
@@ -360,13 +362,13 @@ const triage = async (env: RunEnv, ctx: Context, open: OpenBrowser, err: unknown
   if (refused) return fail(`${domain.name} refused it: ${refused}`, EXIT.REFUSED);
   // Did the session end under the op? Asked of a fresh page at the app's home, in a context of its
   // own, since the failed page may be anything: an error screen, a dialog, a page without the header.
-  const fresh = await open.browser.newContext({ storageState: ctx.authFile }).catch(() => undefined);
+  const fresh = await signedInContext(open.browser, domain, ctx).catch(() => undefined);
   if (fresh) {
     const state = await fresh
       .newPage()
       .then(async (p) => {
         await p.goto(ctx.appUrl, { waitUntil: "domcontentloaded" });
-        return domain.signInState(p, ctx.appUrl);
+        return signInStateOf(domain, p, ctx.appUrl);
       })
       .catch(() => "unknown" as const);
     await fresh.close().catch(() => {});

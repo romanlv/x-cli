@@ -59,9 +59,10 @@ export interface Domain<Helpers = unknown> {
   /** The helper library ops get as `app`. */
   helpers(page: Page, options: { contextUrl: string; dryRun: boolean }): Helpers;
   /**
-   * Is the page signed in as this context? Called on a page that has loaded the context's
-   * URL. `elsewhere` means signed in, but as another account or tenant than the URL names; `unknown` that the
-   * page showed neither a signed-in page nor a sign-in, such as one still loading.
+   * Is the page signed in as this context? One look at a page that has loaded the context's URL;
+   * core waits, asking again while the answer is `unknown`, up to XCLI_SIGNIN_WAIT_MS. `elsewhere`
+   * means signed in, but as another account or tenant than the URL names; `unknown` that the page
+   * shows neither a signed-in page nor a sign-in yet, such as one still loading.
    */
   signInState(page: Page, contextUrl: string): Promise<SignInState>;
   /**

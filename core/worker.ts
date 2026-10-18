@@ -54,11 +54,14 @@ const pick = (queue: RequestRecord[], slots: number, intaking: boolean): Request
   return picked;
 };
 
-const settle = (requests: Requests, home: string, id: string, exitCode: number | null): void => {
+/** `startedAt` is the attempt's start, in ms; for a run an earlier worker started, the ledger's. */
+const settle = (requests: Requests, home: string, id: string, exitCode: number | null, startedAt?: number): void => {
   const request = requests.get(id);
   // The workflow records how its run ended; only a run that died without saying so is settled here.
   if (request?.state !== "building") return;
-  const why = runOutput(home, id)?.reason ?? (exitCode === null ? "the run was killed" : `awf exited ${exitCode}`);
+  const since = startedAt ?? Date.parse(requests.ledger(id).findLast((e) => e.event === "started")?.at ?? "");
+  // A run killed before its attempt ended has the attempt before's output still, not its own.
+  const why = runOutput(home, id, since || 0)?.reason ?? (exitCode === null ? "the run was killed" : `awf exited ${exitCode}`);
   requests.update(id, () => ({ state: "failed", reason: `the run ended without a result: ${why}`, pid: undefined }));
 };
 
@@ -96,6 +99,7 @@ export const runWorker = async (
     const args = awfArgs(home, root, request, runTimeout);
     // Recorded before awf starts, so nothing the run records itself (its stage, its end) is
     // overwritten. A redo keeps saying so until its first stage starts; its old stage goes meanwhile.
+    const startedAt = Date.now();
     const started = requests.update(
       request.id,
       (r) => ({
@@ -116,7 +120,12 @@ export const runWorker = async (
         env: awfEnv(home, root),
         onExit: (_, code) => {
           running.delete(request.id);
-          settle(requests, home, request.id, code);
+          settle(requests, home, request.id, code, startedAt);
+          // A run that blocked or waits on a lock ends with its pid still on the request, where a
+          // process that reuses it later would pass for this run, to the queue and to a cancel.
+          if (requests.get(request.id)?.pid === child.pid) {
+            requests.update(request.id, (r) => (r.pid === child.pid ? { pid: undefined } : {}), "exited", { evenIfCancelled: true });
+          }
         },
       });
     } catch (err) {
@@ -133,7 +142,7 @@ export const runWorker = async (
     all
       .filter((r) => r.state === "received")
       .reverse()
-      // A request that blocked or waits on a lock keeps the pid of the awf that is still closing its agents.
+      // A request that blocked or waits on a lock keeps the pid of its awf until that has closed its agents and exited.
       .filter((r) => !running.has(r.id) && !alive(r.pid) && ready(all, r))
       // A run that completed (deferred, flaky) takes another attempt only to redo a stage: from the first.
       .map((r) => (!r.redo && runOutput(home, r.id)?.outcome === "completed" ? { ...r, redo: true } : r));
@@ -148,7 +157,7 @@ export const runWorker = async (
     if (!keepSignedIn || signingIn) return;
     const contexts = new Set<string>();
     const building = all.filter((r) => r.state === "building");
-    if (signInEveryMs !== undefined && building.length > 0 && Date.now() - touchedAt >= signInEveryMs) {
+    if (signInEveryMs && building.length > 0 && Date.now() - touchedAt >= signInEveryMs) {
       touchedAt = Date.now();
       for (const r of building) contexts.add(r.context);
     }
