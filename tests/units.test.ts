@@ -66,7 +66,7 @@ describe("parseArgs", () => {
     }
   });
 
-  test("no whole number of runs at once is bad input to the call that would start the worker, and to the worker", async () => {
+  test("no whole number of runs at once is bad input to the call that would start the worker, before it acts, and to the worker", async () => {
     const t = tempHome();
     try {
       await cli(t.home, ["context:add", "acme", "--url", "https://example.com"]);
@@ -75,6 +75,8 @@ describe("parseArgs", () => {
         expect(filing.code).toBe(2);
         expect(filing.stderr).toContain("must be a whole number, 1 or more");
       }
+      // Refused before it acted: nothing was filed.
+      expect((await cli(t.home, ["requests", "--json"])).json!.data).toEqual([]);
       const worker = await cli(t.home, ["request:worker"], { [envName("MAX_RUNNING")]: "0" });
       expect(worker.code).toBe(2);
       expect(worker.stderr).toContain("must be a whole number, 1 or more");

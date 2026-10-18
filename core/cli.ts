@@ -246,6 +246,8 @@ const addContext = (env: Env, args: ParsedArgs): Outcome => {
 const login = async (env: Env, args: ParsedArgs): Promise<Outcome> => {
   const cli = env.domain.name;
   const ctx = env.contexts.resolve(args.positionals[0] ?? contextFlag(args));
+  // Signing in continues the requests blocked on it, which starts the worker.
+  checkRunsAtOnce(env);
   const timeoutMs = args.global.timeout === undefined ? undefined : seconds(args.global.timeout) * 1000;
   // Only a domain that can submit its sign-in form takes a username and password.
   const saved = env.domain.submitSignIn ? savedCredentials(env.domain.root, ctx.name) : undefined;
@@ -274,6 +276,7 @@ const fileRequest = (env: Env, args: ParsedArgs): Promise<Outcome> => {
   const ctx = env.contexts.resolve(contextFlag(args));
   const wait = waitSeconds(args.global);
   refuseInWorktree(env);
+  checkRunsAtOnce(env);
   const filed = env.requests.file({ kind: "intake", text, context: ctx.name, domain: domainRef(env.domain) });
   return filedOutcome(env, filed, wait);
 };
@@ -295,14 +298,16 @@ const listRequests = (env: Env, args: ParsedArgs): Outcome => {
 
 const requestStatus = (env: Env, args: ParsedArgs): Promise<Outcome> | Outcome => {
   const record = getRequest(env, args.positionals[0]);
-  // Waiting here follows the request; only the call that filed it runs again once it is done.
-  if (args.global.wait) return waitFor(env, record.id, waitSeconds(args.global)!);
-  return statusOutcome(env, record);
+  if (!args.global.wait) return statusOutcome(env, record);
+  // Waiting here follows the request, starting a worker that died; only the call that filed it runs again once it is done.
+  checkRunsAtOnce(env);
+  return waitFor(env, record.id, waitSeconds(args.global)!);
 };
 
 const answerRequest = (env: Env, args: ParsedArgs): Outcome => {
   const record = getRequest(env, args.positionals[0]);
   refuseInWorktree(env);
+  checkRunsAtOnce(env);
   const answered = env.requests.answer(record.id, need(args.positionals[1], "the answer, in quotes"));
   startWorker(env);
   return ok(`${answered.id} answered; its run continues`, [checkOnIt(env, answered.id)]);
@@ -311,6 +316,7 @@ const answerRequest = (env: Env, args: ParsedArgs): Outcome => {
 const retryRequest = (env: Env, args: ParsedArgs): Outcome => {
   const record = getRequest(env, args.positionals[0]);
   refuseInWorktree(env);
+  checkRunsAtOnce(env);
   const retried = env.requests.retry(record.id);
   startWorker(env);
   return ok(`${retried.id} is back in the queue`, [checkOnIt(env, retried.id)]);
@@ -319,6 +325,7 @@ const retryRequest = (env: Env, args: ParsedArgs): Outcome => {
 const cancelRequest = async (env: Env, args: ParsedArgs): Promise<Outcome> => {
   const record = getRequest(env, args.positionals[0]);
   refuseInWorktree(env);
+  checkRunsAtOnce(env);
   const cancelled = env.requests.cancel(record.id, args.positionals[1] ?? "cancelled");
   await stopRun(cancelled);
   // A request waiting on this one's op lock can start now.
@@ -458,6 +465,8 @@ const callOp = async (env: Env, name: string, rest: string[]): Promise<Outcome> 
   // `--request` alone asks for the build or the change; `--request "…"` adds comments to it.
   const asked = args.global.request !== undefined;
   const comments = typeof args.global.request === "string" ? args.global.request : undefined;
+  // Filing a request, or a repair the run may file, starts the worker.
+  if (!args.global.help && (asked || (entry && env.fileRepairs))) checkRunsAtOnce(env);
 
   if (!entry) {
     const failedLoad = broken.find((b) => b.dir === opFolder(name));
@@ -523,12 +532,18 @@ const refuseInWorktree = (env: Env, what = "requests are filed"): void => {
   if (env.worktree) throw new InputError(`${what} from the main checkout, not from the worktree ${env.domain.root}`);
 };
 
+/** Every command that may start the worker calls `checkRunsAtOnce` before it acts. */
 const startWorker = (env: Env): void => {
-  if (env.worktree) return;
-  // Checked here too, so the caller hears of it rather than only a detached worker's log, and a
-  // --wait doesn't start a worker that fails on every poll.
-  maxRunningOf(env.domain);
-  ensureWorker(env.domain.home, env.entry);
+  if (!env.worktree) ensureWorker(env.domain.home, env.entry);
+};
+
+/**
+ * Runs at once, checked before a command that may start the worker files, signs in or changes
+ * anything: the caller hears of a bad setting rather than only a detached worker's log, and hears
+ * of it before the command acted, not after.
+ */
+const checkRunsAtOnce = (env: Env): void => {
+  if (!env.worktree) maxRunningOf(env.domain);
 };
 
 /** `--wait [--timeout <seconds>]`, checked before anything is filed; undefined without --wait. */
