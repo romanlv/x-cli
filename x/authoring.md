@@ -105,8 +105,9 @@ X limits each account, not each op, and a locked account stops every op. So:
 - One page at a time per account: no parallel calls, no parallel pages.
 - Scroll and fetch at a person's pace (the helpers' `posts` already does); never tighten it.
 - A rate limit is `RefusedError`, with when it resets when X says so. Never retry in a loop.
-  `app.graphql` does this for X's error codes 88 (rate limited) and 326 (locked); code 88 while the
-  call's budget has calls left is worded as a limited or locked account, for the person to check.
+  `app.graphql` does this for a 429, X's error codes 88 (rate limited) and 326 (locked); a 429 or
+  code 88 while the call's budget has calls left is worded as a limited or locked account, for the
+  person to check.
 - `app.timeline` and `app.posts` read X's budget (`x-rate-limit-remaining` of `-limit`) on every
   GraphQL response the page receives and stop at a tenth of it with what they have read and `more`
   (`RefusedError` if they have read nothing); a rate limit or a lock in one is `RefusedError`, the

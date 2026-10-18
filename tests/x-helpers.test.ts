@@ -243,18 +243,21 @@ describe("x helpers: reading the page", () => {
   describe("X's GraphQL answers", () => {
     let json: unknown;
     let budget: Record<string, string> = {};
+    let status = 200;
     beforeAll(() =>
       page.route("https://x.com/i/api/graphql/**", (route) =>
         route.fulfill({
+          status,
           json,
           headers: { "access-control-allow-origin": "*", "x-rate-limit-reset": "1800000000", ...budget },
         }),
       ),
     );
     afterAll(() => page.unroute("https://x.com/i/api/graphql/**"));
-    const serve = async (body: unknown, headers: Record<string, string> = {}) => {
+    const serve = async (body: unknown, headers: Record<string, string> = {}, code = 200) => {
       json = body;
       budget = headers;
+      status = code;
       await page.setContent("<main></main>");
     };
     const fetchTweets = () =>
@@ -296,11 +299,11 @@ describe("x helpers: reading the page", () => {
       await expect(xHelpers(page).timeline("UserTweets", fetchTweets)).rejects.toThrow(/down to 40 of 500.*resets at 2027-01-15/);
     });
 
-    test("timeline: code 88 with budget left is the account, with none left a rate limit", async () => {
+    test("timeline: a 429 with code 88 and budget left is the account, with none left a rate limit", async () => {
       const limited = { errors: [{ code: 88, message: "Rate limit exceeded" }] };
-      await serve(limited, { "x-rate-limit-limit": "500", "x-rate-limit-remaining": "300" });
+      await serve(limited, { "x-rate-limit-limit": "500", "x-rate-limit-remaining": "300" }, 429);
       await expect(xHelpers(page).timeline("UserTweets", fetchTweets)).rejects.toThrow(/account looks limited or locked/);
-      await serve(limited, { "x-rate-limit-limit": "500", "x-rate-limit-remaining": "0" });
+      await serve(limited, { "x-rate-limit-limit": "500", "x-rate-limit-remaining": "0" }, 429);
       await expect(xHelpers(page).timeline("UserTweets", fetchTweets)).rejects.toThrow(/rate limited \(UserTweets, code 88\); it resets/);
     });
 
@@ -308,6 +311,7 @@ describe("x helpers: reading the page", () => {
     const late = async (html: string, body: unknown, headers: Record<string, string>) => {
       json = body;
       budget = headers;
+      status = 200;
       await page.setContent(
         `<script>setTimeout(() => fetch("https://x.com/i/api/graphql/q1/UserTweets?variables=%7B%7D").then((r) => r.text()).then(() => setTimeout(() => { document.body.innerHTML = ${JSON.stringify(html)}; }, 200)), 300);</script>`,
       );

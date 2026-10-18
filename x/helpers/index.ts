@@ -278,15 +278,17 @@ const callOf = (operation: string) => new RegExp(`/i/api/graphql/[^/]+/${operati
  */
 const limitsOf = async (operation: string, response: Response): Promise<{ body: unknown; low?: string }> => {
   const headers = response.headers();
-  if (response.status() === 429) throw new RefusedError(`X rate limited ${operation}${resetAt(headers)}`);
+  // A 429 may be HTML (bot-detection.md, 1.2): no body then, but the status still says rate limited.
   const body = (await response.json().catch(() => undefined)) as { errors?: { code?: number; message?: string }[] } | undefined;
   const code = body?.errors?.map((e) => e.code).find((c) => c !== undefined && c in ACCOUNT_ERRORS);
   const budget = budgetOf(headers);
+  const rated = code === 88 ? "code 88" : response.status() === 429 && code === undefined ? "status 429" : undefined;
   // Rate limited with budget left is X limiting the account, not the call (bot-detection.md, recommendation 5).
-  if (code === 88 && budget && budget.remaining > 0)
+  if (rated && budget && budget.remaining > 0)
     throw new RefusedError(
-      `X: the account looks limited or locked: ${operation} was refused as rate limited (code 88) with ${budget.remaining} of ${budget.limit} calls left. Check the account by hand in the browser before running more`,
+      `X: the account looks limited or locked: ${operation} was refused as rate limited (${rated}) with ${budget.remaining} of ${budget.limit} calls left. Check the account by hand in the browser before running more`,
     );
+  if (rated) throw new RefusedError(`X: rate limited (${operation}, ${rated})${resetAt(headers)}`);
   if (code !== undefined) throw new RefusedError(`X: ${ACCOUNT_ERRORS[code]} (${operation}, code ${code})${resetAt(headers)}`);
   const low =
     budget && budget.remaining <= budget.limit * LOW_BUDGET
