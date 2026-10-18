@@ -192,8 +192,8 @@ export const runWorker = async (
         return true;
       });
       if (done) return;
-      continue;
     }
+    // Even after a last look that found work: what can't start (no slot, a lock) must not be looked at in a spin.
     await Bun.sleep(pollMs);
   }
 };

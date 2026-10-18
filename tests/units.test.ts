@@ -8,6 +8,7 @@ import { launch } from "../core/browser";
 import { callOf, parseArgs } from "../core/cli";
 import { Contexts } from "../core/contexts";
 import type { Domain } from "../core/domain";
+import { envName, envOverride } from "../core/env";
 import { InputError, OpError } from "../core/errors";
 import { callArgv, loadOps, type OpEntry, opHelp, parseInput } from "../core/ops";
 import { formatDuration } from "../core/output";
@@ -17,6 +18,21 @@ import { lineText, requestLines } from "../core/watch";
 import { DEFAULTS, loadConfig } from "../core/workflows/config";
 import { renderPrompts } from "../core/workflows/prompts-doc";
 import { cli, tempHome } from "./helpers";
+
+describe("envOverride", () => {
+  const name = envName("KEEP_ALIVE_SIGN_IN_MS");
+  afterEach(() => delete process.env[name]);
+  test("changes a setting the domain makes, never turns on one it leaves unset, and 0 or not a number turns it off", () => {
+    expect(envOverride("KEEP_ALIVE_SIGN_IN_MS", 60_000)).toBe(60_000);
+    process.env[name] = "5000";
+    expect(envOverride("KEEP_ALIVE_SIGN_IN_MS", 60_000)).toBe(5000);
+    expect(envOverride("KEEP_ALIVE_SIGN_IN_MS", undefined)).toBeUndefined();
+    process.env[name] = "0";
+    expect(envOverride("KEEP_ALIVE_SIGN_IN_MS", 60_000)).toBeUndefined();
+    process.env[name] = "soon";
+    expect(envOverride("KEEP_ALIVE_SIGN_IN_MS", 60_000)).toBeUndefined();
+  });
+});
 
 describe("parseArgs", () => {
   test("splits global flags from the op's, and booleans from values", () => {
@@ -44,6 +60,19 @@ describe("parseArgs", () => {
       const bare = await cli(t.home, ["request", "the replies under a post", "--wait", "--timeout"]);
       expect(bare.code).toBe(2);
       expect(bare.stderr).toContain("--timeout needs a number of seconds");
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("a worker given no whole number of runs at once is bad input, not a worker that never starts one", async () => {
+    const t = tempHome();
+    try {
+      for (const runs of ["0", "-1", "two", "1.5"]) {
+        const worker = await cli(t.home, ["request:worker"], { [envName("MAX_RUNNING")]: runs });
+        expect(worker.code).toBe(2);
+        expect(worker.stderr).toContain("must be a whole number, 1 or more");
+      }
     } finally {
       t.cleanup();
     }

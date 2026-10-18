@@ -125,10 +125,6 @@ test("while a request runs, the worker keeps its context signed in", async () =>
   requests.file({ kind: "intake", text: "b", context: "acme", domain: domain() });
   await runWorker(t.home, ROOT, { pollMs: 20, awf: AWF, maxRunning: 2, keepSignedIn });
   expect(touched).toEqual([]);
-  // Nor does one whose interval was turned off with 0.
-  requests.file({ kind: "intake", text: "c", context: "acme", domain: domain() });
-  await runWorker(t.home, ROOT, { pollMs: 20, awf: AWF, maxRunning: 2, signInEveryMs: 0, keepSignedIn });
-  expect(touched).toEqual([]);
 });
 
 test("a request blocked on signing in gets one sign-in try from the worker", async () => {

@@ -326,10 +326,17 @@ const cancelRequest = async (env: Env, args: ParsedArgs): Promise<Outcome> => {
   return ok(`${cancelled.id} cancelled`, [{ hint: "take it up again", cmd: `${env.domain.name} request:retry ${cancelled.id}` }]);
 };
 
+/** Runs at once: the domain's, or the environment's. Not a whole number of one or more, nothing would run. */
+const maxRunningOf = (domain: Domain): number => {
+  const n = envNumber("MAX_RUNNING", domain.maxRunning ?? 2);
+  if (Number.isInteger(n) && n >= 1) return n;
+  throw new InputError(`runs at once (${envName("MAX_RUNNING")}, or the domain's maxRunning) must be a whole number, 1 or more, not ${n}`);
+};
+
 const work = async (env: Env): Promise<Outcome> => {
   const { domain, contexts } = env;
   await runWorker(domain.home, domain.root, {
-    maxRunning: envNumber("MAX_RUNNING", domain.maxRunning ?? 2),
+    maxRunning: maxRunningOf(domain),
     runTimeout: envValue("RUN_TIMEOUT"),
     signInEveryMs: envOverride("KEEP_ALIVE_SIGN_IN_MS", domain.keepAlive?.signInEveryMs),
     // Signed out, a person who left their sign-in in .env.<context> needn't come back for it.
