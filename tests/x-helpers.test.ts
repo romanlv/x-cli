@@ -84,6 +84,8 @@ describe("x helpers: reading the page", () => {
     page = await browser.newPage();
   });
   afterAll(() => browser.close());
+  /** An `open` for `posts`: the page shows `html`. */
+  const show = (html: string) => () => page.setContent(html);
 
   test("readPosts: posts, a repost, a quote, a tombstone, each a valid DOM entry", async () => {
     await page.setContent(timelineHtml);
@@ -154,26 +156,24 @@ describe("x helpers: reading the page", () => {
   });
 
   test("posts: the pinned post is kept and marked and never stops until; newest first (search's Latest) stops past a deleted until", async () => {
-    await page.setContent(profileHtml);
     const app = xHelpers(page);
     // 900 is older than until but pinned; 1008 was deleted, so 1007 is the first at or before it.
-    const read = await app.posts({ until: "1008", newestFirst: true });
+    const read = await app.posts(show(profileHtml), { until: "1008", newestFirst: true });
     expect(read).toEqual({ items: read.items, pinned: ["900"] });
     expect(read.items.map((e) => e.kind === "post" && e.id)).toEqual(["900", "1010", "1009"]);
     // until the pinned post itself does not stop at it either.
-    expect((await app.posts({ until: "900", scrolls: 0 })).items.length).toBe(4);
+    expect((await app.posts(show(profileHtml), { until: "900", scrolls: 0 })).items.length).toBe(4);
     // A read cut short by the scroll cap says there is more.
-    expect(await app.posts({ scrolls: 0 })).toMatchObject({ more: true, pinned: ["900"] });
+    expect(await app.posts(show(profileHtml), { scrolls: 0 })).toMatchObject({ more: true, pinned: ["900"] });
   });
 
   test("posts on a profile: a self-thread, oldest first, keeps its older 1/ and stops only at until, as the DOM isn't newest first there", async () => {
-    await page.setContent(selfThreadHtml);
     const app = xHelpers(page);
-    const read = await app.posts({ until: "1008" });
+    const read = await app.posts(show(selfThreadHtml), { until: "1008" });
     expect(read.items.map((e) => e.id)).toEqual(["1005", "1012", "1010"]);
     expect(read.more).toBeUndefined();
     // Read as newest first, 1/ would stop it before 2/: why ops on a profile's DOM don't pass newestFirst.
-    expect((await app.posts({ until: "1008", newestFirst: true })).items).toEqual([]);
+    expect((await app.posts(show(selfThreadHtml), { until: "1008", newestFirst: true })).items).toEqual([]);
   });
 
   test("readPosts: the quote's parts stay in the quote; one with no permalink is left out", async () => {
@@ -202,15 +202,14 @@ describe("x helpers: reading the page", () => {
   });
 
   test("posts: at most limit, stopping before the until post, never past limit", async () => {
-    await page.setContent(timelineHtml);
     const app = xHelpers(page);
-    expect(await app.posts({ limit: 2 })).toMatchObject({ items: [{ id: "1001" }, { kind: "repost" }], more: true });
-    const untilQuote = await app.posts({ until: "1003" });
+    expect(await app.posts(show(timelineHtml), { limit: 2 })).toMatchObject({ items: [{ id: "1001" }, { kind: "repost" }], more: true });
+    const untilQuote = await app.posts(show(timelineHtml), { until: "1003" });
     expect(untilQuote.items.length).toBe(2);
     expect(untilQuote.more).toBeUndefined();
     // until the reposted post's id stops at the repost too
-    expect((await app.posts({ until: "1900" })).items.map((e) => e.kind)).toEqual(["post"]);
-    expect((await app.posts({ limit: 1, until: "1006" })).items.length).toBe(1);
+    expect((await app.posts(show(timelineHtml), { until: "1900" })).items.map((e) => e.kind)).toEqual(["post"]);
+    expect((await app.posts(show(timelineHtml), { limit: 1, until: "1006" })).items.length).toBe(1);
   });
 
   test("timeline: the GraphQL the page fetched, mapped and bounded; a rate limit is refused", async () => {
@@ -307,34 +306,30 @@ describe("x helpers: reading the page", () => {
       await expect(xHelpers(page).timeline("UserTweets", fetchTweets)).rejects.toThrow(/rate limited \(UserTweets, code 88\); it resets/);
     });
 
-    /** A page that draws `html` once the timeline call it sends is answered with `body`, as X's does. */
-    const late = async (html: string, body: unknown, headers: Record<string, string>) => {
-      json = body;
-      budget = headers;
-      status = 200;
-      await page.setContent(
-        `<script>setTimeout(() => fetch("https://x.com/i/api/graphql/q1/UserTweets?variables=%7B%7D").then((r) => r.text()).then(() => setTimeout(() => { document.body.innerHTML = ${JSON.stringify(html)}; }, 200)), 300);</script>`,
-      );
+    /** An `open` that shows `html` and makes the timeline call that loads its first page, as X's does. */
+    const loading = (html: string) => async () => {
+      await page.setContent(html);
+      await fetchTweets();
     };
 
-    test("posts: X's budget at a tenth on a call the page made stops it with what it read, and more", async () => {
-      await late(profileHtml, userTweets, low);
+    test("posts: X's budget at a tenth on the call that loaded the page stops it with what it read, and more", async () => {
+      await serve(userTweets, low);
       // Without the budget it would scroll on.
-      expect(await xHelpers(page).posts({ scrolls: 3 })).toMatchObject({ items: { length: 4 }, more: true });
+      expect(await xHelpers(page).posts(loading(profileHtml), { scrolls: 3 })).toMatchObject({ items: { length: 4 }, more: true });
     });
 
     test("posts: X's budget at a tenth with nothing read is a refusal", async () => {
-      await late(`<main data-testid="primaryColumn"><div data-testid="emptyState">Nothing yet</div></main>`, userTweets, low);
-      await expect(xHelpers(page).posts()).rejects.toThrow(/down to 40 of 500/);
+      await serve(userTweets, low);
+      const empty = `<main data-testid="primaryColumn"><div data-testid="emptyState">Nothing yet</div></main>`;
+      await expect(xHelpers(page).posts(loading(empty))).rejects.toThrow(/down to 40 of 500/);
     });
 
-    test("posts: code 88 on a call the page made, with budget left, is the account", async () => {
-      await late(
-        profileHtml,
+    test("posts: code 88 on the call that loaded the page, with budget left, is the account", async () => {
+      await serve(
         { errors: [{ code: 88, message: "Rate limit exceeded" }] },
         { "x-rate-limit-limit": "500", "x-rate-limit-remaining": "300" },
       );
-      await expect(xHelpers(page).posts()).rejects.toThrow(/account looks limited or locked/);
+      await expect(xHelpers(page).posts(loading(profileHtml))).rejects.toThrow(/account looks limited or locked/);
     });
   });
 

@@ -73,8 +73,10 @@ This is a sketch, not a built op: the first real one replaces it here.
   timeline's posts as the page and scrolling fetch them, `app.thread(id)` a post's TweetDetail,
   `app.user(handle)` its UserByScreenName. For any other call, `app.graphql` returns the raw JSON
   and `map/graphql.ts` maps it (`postsPage`, `usersPage`, `threadOf`, `userFromResult`,
-  `listFromResult`); an op never picks fields out of X's JSON itself. `app.posts` reads the same
-  timeline from the DOM, with handles but no account ids and rounded counts.
+  `listFromResult`); an op never picks fields out of X's JSON itself. `app.posts(open, { limit,
+  until })` reads the same timeline from the DOM, with handles but no account ids and rounded
+  counts. Both take `open` (`() => app.search(query)`, `() => app.profile(handle)`) so they hear
+  the call that loads the first page; an op never opens the page before calling them.
 - **`format` is `entryText`** for posts, so a person reads who, when, the text and the counts.
 - **The first op to use a mapper confirms it.** The mappers follow open-source clients, not this
   account's responses yet: the first op that uses one compares its output with what the page

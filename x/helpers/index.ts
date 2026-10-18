@@ -340,14 +340,15 @@ export const xHelpers = (page: Page) => {
     },
 
     /**
-     * The timeline on the page as the DOM shows it, scrolled and collected until `limit` entries or
-     * the `until` post, until scrolling brings nothing new a few times running, or after `scrolls`
-     * scrolls. Paced like a person reading, never faster. Scrolling makes the page fetch the timeline
-     * through GraphQL, so X's limits stop it as they stop `timeline`: a rate limit or a locked account
-     * is `RefusedError`, and a budget down to a tenth ends the read with `more`. `app.timeline` reads
-     * the same from GraphQL, with more in each entry.
+     * The timeline that `open` shows, as the DOM shows it, scrolled and collected until `limit`
+     * entries or the `until` post, until scrolling brings nothing new a few times running, or after
+     * `scrolls` scrolls. Paced like a person reading, never faster. Opening and scrolling make the page
+     * fetch the timeline through GraphQL, so X's limits stop it as they stop `timeline`, from the
+     * response that loaded the first page on: a rate limit or a locked account is `RefusedError`, and
+     * a budget down to a tenth ends the read with `more`. `app.timeline` reads the same from GraphQL,
+     * with more in each entry.
      */
-    async posts(bound: Bound = {}): Promise<XPage<Entry>> {
+    async posts(open: () => Promise<unknown>, bound: Bound = {}): Promise<XPage<Entry>> {
       const responses: Response[] = [];
       const listen = (r: Response) => {
         if (GRAPHQL.test(r.url())) responses.push(r);
@@ -355,6 +356,7 @@ export const xHelpers = (page: Page) => {
       page.on("response", listen);
       try {
         const read = gather(bound);
+        await open();
         await page
           .locator(`${SEL.post}, ${SEL.emptyState}`)
           .first()
