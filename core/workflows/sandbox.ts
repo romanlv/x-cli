@@ -6,6 +6,7 @@
 // resolving through a link to the checkout's would need the checkout readable. The browser stays on
 // the host, reached through one socket in that directory, since Chromium doesn't start under srt;
 // so do an op's direct calls.
+import { createHash } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { InlineSandboxSpec } from "agentswf/workflow";
@@ -31,8 +32,10 @@ export const shellEnv = (paths: SandboxPaths): Record<string, string> => ({
 
 /** `tmp` is /tmp by its real path; docs/prompts.md gives it as is, to read the same on every machine. */
 export const sandboxPaths = (request: RequestRecord, tmp = realpathSync("/tmp")): SandboxPaths => {
-  // Named for the CLI, cut short: a session's socket path goes under it.
-  const sockets = join(tmp, `${request.domain.name.slice(0, 8)}-${request.id}`);
+  // Named for the CLI, cut short as a session's socket path goes under it, and for its home: a test's
+  // R-0001, cleaned up, would otherwise remove the directory of a real R-0001 that is running.
+  const home = createHash("sha1").update(request.domain.home).digest("hex").slice(0, 6);
+  const sockets = join(tmp, `${request.domain.name.slice(0, 8)}-${request.id}-${home}`);
   return { home: join(request.domain.home, "sandboxes", request.id), sockets, browserSocket: join(sockets, "browser.sock") };
 };
 

@@ -542,10 +542,10 @@ A person answered questions this request asked earlier. Follow the answers, and 
 
 ## In a sandbox
 
-With the sandbox on, agents keep their CLI state in /repo/.state/sandboxes/R-0001 and reach the host's browser through a socket in /tmp/x-R-0001. Every prompt and instruction that names the CLI names it as:
+With the sandbox on, agents keep their CLI state in /repo/.state/sandboxes/R-0001 and reach the host's browser through a socket in /tmp/x-R-0001-940981. Every prompt and instruction that names the CLI names it as:
 
 ````text
-env XCLI_HOME=/repo/.state/sandboxes/R-0001 XCLI_NO_REPAIRS=1 XCLI_NO_WORKER=1 XCLI_CONTEXTS_DIR=/repo/.state/contexts XCLI_BROWSER=ws+unix:///tmp/x-R-0001/browser.sock:/browser TMPDIR=/tmp/x-R-0001 bun /repo/.state/worktrees/R-0001/x/main.ts
+env XCLI_HOME=/repo/.state/sandboxes/R-0001 XCLI_NO_REPAIRS=1 XCLI_NO_WORKER=1 XCLI_CONTEXTS_DIR=/repo/.state/contexts XCLI_BROWSER=ws+unix:///tmp/x-R-0001-940981/browser.sock:/browser TMPDIR=/tmp/x-R-0001-940981 bun /repo/.state/worktrees/R-0001/x/main.ts
 ````
 
 ### write
@@ -573,12 +573,12 @@ Write /repo/.state/worktrees/R-0001/x/ops/thing-find/op.ts from the trace and /r
 - If the op reads and notes.md has the calls behind it, give it a direct way beside `run`, as the direct-calls skill says, unless authoring.md rules it out.
 - Put inputs that work in context "acme" in /repo/.state/worktrees/R-0001/x/ops/thing-find/examples.json, as [{ "context": "acme", "input": { ... } }], with test data as authoring.md says: one for each case spec.md tells apart, at least one. Verify runs them all.
 
-Then try it as a caller would, `env XCLI_HOME=/repo/.state/sandboxes/R-0001 XCLI_NO_REPAIRS=1 XCLI_NO_WORKER=1 XCLI_CONTEXTS_DIR=/repo/.state/contexts XCLI_BROWSER=ws+unix:///tmp/x-R-0001/browser.sock:/browser TMPDIR=/tmp/x-R-0001 bun /repo/.state/worktrees/R-0001/x/main.ts thing:find ... --context acme`, and fix what doesn't hold, until all of it does:
+Then try it as a caller would, `env XCLI_HOME=/repo/.state/sandboxes/R-0001 XCLI_NO_REPAIRS=1 XCLI_NO_WORKER=1 XCLI_CONTEXTS_DIR=/repo/.state/contexts XCLI_BROWSER=ws+unix:///tmp/x-R-0001-940981/browser.sock:/browser TMPDIR=/tmp/x-R-0001-940981 bun /repo/.state/worktrees/R-0001/x/main.ts thing:find ... --context acme`, and fix what doesn't hold, until all of it does:
 - Each example: its output is what spec.md says, read from x: check it in the app, as spec.md says done looks like.
 - An op that saves: `--dry-run` first, then for real.
 - An op with a direct way: each example with `--browser` too, and the two outputs match.
 - A bad input, such as a value the app doesn't offer in this context: exit 2, with a message that says what is valid.
-- Run `env XCLI_BROWSER=ws+unix:///tmp/x-R-0001/browser.sock:/browser TMPDIR=/tmp/x-R-0001 bun run ci:sandbox`; `env XCLI_BROWSER=ws+unix:///tmp/x-R-0001/browser.sock:/browser TMPDIR=/tmp/x-R-0001 bun run lint:fix` formats and fixes what it safely can, and the full `ci:check` runs before approval. A helper you change must keep the repository's tests passing.
+- Run `env XCLI_BROWSER=ws+unix:///tmp/x-R-0001-940981/browser.sock:/browser TMPDIR=/tmp/x-R-0001-940981 bun run ci:sandbox`; `env XCLI_BROWSER=ws+unix:///tmp/x-R-0001-940981/browser.sock:/browser TMPDIR=/tmp/x-R-0001-940981 bun run lint:fix` formats and fixes what it safely can, and the full `ci:check` runs before approval. A helper you change must keep the repository's tests passing.
 - Answer done with what you ran and what it printed.
 ````
 
@@ -587,7 +587,7 @@ Then try it as a caller would, `env XCLI_HOME=/repo/.state/sandboxes/R-0001 XCLI
 A revise's problem when the repository's checks fail: the agent reruns what its sandbox can.
 
 ````text
-The repository's checks (`bun run ci:fast` in /repo/.state/worktrees/R-0001) failed; rerun them with `env XCLI_BROWSER=ws+unix:///tmp/x-R-0001/browser.sock:/browser TMPDIR=/tmp/x-R-0001 bun run ci:sandbox`, which leaves out the workflow and e2e tests: those can't run in your sandbox, so read their failures here:
+The repository's checks (`bun run ci:fast` in /repo/.state/worktrees/R-0001) failed; rerun them with `env XCLI_BROWSER=ws+unix:///tmp/x-R-0001-940981/browser.sock:/browser TMPDIR=/tmp/x-R-0001-940981 bun run ci:sandbox`, which leaves out the workflow and e2e tests: those can't run in your sandbox, so read their failures here:
 <output>
 x/ops/thing-find/op.ts:12: Code style issues found
 </output>

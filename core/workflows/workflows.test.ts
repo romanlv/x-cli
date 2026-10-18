@@ -317,7 +317,8 @@ test("workflows.json puts the team in one sandbox, on the models it names", asyn
   expect(box.spec.read).toContain(realpathSync(join(home, "shared")));
   expect(sandboxed).toEqual([`${home}/worktrees/${r.id}`]);
   // Their CLI keeps its state in the request's own home and reaches the host's browser by socket.
-  const sockets = join(realpathSync("/tmp"), `x-${r.id}`);
+  const { sockets } = sandboxPaths(r);
+  expect(sockets).toStartWith(join(realpathSync("/tmp"), `x-${r.id}-`));
   expect(run.agentOf("builder").instructions).toContain(
     `env ${P}HOME=${home}/sandboxes/${r.id} ${P}NO_REPAIRS=1 ${P}NO_WORKER=1 ${P}CONTEXTS_DIR=${home}/contexts ${P}BROWSER=ws+unix://${sockets}/browser.sock:/browser TMPDIR=${sockets} bun`,
   );
@@ -893,6 +894,12 @@ test("a repair that reproduces is patched, checked and merged", async () => {
   expect(patch!.prompt).toContain("goes through the step that failed");
   expect(run.value).toEqual({ state: "done", summary: "repaired thing:list (0 revision(s)): the Name label is now Title" });
   expect(git.calls).toContain(`squash ${r.id} repair thing:list`);
+});
+
+test("a request's socket directory is its CLI home's: a test's R-0001 never removes a real one's", () => {
+  const r = file();
+  const elsewhere = { ...r, domain: { ...r.domain, home: join(home, "other") } };
+  expect(sandboxPaths(elsewhere).sockets).not.toBe(sandboxPaths(r).sockets);
 });
 
 test("a sandboxed repair's agents read the op's failure bundles, those that join later included", () => {
