@@ -13,6 +13,7 @@ import { InputError, OpError } from "../core/errors";
 import { callArgv, loadOps, type OpEntry, opHelp, parseInput, runOp } from "../core/ops";
 import { EXIT, formatDuration } from "../core/output";
 import { Requests } from "../core/requests";
+import { pageCommandsOf } from "../core/session";
 import { formatSnapshot, type SnapshotNode, suggestLocator, takeSnapshot } from "../core/snapshot";
 import { lineText, requestLines } from "../core/watch";
 import { DEFAULTS, loadConfig } from "../core/workflows/config";
@@ -501,6 +502,12 @@ describe("snapshot", () => {
 test("docs/prompts.md is what prompts.ts writes now: `bun run docs:prompts` updates it", async () => {
   const root = join(import.meta.dir, "..");
   expect(await Bun.file(join(root, "docs/prompts.md")).text()).toBe(renderPrompts("x", "x", loadConfig(root)));
+});
+
+test("a domain whose ops make no calls of their own has no page:fetch to make one with", () => {
+  const domain = { name: "t", dir: "/t/t", root: "/t", home: "/t", helpers: () => ({}), signInState: async () => "signed-in" as const };
+  expect(Object.keys(pageCommandsOf(domain))).toContain("page:fetch");
+  expect(Object.keys(pageCommandsOf({ ...domain, directCalls: false }))).not.toContain("page:fetch");
 });
 
 describe("an op that fails", () => {

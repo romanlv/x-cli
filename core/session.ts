@@ -130,30 +130,36 @@ export const pageCommandsOf = (domain: Domain): Record<string, PageCommand> => (
     reads: true,
     async run(s, [which, body]) {
       if (which === undefined || which === "all") return formatNetwork(s.network, which ? Infinity : undefined);
-      const call = /^\d+$/.test(which) ? formatCall(s.network, Number(which), body === "body") : undefined;
+      const call = /^\d+$/.test(which) ? formatCall(s.network, Number(which), body === "body", domain.directCalls !== false) : undefined;
       if (call === undefined) throw new InputError(`no call ${which} kept; \`${domain.name} page:requests\` lists the numbered ones`);
       return call;
     },
   },
-  "page:fetch": {
-    usage:
-      "<url> [Name: value ...] [body]  make one call on the session's sign-in, as an op's direct way would; a body makes it a POST (a=b&c=d is a form, {...} JSON)",
-    reads: true,
-    async run(s, [url, ...rest]) {
-      const target = onSite(url, s.contextUrl);
-      const headers: Record<string, string> = {};
-      let data: string | undefined;
-      for (const arg of rest) {
-        const header = /^([\w-]+):\s*(.*)$/.exec(arg);
-        if (header) headers[header[1]!] = header[2]!;
-        else data = arg;
-      }
-      if (data !== undefined && !Object.keys(headers).some((k) => k.toLowerCase() === "content-type"))
-        headers["Content-Type"] = data.trimStart().startsWith("{") ? "application/json" : "application/x-www-form-urlencoded";
-      const res = await s.page.context().request.fetch(target.href, { method: data === undefined ? "GET" : "POST", headers, data });
-      return `${res.status()} ${res.headers()["content-type"] ?? "no content type"}\n\n${await res.text()}`;
-    },
-  },
+  // A call from Playwright's own HTTP client is what a domain whose app tells its calls apart
+  // (directCalls: false) must never make, so it has no page:fetch.
+  ...(domain.directCalls === false
+    ? {}
+    : {
+        "page:fetch": {
+          usage:
+            "<url> [Name: value ...] [body]  make one call on the session's sign-in, as an op's direct way would; a body makes it a POST (a=b&c=d is a form, {...} JSON)",
+          reads: true,
+          async run(s, [url, ...rest]) {
+            const target = onSite(url, s.contextUrl);
+            const headers: Record<string, string> = {};
+            let data: string | undefined;
+            for (const arg of rest) {
+              const header = /^([\w-]+):\s*(.*)$/.exec(arg);
+              if (header) headers[header[1]!] = header[2]!;
+              else data = arg;
+            }
+            if (data !== undefined && !Object.keys(headers).some((k) => k.toLowerCase() === "content-type"))
+              headers["Content-Type"] = data.trimStart().startsWith("{") ? "application/json" : "application/x-www-form-urlencoded";
+            const res = await s.page.context().request.fetch(target.href, { method: data === undefined ? "GET" : "POST", headers, data });
+            return `${res.status()} ${res.headers()["content-type"] ?? "no content type"}\n\n${await res.text()}`;
+          },
+        },
+      }),
   "page:trace": {
     usage: "the commands this session has run, with the locator each used",
     reads: true,

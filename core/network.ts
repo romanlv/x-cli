@@ -94,8 +94,11 @@ export const formatNetwork = (entries: NetworkEntry[], limit = 30): string => {
   return lines.join("\n") || "no calls yet";
 };
 
-/** `page:requests <n>`: one call whole, with its headers and bodies; `body` alone, the response as it came. */
-export const formatCall = (entries: NetworkEntry[], n: number, bodyOnly = false): string | undefined => {
+/**
+ * `page:requests <n>`: one call whole, with its headers and bodies; `body` alone, the response as it
+ * came. `refetch` when `page:fetch` is there to make a call again.
+ */
+export const formatCall = (entries: NetworkEntry[], n: number, bodyOnly = false, refetch = true): string | undefined => {
   const e = entries.find((x) => x.n === n);
   if (!e) return undefined;
   if (bodyOnly) return e.body;
@@ -105,6 +108,8 @@ export const formatCall = (entries: NetworkEntry[], n: number, bodyOnly = false)
     ...(e.headers ? ["", "request headers (cookies left out):", ...Object.entries(e.headers).map(([k, v]) => `${k}: ${v}`)] : []),
     ...(e.postData ? ["", "request body:", e.postData] : []),
     ...(e.body !== undefined ? ["", "response body:", e.body] : []),
-    ...(e.failed ? ["", `${e.failed}: the page ended it before its body was read; page:fetch the url with these headers for it`] : []),
+    ...(e.failed
+      ? ["", `${e.failed}: the page ended it before its body was read${refetch ? "; page:fetch the url with these headers for it" : ""}`]
+      : []),
   ].join("\n");
 };
