@@ -248,7 +248,7 @@ export const diagnose = (run: PromptRun, op: string, failure: Failure): string =
     The failure bundle is ${failure.bundle}: error.json (the inputs and the page URL), screenshot.png and snapshot.txt at the moment it failed, network.txt, and history.jsonl, the op's last runs, which show whether it ever worked.${joined}
 
     - Read ${opDir(run, op)}/op.ts, spec.md and notes.md.
-    - ${how} Where a step would save something, stop before it.
+    - ${how} Even on test data, stop before a step that would save.
     - Write what changed in ${opDir(run, op)}/notes.md (append).
     - Answer reproduced with the diagnosis, or flaky if it works every time you try, with what you tried.${answers(request)}
   `;

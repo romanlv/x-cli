@@ -222,7 +222,7 @@ timeout at read results
 The failure bundle is /repo/.state/failures/F-1: error.json (the inputs and the page URL), screenshot.png and snapshot.txt at the moment it failed, network.txt, and history.jsonl, the op's last runs, which show whether it ever worked.
 
 - Read /repo/.state/worktrees/R-0002/x/ops/thing-find/op.ts, spec.md and notes.md.
-- Reproduce the failure in your own browser session with the page commands, on the failed input where that changes nothing in the app (a read); where a step would change one of its records, on test data shaped like it, as authoring.md says, and find what changed: a label, a screen, a wait, an endpoint. Where a step would save something, stop before it.
+- Reproduce the failure in your own browser session with the page commands, on the failed input where that changes nothing in the app (a read); where a step would change one of its records, on test data shaped like it, as authoring.md says, and find what changed: a label, a screen, a wait, an endpoint. Even on test data, stop before a step that would save.
 - Write what changed in /repo/.state/worktrees/R-0002/x/ops/thing-find/notes.md (append).
 - Answer reproduced with the diagnosis, or flaky if it works every time you try, with what you tried.
 ````
