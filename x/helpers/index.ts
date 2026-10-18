@@ -130,7 +130,7 @@ const readCells = async (page: Page): Promise<Cell[]> =>
 export const readPosts = async (page: Page): Promise<Entry[]> => (await readCells(page)).map((c) => c.entry);
 
 /** Scrolls one call makes at most (bot-detection.md, recommendation 5). */
-export const MAX_SCROLLS = 10;
+const MAX_SCROLLS = 10;
 
 /** Where a read stops: at most `limit` entries, before the post `until`, after at most `scrolls` scrolls. */
 export interface Bound {
@@ -260,7 +260,7 @@ const LOW_BUDGET = 0.1;
 /** X's budget for a call, from the response's x-rate-limit-limit and -remaining. */
 const budgetOf = (headers: Record<string, string>) => {
   const limit = Number(headers["x-rate-limit-limit"]);
-  const remaining = Number(headers["x-rate-limit-remaining"] ?? Number.NaN);
+  const remaining = Number(headers["x-rate-limit-remaining"]);
   return limit > 0 && Number.isFinite(remaining) ? { limit, remaining } : undefined;
 };
 
@@ -291,7 +291,8 @@ const limitsOf = async (operation: string, response: Response): Promise<{ body: 
       `X: the account looks limited or locked: ${operation} was refused as rate limited (${rated}) with ${budget.remaining} of ${budget.limit} calls left. Check the account by hand in the browser before running more`,
     );
   if (rated) throw new RefusedError(`X: rate limited (${operation}, ${rated})${resetAt(headers)}`);
-  if (code !== undefined) throw new RefusedError(`X: ${ACCOUNT_ERRORS[code]} (${operation}, code ${code})${resetAt(headers)}`);
+  // Only 326 is left: a lock is the person's to clear, so no reset time.
+  if (code !== undefined) throw new RefusedError(`X: ${ACCOUNT_ERRORS[code]} (${operation}, code ${code})`);
   const low =
     budget && budget.remaining <= budget.limit * LOW_BUDGET
       ? `X's budget for ${operation} is down to ${budget.remaining} of ${budget.limit}; stopping before it runs out${resetAt(headers)}`
@@ -327,9 +328,9 @@ export const xHelpers = (page: Page) => {
 
     /** A profile, by handle; a handle that isn't there is a precondition, not the op's fault. */
     async profile(handle: string): Promise<void> {
-      const clean = handle.replace(/^@/, "");
-      if (!HANDLE.test(clean)) throw new InputError(`"${handle}" is not an X handle (letters, digits and _, at most 15)`);
-      await helpers.open(`/${clean}`);
+      const bare = handle.replace(/^@/, "");
+      if (!HANDLE.test(bare)) throw new InputError(`"${handle}" is not an X handle (letters, digits and _, at most 15)`);
+      await helpers.open(`/${bare}`);
       // The main column comes before either: wait for the profile or X's message, then decide.
       const missing = page.getByText(/this account doesn.t exist/i);
       await page
@@ -338,7 +339,7 @@ export const xHelpers = (page: Page) => {
         .first()
         .waitFor({ state: "visible", timeout: 20_000 })
         .catch(() => {});
-      if (await missing.isVisible().catch(() => false)) throw new PreconditionError(`no account @${clean}`);
+      if (await missing.isVisible().catch(() => false)) throw new PreconditionError(`no account @${bare}`);
     },
 
     /**
@@ -492,7 +493,7 @@ export const xHelpers = (page: Page) => {
         .locator(`${SEL.toast}, ${SEL.errorDetail}`)
         .allInnerTexts()
         .catch(() => [] as string[]);
-      return text.flatMap((t) => REFUSALS.filter((re) => re.test(t)).map((re) => t.match(re)![0]));
+      return text.filter((t) => REFUSALS.some((re) => re.test(t))).map((t) => t.trim());
     },
   };
   return helpers;

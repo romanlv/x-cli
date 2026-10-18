@@ -39,7 +39,7 @@ core/                       the reusable part: knows nothing of X
   instructions/             what core tells agents: prompts.ts (every prompt), authoring.md (any op)
 x/                          the domain
   domain.ts                 sign-in check, the account a context names, page:search, page:posts
-  helpers/                  Playwright moves every X page shares (open, search, profile, posts, graphql, errors)
+  helpers/                  Playwright moves every X page shares (open, search, profile, posts, timeline, thread, user, graphql, errors)
   knowledge/                x.md, bot-detection.md, contexts/<context>.md
   ops/<op>/                 one folder per op
   authoring.md              what is particular to X ops; read-only rules; names the reference op

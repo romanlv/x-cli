@@ -163,6 +163,7 @@ A user's counts are followers, following, posts, likes, media and listed. The ne
 | `TweetUnavailable` with `reason` (`Protected`, `NsfwLoggedOut`, …) | `Unavailable`, `reason` from the code, no `message` (the code is not X's sentence) **[confirmed: yt-dlp]** |
 | `TweetWithVisibilityResults { tweet, limitedActionResults }` | The inner post, with `limitedActions` (for example `["Reply"]`) **[confirmed: raw_list_timeline.json]** |
 | an empty `tweet_results` | `Unavailable`, reason `unknown`, id from the entry **[inferred]** |
+| a `TimelineTombstone` item with `tombstoneInfo.richText.text` | `Unavailable`, `reason` read from the sentence, `message` set to it **[inferred]** |
 | `UserUnavailable { reason, message }` | `UserUnavailable`; `Suspended` becomes `suspended` **[confirmed: the-convocation profile.ts]**, any other reason (`NoReason` in _issue_342_343.json) `unknown`. No source names a reason for a deactivated account, so the model has none. |
 | `withheld_in_countries` | `withheldIn` **[inferred: twikit user.py, v1.1 legacy field]** |
 
@@ -176,10 +177,11 @@ API v2 reports a missing referenced post as an `errors[]` entry next to `data` (
 (`authoring.md`), so an op can't resume a GraphQL cursor: scrolling sends the page's next request.
 A read is bounded by
 `limit`, or by a stopping id (`until`), and a later read resumes from an id. Post ids are
-time-ordered snowflakes. `cursor` holds X's Bottom cursor for the record, and for the API source,
-where it is the `next_token` an op can pass back.
+time-ordered snowflakes. `cursor` is X's Bottom cursor where one response is mapped (`postsPage`,
+`usersPage`), and for the API source the `next_token` an op can pass back; `app.timeline` and
+`app.posts` leave it out, since a cursor past a page cut at `limit` would skip what was cut.
 
-`more` is X's Bottom cursor, unless X said the timeline ends: a `TimelineTerminateTimeline` with
+`more` is true when X sent a Bottom cursor, unless X said the timeline ends: a `TimelineTerminateTimeline` with
 `direction: "Bottom"` **[confirmed in fixtures: raw_followers]**, or a page with cursors and no
 entries, which is how X ends a timeline that still sends a Bottom cursor **[confirmed: twscrape
 api.py comment; inferred that the cursor-only page is that end]**. A page whose entries were all

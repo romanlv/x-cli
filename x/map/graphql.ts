@@ -394,7 +394,7 @@ const postFrom = (r: Json, f: Json, id: string, author: UserRef, createdAt: stri
     if (q.kind === "post") {
       const { quoted: _nested, ...own } = q;
       quoted = own;
-    } else if (q.kind === "unavailable") quoted = { ...q, id: q.id ?? quotedId };
+    } else if (q.kind === "unavailable") quoted = clean({ ...q, id: q.id ?? quotedId });
   }
 
   const birdwatch = obj(r.birdwatch_pivot);

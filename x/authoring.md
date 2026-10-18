@@ -110,10 +110,10 @@ X limits each account, not each op, and a locked account stops every op. So:
   `app.graphql` does this for a 429, X's error codes 88 (rate limited) and 326 (locked); a 429 or
   code 88 while the call's budget has calls left is worded as a limited or locked account, for the
   person to check.
-- `app.timeline` and `app.posts` read X's budget (`x-rate-limit-remaining` of `-limit`) on every
-  GraphQL response the page receives and stop at a tenth of it with what they have read and `more`
-  (`RefusedError` if they have read nothing); a rate limit or a lock in one is `RefusedError`, the
-  same rules for both. `app.posts` also checks X's messages before it takes a timeline that stopped
+- `app.timeline` reads X's budget (`x-rate-limit-remaining` of `-limit`) on its operation's
+  responses, and `app.posts`, which can't tell which call is the timeline, on every GraphQL response
+  the page receives. Both stop at a tenth of it with what they have read and `more` (`RefusedError`
+  if they have read nothing); a rate limit or a lock in one is `RefusedError`. `app.posts` also checks X's messages before it takes a timeline that stopped
   growing as its end.
 - A challenge, a captcha or the login page mid-run is the person's to clear, by hand: stop, never
   try to get past it.
