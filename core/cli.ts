@@ -158,7 +158,7 @@ const dispatch = async (env: Env, argv: string[]): Promise<Outcome> => {
     return pageCommand(env.domain, env.entry, { session, context: ctx, headed: args.global.headed === true }, command, args.positionals);
   }
 
-  return fail(`unknown command "${command}"; ops are noun:verb, such as posts:search. See ${cli} help`, EXIT.USAGE);
+  return fail(`unknown command "${command}"; ops are <noun>:<verb>. See ${cli} help`, EXIT.USAGE);
 };
 
 interface Command {
@@ -269,7 +269,7 @@ const login = async (env: Env, args: ParsedArgs): Promise<Outcome> => {
 // ── Requests ──────────────────────────────────────────────────────────────────────────────────────
 
 const fileRequest = (env: Env, args: ParsedArgs): Promise<Outcome> => {
-  const text = need(args.positionals[0], `what you need, in quotes: ${env.domain.name} request "the replies under a post"`);
+  const text = need(args.positionals[0], `what you need, in quotes: ${env.domain.name} request "<what you need>"`);
   if (text.startsWith("-")) throw new InputError(`"${text}" looks like a flag, not a request; say what you need in quotes`);
   const ctx = env.contexts.resolve(contextFlag(args));
   const wait = waitSeconds(args.global);
