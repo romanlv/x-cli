@@ -352,8 +352,8 @@ const work = async (env: Env): Promise<Outcome> => {
     signInEveryMs: envOverride("KEEP_ALIVE_SIGN_IN_MS", domain.keepAlive?.signInEveryMs),
     keepSignedIn: domain.keepAlive ? signedIn : undefined,
     // Signed out, a person who left their sign-in in .env.<context> needn't come back for it; an app
-    // only a person signs in to gets no automated visit that can't help.
-    signInAgain: domain.submitSignIn ? signedIn : undefined,
+    // only a person signs in to, or a context with no .env.<context>, gets no automated visit that can't help.
+    signInAgain: domain.submitSignIn ? async (name) => !!savedCredentials(domain.root, name) && signedIn(name) : undefined,
   });
   return ok("worker done");
 };
