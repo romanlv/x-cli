@@ -41,7 +41,7 @@ const openHttp = async (ctx: Context): Promise<{ http: APIRequestContext; close(
  * Try the op's direct way. An outcome when it settled the call: done, or an OpError (bad input, a
  * refusal) that the browser way would meet too. Otherwise the op runs in the browser, after the
  * failure in `fellBack` if the direct way was tried. It isn't when the op has none, when its repair
- * failed (until that is retried), or with no saved sign-in to call on.
+ * failed (see brokenBy), or with no saved sign-in to call on.
  */
 export const tryDirect = async (
   env: RunEnv,

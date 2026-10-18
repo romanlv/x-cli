@@ -20,6 +20,10 @@ export const RETRYABLE: readonly RequestState[] = ["failed", "deferred", "cancel
 export const signInQuestion = (cli: string, context: string): string => `sign in again: ${cli} context:login ${context}`;
 export const isSignInQuestion = (question: string | undefined): boolean => !!question?.startsWith("sign in again: ");
 
+/** How a repair that couldn't reproduce its failure ends; such a repair found the op working. */
+export const flakyReason = (why: string): string => `flaky: ${why}`;
+const isFlaky = (r: RequestRecord): boolean => !!r.reason?.startsWith("flaky: ");
+
 /** Where the tool lives, so a workflow started for a request knows what to build and how to call it. */
 export type DomainRef = Pick<Domain, "name" | "root" | "dir" | "home">;
 
@@ -206,15 +210,15 @@ export class Requests {
   }
 
   /**
-   * A repair that ended failed and hasn't been retried, which marks the op broken; with `direct`,
-   * one of its direct way (filed when the op fell back to the browser), which the op then skips.
+   * A repair that ended failed, which marks the op broken until it is retried or a later request on
+   * the op is done; with `direct`, one of its direct way (filed when the op fell back to the browser),
+   * which the op then skips. A flaky repair never marks it.
    */
   brokenBy(op: string, direct = false): RequestRecord | undefined {
     const all = this.list({ op });
     const latest = all.find((r) => r.kind === "repair" && (r.failure?.fellBack === true) === direct);
-    // A repair that couldn't reproduce the failure found the op working; and a build, change or repair
-    // done on the op since may have fixed it, and verify ran it before it merged.
-    if (latest?.state !== "failed" || latest.reason?.startsWith("flaky:")) return undefined;
+    // A build, change or repair done on the op since may have fixed it: verify ran it before it merged.
+    if (latest?.state !== "failed" || isFlaky(latest)) return undefined;
     return all.some((r) => r.state === "done" && r.updatedAt >= latest.updatedAt) ? undefined : latest;
   }
 

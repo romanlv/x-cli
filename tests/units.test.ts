@@ -12,7 +12,7 @@ import { envName, envOverride } from "../core/env";
 import { InputError, OpError } from "../core/errors";
 import { callArgv, loadOps, type OpEntry, opHelp, parseInput, runOp } from "../core/ops";
 import { EXIT, formatDuration } from "../core/output";
-import { Requests } from "../core/requests";
+import { flakyReason, Requests } from "../core/requests";
 import { pageCommandsOf } from "../core/session";
 import { formatSnapshot, type SnapshotNode, suggestLocator, takeSnapshot } from "../core/snapshot";
 import { lineText, requestLines } from "../core/watch";
@@ -326,7 +326,7 @@ describe("request ledger", () => {
     requests.retry(r.id);
     expect(requests.brokenBy("x:y")).toBeUndefined();
     // One that couldn't reproduce the failure found the op working.
-    requests.update(r.id, () => ({ state: "failed", reason: "flaky: could not reproduce (works every time)" }));
+    requests.update(r.id, () => ({ state: "failed", reason: flakyReason("could not reproduce (works every time)") }));
     expect(requests.brokenBy("x:y")).toBeUndefined();
     // A change done on the op after its repair failed may have fixed it.
     requests.update(r.id, () => ({ state: "failed", reason: "the builder's rounds ran out" }));
@@ -564,7 +564,7 @@ test("a domain whose ops make no calls of their own has no page:fetch to make on
   expect(Object.keys(pageCommandsOf({ ...domain, directCalls: false }))).not.toContain("page:fetch");
 });
 
-describe("an op that fails", () => {
+describe("running an op", () => {
   let t: ReturnType<typeof tempHome>;
   let server: ReturnType<typeof Bun.serve>;
   beforeEach(() => {
@@ -578,7 +578,7 @@ describe("an op that fails", () => {
     t.cleanup();
   });
 
-  const run = async (fail: () => never) => {
+  const run = async (body: () => unknown, format?: (output: never) => string) => {
     const domain: Domain = {
       name: "t",
       dir: join(t.home, "t"),
@@ -599,13 +599,22 @@ describe("an op that fails", () => {
         ...entry().definition,
         run: async ({ page }) => {
           await page.getByRole("alert").waitFor();
-          fail();
+          return body();
         },
+        ...(format && { format }),
       },
     };
     const outcome = await runOp({ domain, contexts, requests, fileRepairs: true }, op, { query: "q", kind: "a" }, contexts.get("acme"));
     return { outcome, repairs: requests.list() };
   };
+
+  test("an op's format is its text; its data stays the output", async () => {
+    const { outcome } = await run(
+      () => ({ id: "7" }),
+      (o: { id: string }) => `thing ${o.id}`,
+    );
+    expect(outcome).toMatchObject({ ok: true, data: { id: "7" }, text: "thing 7" });
+  });
 
   test("the op's fault files a repair whose bundle has the page as the op left it", async () => {
     const { outcome, repairs } = await run(() => {

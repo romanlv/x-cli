@@ -281,7 +281,7 @@ The failure bundle sits in `.state/failures/<op>/<time>/`:
 2. **patch** — the builder makes the smallest change to `op.ts` or a helper that fixes it, adds an example through the failed step, and tries the op as a caller would, as in write.
 3. **verify, review, revise, merge** — as in the build workflow, with every example for the context re-run, so a fix for one case cannot break another.
 
-An op whose repair ended `failed` is marked `broken` in `x ops`, and calls to it exit 5 pointing at that request until it is retried.
+An op whose repair ended `failed` is marked `broken` in `x ops`, and calls to it exit 5 pointing at that request until it is retried, or a build, change or repair of the op is done since (verify ran it before it merged). A repair that ended flaky never marks it.
 
 ## When agents get stuck
 

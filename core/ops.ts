@@ -12,7 +12,7 @@ import type { Domain } from "./domain";
 import { DryRunReached, InputError, isBrowserFailure, OpError, outcomeOf } from "./errors";
 import { isCliNoun, kebab, OP_NAME, opFolder } from "./names";
 import { formatNetwork, type NetworkEntry } from "./network";
-import { commandLine, EXIT, fail, firstLine, type Outcome, plain, progress } from "./output";
+import { EXIT, fail, firstLine, type Outcome, plain, progress } from "./output";
 import type { DomainRef, Requests } from "./requests";
 import { formatSnapshot, takeSnapshot } from "./snapshot";
 import { appendJsonLine, readJsonLines, timestamp, writeJson } from "./store";

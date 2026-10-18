@@ -925,6 +925,7 @@ test("a repair that can't be reproduced ends failed as flaky, freeing the op", a
   );
   expect(run.value.state).toBe("failed");
   expect(requests.get(r.id)!.reason).toContain("flaky");
+  expect(requests.brokenBy("thing:list")).toBeUndefined();
   expect(requests.lockOp("thing:list", "R-9999")).toBeUndefined();
   expect(git.calls.at(-1)).toStartWith("remove");
 });

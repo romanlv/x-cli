@@ -10,6 +10,7 @@
 
 import { WORKFLOWS } from "../awf";
 import * as prompts from "../instructions/prompts";
+import { flakyReason } from "../requests";
 import { realDeps } from "./deps";
 import { ask, DIAGNOSIS, DONE, defineRequestWorkflow, LIMITS, land } from "./shared";
 
@@ -27,7 +28,8 @@ export const defineRepair = defineRequestWorkflow(
       async () => ask(run, await team.builder(), DIAGNOSIS, "diagnose", prompts.diagnose(run, op, failure), LIMITS.longTurnMs),
     );
     // Recorded on every attempt, so a continue over a reused diagnosis still ends the request.
-    if (diagnosed.kind === "flaky") return run.end("failed", `flaky: could not reproduce (${diagnosed.reason}); bundle ${failure.bundle}`);
+    if (diagnosed.kind === "flaky")
+      return run.end("failed", flakyReason(`could not reproduce (${diagnosed.reason}); bundle ${failure.bundle}`));
 
     const patched = await run.stage(
       "patch",
