@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import Type from "typebox";
 import { awfArgs, describeRun, formatCost, runUsage } from "../core/awf";
 import { launch } from "../core/browser";
@@ -10,8 +10,8 @@ import { Contexts } from "../core/contexts";
 import type { Domain } from "../core/domain";
 import { envName, envOverride } from "../core/env";
 import { InputError, OpError } from "../core/errors";
-import { callArgv, loadOps, type OpEntry, opHelp, parseInput } from "../core/ops";
-import { formatDuration } from "../core/output";
+import { callArgv, loadOps, type OpEntry, opHelp, parseInput, runOp } from "../core/ops";
+import { EXIT, formatDuration } from "../core/output";
 import { Requests } from "../core/requests";
 import { formatSnapshot, type SnapshotNode, suggestLocator, takeSnapshot } from "../core/snapshot";
 import { lineText, requestLines } from "../core/watch";
@@ -501,6 +501,69 @@ describe("snapshot", () => {
 test("docs/prompts.md is what prompts.ts writes now: `bun run docs:prompts` updates it", async () => {
   const root = join(import.meta.dir, "..");
   expect(await Bun.file(join(root, "docs/prompts.md")).text()).toBe(renderPrompts("x", "x", loadConfig(root)));
+});
+
+describe("an op that fails", () => {
+  let t: ReturnType<typeof tempHome>;
+  let server: ReturnType<typeof Bun.serve>;
+  beforeEach(() => {
+    t = tempHome();
+    // A message that goes away: the bundle must show it as the op left the page.
+    const html = `<h1>Home</h1><script>setTimeout(() => document.body.insertAdjacentHTML("beforeend", "<div role=alert>Something broke</div>"), 50); setTimeout(() => document.querySelector("[role=alert]")?.remove(), 1500)</script>`;
+    server = Bun.serve({ port: 0, fetch: () => new Response(html, { headers: { "content-type": "text/html" } }) });
+  });
+  afterEach(() => {
+    server.stop(true);
+    t.cleanup();
+  });
+
+  const run = async (fail: () => never) => {
+    const domain: Domain = {
+      name: "t",
+      dir: join(t.home, "t"),
+      root: t.home,
+      home: t.home,
+      helpers: () => ({}),
+      signInState: async (page) => ((await page.getByRole("heading").count()) ? "signed-in" : "unknown"),
+    };
+    const contexts = new Contexts(t.home, "t");
+    const ctx = contexts.add("acme", server.url.href);
+    mkdirSync(dirname(ctx.authFile), { recursive: true });
+    writeFileSync(ctx.authFile, JSON.stringify({ cookies: [], origins: [] }));
+    const requests = new Requests(t.home);
+    const op: OpEntry = {
+      ...entry(),
+      dir: join(t.home, "op"),
+      definition: {
+        ...entry().definition,
+        run: async ({ page }) => {
+          await page.getByRole("alert").waitFor();
+          fail();
+        },
+      },
+    };
+    const outcome = await runOp({ domain, contexts, requests, fileRepairs: true }, op, { query: "q", kind: "a" }, contexts.get("acme"));
+    return { outcome, repairs: requests.list() };
+  };
+
+  test("the op's fault files a repair whose bundle has the page as the op left it", async () => {
+    const { outcome, repairs } = await run(() => {
+      throw new Error("no results list");
+    });
+    expect(outcome.exitCode).toBe(EXIT.PENDING);
+    const bundle = repairs[0]!.failure!.bundle;
+    expect(existsSync(join(bundle, "screenshot.png"))).toBe(true);
+    expect(readFileSync(join(bundle, "snapshot.txt"), "utf8")).toContain('alert "Something broke"');
+  });
+
+  test("an error the op raises on purpose files nothing", async () => {
+    const { outcome, repairs } = await run(() => {
+      throw new OpError("no such account", EXIT.PRECONDITION);
+    });
+    expect(outcome).toMatchObject({ ok: false, exitCode: EXIT.PRECONDITION });
+    expect(repairs).toEqual([]);
+    expect(existsSync(join(t.home, "failures"))).toBe(false);
+  });
 });
 
 describe("loading ops", () => {

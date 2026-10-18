@@ -325,10 +325,18 @@ export const runOp = async (
       run.history({ ok: true, step: run.at });
       return { ok: true, data: { dryRun: `stopped before ${err.action}`, screenshot: shot } };
     }
-    // What the page showed when the op failed, taken before triage loads anything else.
+    const failed = (triaged?: Outcome) =>
+      run.history({ ok: false, step: run.at, error: firstLine((err as Error).message), ...(triaged ? { exit: triaged.exitCode } : {}) });
+    // An error the op raised on purpose, or a browser that failed, is someone else's without a look at the page.
+    const known = knownFailure(err);
+    if (known) {
+      failed(known);
+      return known;
+    }
+    // What the page showed when the op failed, taken before triage waits on a fresh page, while this one may change.
     const captured = await captureFailure(domain, open);
-    const triaged = await triage(env, ctx, open, err);
-    run.history({ ok: false, step: run.at, error: firstLine((err as Error).message), ...(triaged ? { exit: triaged.exitCode } : {}) });
+    const triaged = await triage(env, ctx, open);
+    failed(triaged);
     if (triaged) return triaged;
     const error = err instanceof Error ? err : new Error(String(err));
     error.message = plain(error.message);
@@ -352,12 +360,17 @@ const fileDirectRepair = (env: RunEnv, entry: OpEntry, input: Record<string, unk
   progress(`${entry.name} ran in the browser; ${record.id} repairs the direct way`);
 };
 
-/** Rules only: is this failure someone else's, and which exit says so? Undefined means the op's fault. */
-const triage = async (env: RunEnv, ctx: Context, open: OpenBrowser, err: unknown): Promise<Outcome | undefined> => {
-  const { domain } = env;
-  const { page } = open;
+/** Triage, by rules only: is this failure someone else's, and which exit says so? First from the error alone. */
+const knownFailure = (err: unknown): Outcome | undefined => {
   if (err instanceof OpError) return outcomeOf(err);
   if (isBrowserFailure(err)) return fail(`the browser failed: ${firstLine((err as Error).message)}`, EXIT.ERROR);
+  return undefined;
+};
+
+/** Then from the app: a refusal on the page, or a session that ended under the op. Undefined means the op's fault. */
+const triage = async (env: RunEnv, ctx: Context, open: OpenBrowser): Promise<Outcome | undefined> => {
+  const { domain } = env;
+  const { page } = open;
   const refused = domain.refusal && !page.isClosed() ? await domain.refusal(page).catch(() => undefined) : undefined;
   if (refused) return fail(`${domain.name} refused it: ${refused}`, EXIT.REFUSED);
   // Did the session end under the op? Asked of a fresh page at the app's home, in a context of its
