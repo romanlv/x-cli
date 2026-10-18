@@ -37,8 +37,8 @@ export default defineOp({
 - When `direct` throws, a browser opens. Its sign-in check runs first, so a sign-in that ended says
   "sign in again", as any op would. Signed in, the op runs `run` and files a repair of `direct`.
   If that repair fails, `direct` is skipped until it is retried.
-- `--browser` skips `direct`. In a worktree, or with `XCLI_NO_REPAIRS=1`, a failure of `direct`
-  fails the op. Verify runs every example both ways, so both must work.
+- `--browser` skips `direct`. In a worktree, or where repairs are off, a failure of `direct` fails
+  the op. Verify runs every example both ways, so both must work.
 - Throw `InputError`, `PreconditionError` or `RefusedError` from `direct` as from `run`; those
   don't fall back.
 - Name its steps with `step`, as in `run`: the op's `history.jsonl` (in its folder) keeps each
@@ -59,17 +59,17 @@ export default defineOp({
 1. **The browser first.** Do the task with the page commands until it works and you know what it
    shows. This is `run`, the fallback.
 2. **Find the calls.** `page:requests` lists the session's recent calls under the page command
-   that made them, the newest JSON and event-stream ones numbered. `page:requests <n>` prints one with its request
-   headers (cookies left out) and bodies; `page:requests <n> body` prints only its response, to
-   pipe into `jq`. Find the call whose response holds what the screen showed, and each call before
-   it that it needs a value from. The data usually comes from the action that asks for it (a
-   search, an OK), not from drawing the screen after: look at the calls under that command. A call
-   can start after its command returned and show under the next one. Only the newest bodies are
-   kept, so read one soon after its command. If no listed call holds the data, the page may get it
-   another way (a WebSocket, a call its script makes later): search the page's scripts for the
-   url. An earlier note saying there is no call to use may
-   come from a narrower look than this. Write each in the op's notes.md: method, URL, headers and body,
-   which values come from an earlier response, and the response's shape.
+   that made them, the newest JSON and event-stream ones numbered. `page:requests <n>` prints one
+   with its request headers (cookies left out) and bodies; `page:requests <n> body` prints only its
+   response, to pipe into `jq`. Find the call whose response holds what the screen showed, and each
+   call before it that it needs a value from. The data usually comes from the action that asks for
+   it (a search, an OK), not from drawing the screen after: look at the calls under that command. A
+   call can start after its command returned and show under the next one. Only the newest bodies
+   are kept, so read one soon after its command. If no listed call holds the data, the page may get
+   it another way (a WebSocket, a call its script makes later): search the page's scripts for the
+   url. An earlier note saying there is no call to use may come from a narrower look than this.
+   Write each in the op's notes.md: method, URL, headers and body, which values come from an
+   earlier response, and the response's shape.
    `page:fetch <url> [Name: value ...] [body]` makes a call on the session's sign-in, to try one
    with fewer headers or other values before writing it in the op.
 3. **Write `direct`, doing less than the browser had to.**
@@ -98,5 +98,5 @@ export default defineOp({
   script computes: no `direct`, and write in notes.md what you looked at, so the next build doesn't
   look again.
 - What holds for every call of the app (a header, where a token comes from, how URLs are built)
-  goes in the knowledge file's section on the app's calls; a move two ops make becomes a helper, a plain
-  function taking `http`.
+  goes in the knowledge file's section on the app's calls; a move two ops make becomes a helper, a
+  plain function taking `http`.
