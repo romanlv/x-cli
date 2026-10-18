@@ -96,3 +96,43 @@ a `─` rule between blocks, `no posts` for an empty page, and a closing `n post
 <first id>` when `more`. Plain text, no colour: the text is made in the worker and kept. Ran on `me`:
 `from:NASA --limit 5` (5 blocks, closing line), `--until` example, the 30-post links query (30
 blocks), the empty query result (`no posts`), a blank query (exit 2), `--json` still whole.
+
+## Change R-0010: how posts read as text (no new way in X)
+
+Only the shared text in `model.ts` changes (`entryText`, `pageText`, `rankedPageText`, `threadText`),
+for posts:search, home:posts, account:posts and post:thread together. The way in X stays search's
+Latest, read through `SearchTimeline`. Start page was the profile `/romitch`; checked 2026-10-18 on `me`.
+
+Ways to get a text a person or agent can act on, and what each gives:
+
+- **The search page itself** (Latest tab): what a person reads. Shows links as `nasa.gov/maxpower/`,
+  cuts a long link with `…` (`x.com/i/broadcasts/1…`), drops the media's own link, "1 reply" singular
+  in the buttons' aria-label ("1 Reply"), and a repost line "NASA reposted" with no time. It lacks
+  the time of a repost and any hint how to read on.
+- **`SearchTimeline` responses** (the op's source): `entities.urls` has `url` (t.co), `expanded_url`
+  and `display_url` per link, with code-point offsets into `full_text`; the media's own t.co is in
+  `entities.media`, not in `urls`, and sits last in the text. A quote's link is in `urls` with
+  `expanded_url` `x.com/<h>/status/<quoted id>`, also last. This serves the intent; the DOM text has
+  no t.co and no entities, so it is already right.
+- **Search's Top tab**: ranked, not in id order, so it would take only `--limit` in the hint; the op
+  reads Latest only, so `pageText` always names `--until`. Home takes only `--limit`.
+
+What the screen taught (live, `from:NASA filter:links --limit 4`, `post:thread`, `account:posts`,
+`home:posts`):
+
+- `display_url` can end in `…` (`x.com/i/broadcasts/1…`): then the expanded link, without `https://`,
+  is printed.
+- The trailing t.co that only points at the post's media is the one no `urls` entity names; a trailing
+  link to the quoted post is in `urls`, and is dropped too (the quote is shown under the post).
+- A repost's `createdAt` (else the time of its own id) is when it was reposted; the block under it
+  has when the original was posted. A DOM repost has neither, so the line has no time.
+- "more" hint: `--until` returns only posts newer than the id on a later read, so it never reads the
+  rest of this list: older posts need a higher `--limit`.
+- The focal post of `post:thread` prints as a list post, with quotes and bookmarks added to the counts
+  line, its text wrapped but not cut.
+- No JSON field was added: the text with links expanded is derived from `text` and `entities` by
+  `textWithLinks` in `model.ts`, so `--json` is as before.
+- A verify run of every op's examples back to back (2026-10-18) got a 429 on `Viewer` for posts:search
+  and post:thread, resetting at 18:21Z: exit 4 as it should be, not the op's fault. Rerun one at a
+  time after the reset, all four examples gave what the spec says, and the search page (Latest) had
+  the same posts in the same order, its links shown as the print shows them (`nasa.gov/maxpower/`).

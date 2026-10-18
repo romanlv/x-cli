@@ -24,6 +24,8 @@ import {
   type Repost,
   rankedPageText,
   Thread,
+  textWithLinks,
+  threadText,
   timeOfId,
   User,
   UserUnavailable,
@@ -346,10 +348,10 @@ describe("x model: helpers and writes", () => {
   test("text for a person: a repost and a quote", () => {
     const { items } = postsPage(userTweets);
     const text = pageText({ items, more: true });
-    expect(text).toContain("↻ Name ada @ada reposted\n");
+    expect(text).toContain("↻ Name ada @ada reposted · 2026-07-08 21:59\n");
     expect(text).toContain("  ┃ ");
     expect(text).toContain("\n────");
-    expect(text).toMatch(/\d+ posts · more: pass --until \d+$/);
+    expect(text).toMatch(/\d+ posts · more: raise --limit for older posts; next time --until \d+ gets only posts newer than this$/);
     expect(text).toContain("[deleted] This Post was deleted");
   });
 
@@ -360,15 +362,95 @@ describe("x model: helpers and writes", () => {
     const text = pageText({ items, more: true, pinned: ["1000"] });
     expect(text.startsWith("📌 pinned\n")).toBe(true);
     expect(text.match(/📌/g)).toHaveLength(1);
-    expect(text).toMatch(/3 posts · more: pass --until 3002$/);
+    expect(text).toMatch(/3 posts · more: raise --limit for older posts; next time --until 3002 gets only posts newer than this$/);
   });
 
-  test("text for a ranked timeline says there is more, but not to pass --until", () => {
+  test("text for a ranked timeline says there is more, and names only --limit", () => {
     const { items } = postsPage(userTweets);
     const text = rankedPageText({ items, more: true });
-    expect(text).toMatch(/\d+ posts · more past the limit$/);
+    expect(text).toMatch(/\d+ posts · more: raise --limit for older posts$/);
     expect(text).not.toContain("--until");
-    expect(rankedPageText({ items, more: false })).not.toContain("past the limit");
+    expect(rankedPageText({ items, more: false })).not.toContain("more:");
+  });
+
+  test("counts read in the singular at 1, and a repost shows when it was reposted", () => {
+    const one = { value: 1, exact: true };
+    const post: Post = {
+      kind: "post",
+      id: "2074976613713031490",
+      source: "graphql",
+      author: { handle: "ada" },
+      text: "hi",
+      counts: { replies: one, reposts: one, likes: one, views: one },
+    };
+    expect(entryText(post)).toContain("  1 reply · 1 repost · 1 like · 1 view\n");
+    expect(entryText({ ...post, counts: { repostsAndQuotes: one } })).toContain("1 repost and quote");
+    const repost: Repost = {
+      kind: "repost",
+      id: "2074976613713031491",
+      source: "graphql",
+      by: { handle: "grace" },
+      createdAt: "2026-10-18T13:40:00.000Z",
+      post,
+    };
+    expect(entryText(repost).split("\n")[0]).toBe("↻ @grace reposted · 2026-10-18 13:40");
+    expect(pageText({ items: [post], more: true })).toContain("1 post · more:");
+  });
+
+  test("links print expanded; a trailing t.co for the post's own media or the quoted post is dropped", () => {
+    const url = (start: number, u: string, expanded: string, display: string) => ({
+      start,
+      end: start + u.length,
+      url: u,
+      expanded,
+      display,
+    });
+    const text = "See https://t.co/abc now https://t.co/qq https://t.co/pic";
+    const entities = {
+      mentions: [],
+      hashtags: [],
+      cashtags: [],
+      urls: [
+        url(4, "https://t.co/abc", "https://www.nasa.gov/maxpower/", "nasa.gov/maxpower/"),
+        url(25, "https://t.co/qq", "https://x.com/bob/status/1800", "x.com/bob/status/1800"),
+      ],
+    };
+    const post: Post = {
+      kind: "post",
+      id: "1",
+      source: "graphql",
+      author: { handle: "ada" },
+      text,
+      entities,
+      quotedId: "1800",
+      media: [{ type: "photo", url: "p" }],
+    };
+    expect(textWithLinks(post)).toBe("See nasa.gov/maxpower/ now");
+    // Not trailing, a link to the quoted post stays readable; the DOM's text has no t.co and comes back as it is.
+    expect(
+      textWithLinks({
+        ...post,
+        text: "a https://t.co/qq b",
+        entities: { ...entities, urls: [url(2, "https://t.co/qq", "https://x.com/bob/status/1800", "x.com/bob/status/1800")] },
+        media: undefined,
+      }),
+    ).toBe("a x.com/bob/status/1800 b");
+    // Another post's photo link is kept; this post's own media link is dropped.
+    const photo = (id: string) => ({
+      ...entities,
+      urls: [url(4, "https://t.co/abc", `https://x.com/o/status/${id}/photo/1`, "pic.x.com/z")],
+    });
+    expect(textWithLinks({ id: "1", text: "See https://t.co/abc", entities: photo("123") })).toBe("See pic.x.com/z");
+    expect(textWithLinks({ id: "1", text: "See https://t.co/abc", entities: photo("1"), media: [{}] })).toBe("See");
+    expect(textWithLinks({ text: "see https://nasa.gov/x", media: [{}] })).toBe("see https://nasa.gov/x");
+  });
+
+  test("a thread's focal post prints as a list post, with quotes and bookmarks on the counts line", () => {
+    const thread = threadOf(tweetDetail, "3001");
+    const text = threadText(thread);
+    const focal = text.split(/\n─+\n/).find((b) => b.startsWith("▶ the post")) ?? "";
+    expect(focal).not.toMatch(/author \d|\d,\d{3} /);
+    expect(focal).toMatch(/\n {2}\d+ repl(y|ies) · .* · .*bookmarks?( · [~\d.KM]+ views?)?\n {2}https:\/\/x\.com\/i\/status\/\d+$/);
   });
 
   test("a draft references what it replies to and quotes by id", () => {

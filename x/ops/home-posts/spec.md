@@ -85,7 +85,8 @@ responses but not in the model (notes.md); the op doesn't return it.
 `rankedPageText` from `model.ts`, which prints the blocks of `pageText` (`posts:search`'s spec
 describes them: a header, the cut text, a quote, the counts, the link, `↻ @<reposter> reposted`
 above a repost). The one difference is the closing line, for a ranked timeline with no `--until`:
-when `more` is true it is `<n> posts · more past the limit`. An empty page prints `no posts`.
+when `more` is true it is `<n> posts · more: raise --limit for older posts` (home is ranked, so
+`--until` is not named). An empty page prints `no posts`.
 
 ## Done in X
 

@@ -169,3 +169,10 @@ tool follows. In short: the person signs in by hand, in Chrome started as itself
 installed Chrome without Playwright's automation switch, and one request at a time
 (`browserChannel`, `hideAutomation` and `maxRunning` in `x/domain.ts`); a person's pace;
 the page's own calls only; rate limits and locks stop the op and are never retried.
+
+## How posts read as text (2026-10-18, R-0010)
+
+Every op that prints posts shares `model.ts`'s text. GraphQL `entities.urls` have `url` (t.co), `expanded_url`
+and `display_url`; `display_url` can end in `…`, so the expanded link is used then. The post's own media's
+t.co is not in `urls` but last in the text; a link to the quoted post is in `urls`, also last. `--until` reads
+only posts newer than an id, so a "more" hint says to raise `--limit` for older ones.

@@ -80,11 +80,13 @@ posts.
 `threadText` in `model.ts`, with blocks separated by a rule:
 
 - `↑ <n> above, oldest first`, then each ancestor as `entryText` cuts it.
-- `▶ the post`, then the post in full. This shows the header, a line `post <id> · author <account
-  id>` (with `· replies to <id>` when it is a reply), the whole text, each media item with its URL and
-  alt text, each expanded link, the card's title, a poll's options, the quoted post with its id and
-  text, and one line of exact counts with thousands separators.
-- `↓ <n> replies, in X's order`, then each reply as `entryText` cuts it. An author's continuation
+- `▶ the post`, then the post in the layout of a list post (`posts:search`'s spec): the header, the
+  whole text (wrapped, never cut, links expanded as there), then each media item with its URL and alt
+  text, the card's title, a poll's options, the quoted post cut as in a list, one counts line with the
+  rounded numbers and, besides a list post's counts, its quotes and bookmarks
+  (`143 replies · 209 reposts · 24 quotes · 1526 likes · 62 bookmarks · 355.7K views`), and the link.
+  There is no `post <id> · author <id>` line: the ids are in `--json`.
+- `↓ <n> replies, in X's order` (`1 reply`), then each reply as `entryText` cuts it. An author's continuation
   starts with `the author continues`. A post with no replies prints `no replies`.
 - When `more` is true, a closing line: `more replies than these: raise --limit, or see the post on
   x.com`.

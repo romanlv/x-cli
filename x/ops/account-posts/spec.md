@@ -72,7 +72,8 @@ An account with no posts is a page with no items and `more: false`, not an error
 
 Without `--json` it prints with `pageText`, as `posts:search` does: a block per post (who, when, the
 cut text, the counts), the pinned one starting with a line `📌 pinned`, and when `more` is true a
-closing `<n> posts · more: pass --until <id>`, the newest id among the unpinned posts.
+closing `<n> posts · more: raise --limit for older posts; next time --until <id> gets only posts newer
+than this`, the id being the newest among the unpinned posts.
 
 ## Done in X
 

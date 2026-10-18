@@ -399,6 +399,59 @@ const n = (c?: Count) => {
   return `${c.exact ? "" : "~"}${shown}`;
 };
 
+/** "1 reply", "2 replies": a count with its noun in the number it has. */
+const counted = (c: Count | undefined, one: string, many: string) => `${n(c)} ${c?.value === 1 ? one : many}`;
+
+/** A number of things that is always exact (a page's length): "1 post", "3 posts". */
+const plural = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
+
+/** Where a link points when it is the post's own media or the quoted post, which are shown anyway. */
+const isShownAnyway = (
+  expanded: string | undefined,
+  post: { id?: string; media?: unknown[]; quotedId?: string; quoted?: { id?: string } },
+) => {
+  if (!expanded) return false;
+  // Only this post's own media link: a link to another post's photo is a link worth keeping.
+  const own = /^https?:\/\/(?:x|twitter)\.com\/[^/]+\/status\/(\d+)\/(?:photo|video)\/\d+/.exec(expanded)?.[1];
+  if (own && post.id === own && post.media?.length) return true;
+  const quoted = post.quoted?.id ?? post.quotedId;
+  return !!quoted && new RegExp(`^https?://(?:x|twitter)\\.com/[^/]+/status/${quoted}(?:[/?#]|$)`).test(expanded);
+};
+
+/**
+ * A post's text with its links as X shows them (`nasa.gov/maxpower/`, from the entities' display or
+ * expanded link) instead of t.co, and without a trailing t.co that only points at the post's own media
+ * or at the quoted post, both shown with the post. The DOM's text has no t.co links and no entities,
+ * so it comes back as it is. Entity offsets are code points into GraphQL's text.
+ */
+export const textWithLinks = (post: {
+  id?: string;
+  text: string;
+  quotedId?: string;
+  quoted?: { id?: string } | { kind: "unavailable"; id?: string };
+  media?: unknown[];
+  entities?: Entities;
+}): string => {
+  const entityUrls = post.entities?.urls ?? [];
+  let text = post.text;
+  // The media's own t.co is in the media entities, not the urls: a trailing one that no url names points at the post's own media.
+  const tail = /\s*(https:\/\/t\.co\/\w+)\s*$/.exec(text);
+  if (tail && (post.media?.length || post.quoted || post.quotedId) && !entityUrls.some((u) => u.url === tail[1])) {
+    text = text.slice(0, tail.index);
+  }
+  const chars = Array.from(text);
+  for (const u of [...entityUrls].sort((a, b) => b.start - a.start)) {
+    if (chars.slice(u.start, u.end).join("") !== u.url) continue;
+    const last = chars.slice(u.end).join("").trim() === "";
+    const gone = last && isShownAnyway(u.expanded, post);
+    // X cuts a long display_url with "…": the expanded link is whole.
+    const display = u.display?.endsWith("…") && u.expanded ? undefined : u.display;
+    const shown = gone ? "" : (display ?? u.expanded?.replace(/^https?:\/\//, "") ?? u.url);
+    chars.splice(u.start, u.end - u.start, ...Array.from(shown));
+  }
+  return chars.join("").trimEnd();
+};
+
 /**
  * A post's text for a terminal: newlines folded into spaces (a URL the text splits across lines is
  * rejoined), wrapped at `width`, and cut at a word after `maxLines` lines or `maxChars` characters,
@@ -442,6 +495,20 @@ const header = (post: { id: string; author: UserRef; createdAt?: string }): stri
   return `${name}${who(post.author)}${time ? ` · ${time}` : ""}`;
 };
 
+/** The counts line of a post: replies, reposts, likes, views, and the extra counts (quotes, bookmarks) when asked for. */
+const countsLine = (c: PostCounts, extra = false): string => {
+  const reposts =
+    c.reposts || !c.repostsAndQuotes
+      ? counted(c.reposts, "repost", "reposts")
+      : counted(c.repostsAndQuotes, "repost and quote", "reposts and quotes");
+  const parts = [counted(c.replies, "reply", "replies"), reposts];
+  if (extra && (c.reposts || !c.repostsAndQuotes)) parts.push(counted(c.quotes, "quote", "quotes"));
+  parts.push(counted(c.likes, "like", "likes"));
+  if (extra) parts.push(counted(c.bookmarks, "bookmark", "bookmarks"));
+  if (c.views) parts.push(counted(c.views, "view", "views"));
+  return parts.join(" · ");
+};
+
 /**
  * One entry as a person reads it in the terminal: a block of a header (who, when), the text cut to a
  * few lines, a quoted post indented under it, one line of counts, and the link. Plain text, so it
@@ -451,28 +518,26 @@ export const entryText = (entry: Entry): string => {
   if (entry.kind === "unavailable") return unavailableText(entry);
   if (entry.kind === "repost") {
     const name = entry.by.name && entry.by.handle ? `${entry.by.name} ` : "";
-    return `↻ ${name}${who(entry.by)} reposted\n${entryText(entry.post)}`;
+    const time = (entry.createdAt ?? (entry.id ? timeOfId(entry.id) : undefined))?.slice(0, 16).replace("T", " ");
+    return `↻ ${name}${who(entry.by)} reposted${time ? ` · ${time}` : ""}\n${entryText(entry.post)}`;
   }
   const lines = [header(entry)];
-  lines.push(...clip(entry.text, WIDTH, TEXT_LINES, TEXT_CHARS, entry.truncated).filter(Boolean));
+  lines.push(...clip(textWithLinks(entry), WIDTH, TEXT_LINES, TEXT_CHARS, entry.truncated).filter(Boolean));
   const q = entry.quoted;
   if (q?.kind === "unavailable") lines.push(`  ┃ ${unavailableText(q)}`);
   else if (q) {
     lines.push(`  ┃ ${header(q)}`);
-    for (const l of clip(q.text, WIDTH - 4, QUOTE_LINES, QUOTE_CHARS, q.truncated)) if (l) lines.push(`  ┃ ${l}`);
+    for (const l of clip(textWithLinks(q), WIDTH - 4, QUOTE_LINES, QUOTE_CHARS, q.truncated)) if (l) lines.push(`  ┃ ${l}`);
   }
-  const c = entry.counts;
-  if (c) {
-    const reposts = c.reposts || !c.repostsAndQuotes ? `${n(c.reposts)} reposts` : `${n(c.repostsAndQuotes)} reposts and quotes`;
-    lines.push(`  ${n(c.replies)} replies · ${reposts} · ${n(c.likes)} likes${c.views ? ` · ${n(c.views)} views` : ""}`);
-  }
+  if (entry.counts) lines.push(`  ${countsLine(entry.counts)}`);
   lines.push(`  ${postUrl(entry.id)}`);
   return lines.join("\n");
 };
 
 /**
- * A page of entries: blocks with a rule between them, and when there is more, how to read on:
- * from the newest id with `--until`, or, for a timeline that is not in id order, only that there is more.
+ * A page of entries: blocks with a rule between them, and when there is more, how to read on: older
+ * posts need a higher `--limit` (`--until` reads only newer posts on a later poll, so it is named as
+ * that, with the newest id), and a timeline that is not in id order names only `--limit`.
  * A pinned entry (`pinned`) is marked, and is not the newest: it sits out of the timeline's order.
  */
 export const pageText = (page: { items: Entry[]; more?: boolean; pinned?: string[] }, byId = true): string => {
@@ -482,45 +547,37 @@ export const pageText = (page: { items: Entry[]; more?: boolean; pinned?: string
   const ids = page.items.flatMap((e) => (e.id && !pins.has(e.id) ? [BigInt(e.id)] : []));
   // The newest by id, not the first: a self-thread's 1/ sits above its newer 2/.
   const newest = ids.length ? ids.reduce((a, b) => (b > a ? b : a)) : undefined;
-  if (page.more && newest) blocks.push(`${page.items.length} posts · more${byId ? `: pass --until ${newest}` : " past the limit"}`);
+  if (page.more && newest) {
+    const hint = byId
+      ? `raise --limit for older posts; next time --until ${newest} gets only posts newer than this`
+      : "raise --limit for older posts";
+    blocks.push(`${plural(page.items.length, "post", "posts")} · more: ${hint}`);
+  }
   return blocks.join(`\n${RULE}\n`);
 };
 
 /** `pageText` for a timeline X ranks (home), which has no `--until` to read on from. */
 export const rankedPageText = (page: { items: Entry[]; more?: boolean }): string => pageText(page, false);
 
-/** An exact count with thousands separators: the focal post's counts are read in full, not rounded. */
-const full = (c?: Count) => (c ? `${c.exact ? "" : "~"}${c.value.toLocaleString("en-US")}` : "?");
-
-/** The post a thread is about, in full: id, who and when, all of the text, media, links, quote, every count. */
+/**
+ * The post a thread is about, laid out as a list post (header, text, quote, counts, link) with its
+ * extra counts on the counts line. Its text is not cut: it is the post being read. Its media, links,
+ * card and poll are lines of their own.
+ */
 const focalText = (post: Post | Unavailable): string => {
   if (post.kind === "unavailable") return unavailableText(post);
-  const lines = [
-    header(post),
-    `post ${post.id} · author ${post.author.id ?? "?"}${post.replyTo?.post ? ` · replies to ${post.replyTo.post}` : ""}`,
-    "",
-    post.text,
-  ];
+  const lines = [header(post), ...clip(textWithLinks(post), WIDTH, Infinity, Infinity).filter(Boolean)];
   for (const m of post.media ?? []) lines.push(`  [${m.type}] ${m.url}${m.alt ? ` — ${m.alt}` : ""}`);
-  for (const u of post.entities?.urls ?? [])
-    if (u.expanded && !/^https?:\/\/(x|twitter)\.com\/\w+\/status\//.test(u.expanded)) lines.push(`  link ${u.expanded}`);
   if (post.card?.title) lines.push(`  card: ${post.card.title}${post.card.domain ? ` (${post.card.domain})` : ""}`);
-  if (post.poll) lines.push(...post.poll.options.map((o) => `  poll: ${o.label}${o.votes ? ` · ${full(o.votes)}` : ""}`));
+  if (post.poll) lines.push(...post.poll.options.map((o) => `  poll: ${o.label}${o.votes ? ` · ${n(o.votes)}` : ""}`));
   const q = post.quoted;
   if (q?.kind === "unavailable") lines.push(`  ┃ ${unavailableText(q)}`);
-  else if (q) lines.push(`  ┃ ${header(q)} · ${q.id}`, ...q.text.split("\n").map((l) => `  ┃ ${l}`));
-  const c = post.counts;
-  if (c) {
-    const reposts =
-      c.reposts || !c.repostsAndQuotes
-        ? `${full(c.reposts)} reposts · ${full(c.quotes)} quotes`
-        : `${full(c.repostsAndQuotes)} reposts and quotes`;
-    lines.push(
-      "",
-      `${full(c.replies)} replies · ${reposts} · ${full(c.likes)} likes · ${full(c.bookmarks)} bookmarks · ${full(c.views)} views`,
-    );
+  else if (q) {
+    lines.push(`  ┃ ${header(q)}`);
+    for (const l of clip(textWithLinks(q), WIDTH - 4, QUOTE_LINES, QUOTE_CHARS, q.truncated)) if (l) lines.push(`  ┃ ${l}`);
   }
-  lines.push(postUrl(post.id));
+  if (post.counts) lines.push(`  ${countsLine(post.counts, true)}`);
+  lines.push(`  ${postUrl(post.id)}`);
   return lines.join("\n");
 };
 
@@ -555,7 +612,8 @@ export const userText = (user: User | UserUnavailable): string => {
       .map((l) => `  ${l}`),
   );
   const c = user.counts;
-  if (c) lines.push(`  ${n(c.followers)} followers · ${n(c.following)} following · ${n(c.posts)} posts`);
+  if (c)
+    lines.push(`  ${counted(c.followers, "follower", "followers")} · ${n(c.following)} following · ${counted(c.posts, "post", "posts")}`);
   lines.push(`  https://x.com/${user.handle}`);
   return lines.join("\n");
 };
@@ -564,7 +622,7 @@ export const userText = (user: User | UserUnavailable): string => {
 export const usersText = (page: { items: (User | UserUnavailable)[]; more?: boolean }): string => {
   if (page.items.length === 0) return "no accounts";
   const blocks = page.items.map(userText);
-  if (page.more) blocks.push(`${page.items.length} accounts · more: raise --limit`);
+  if (page.more) blocks.push(`${plural(page.items.length, "account", "accounts")} · more: raise --limit`);
   return blocks.join(`\n${RULE}\n`);
 };
 
@@ -596,6 +654,6 @@ export const userFullText = (user: User | UserUnavailable): string => {
 export const usersFullText = (page: { items: (User | UserUnavailable)[]; more?: boolean }): string => {
   if (page.items.length === 0) return "no accounts";
   const blocks = page.items.map(userFullText);
-  if (page.more) blocks.push(`${page.items.length} accounts · more: raise --limit`);
+  if (page.more) blocks.push(`${plural(page.items.length, "account", "accounts")} · more: raise --limit`);
   return blocks.join(`\n${RULE}\n`);
 };
