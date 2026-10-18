@@ -406,8 +406,9 @@ const openTeam = (run: RequestRun): Team => {
 };
 
 // ── Verify, review, revise ────────────────────────────────────────────────────────────────────────
-const helpersIn = (paths: Paths, files: string[]): boolean =>
-  files.some((f) => f.startsWith(`${relative(paths.worktree, paths.domainDir)}/helpers/`));
+/** Code every op may run: any `.ts` outside the domain's ops (its helpers, model, mappers, domain.ts, core). */
+const sharedCodeIn = (paths: Paths, files: string[]): boolean =>
+  files.some((f) => f.endsWith(".ts") && !f.startsWith(`${relative(paths.worktree, paths.domainDir)}/ops/`));
 
 /** Every op with an example for this context, as the worktree has them now, and every op whose examples.json can't be read, so verify says so. */
 const opsWithExamples = (paths: Paths, context: string): string[] => {
@@ -424,8 +425,8 @@ const opsWithExamples = (paths: Paths, context: string): string[] => {
 };
 
 /**
- * Verify the op on every example for the context, and every other op too when helpers changed (on
- * the branch, or on main since `mainSince`): a helper another op uses may have broken under it.
+ * Verify the op on every example for the context, and every other op too when shared code changed
+ * (on the branch, or on main since `mainSince`): code another op runs may have broken it.
  */
 const verifyAll = async (
   run: RequestRun,
@@ -438,7 +439,7 @@ const verifyAll = async (
     ...(await deps.git.changed(paths.worktree)),
     ...(mainSince ? await deps.git.changedOnMain(paths.worktree, mainSince) : []),
   ];
-  if (helpersIn(paths, changed)) {
+  if (sharedCodeIn(paths, changed)) {
     for (const other of opsWithExamples(paths, request.context).filter((o) => o !== op)) {
       const result = await deps.verify(paths.worktree, request, other);
       // Only a regression counts: an op that fails on main as well is not this change's to fix.
@@ -559,7 +560,7 @@ const checkUntilApproved = async (
 
 /**
  * Commit, rebase on main, and fast-forward main. When main has moved past what was approved, the op
- * (and every op, when helpers changed on either side) is checked again, and the loop goes round so
+ * (and every op, when shared code changed on either side) is checked again, and the loop goes round so
  * any fix that made is committed and rebased before it lands. A fast-forward that loses a race with
  * another merge goes round too.
  */

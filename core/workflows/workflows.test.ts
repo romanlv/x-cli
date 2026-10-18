@@ -612,6 +612,31 @@ test("a helper change re-verifies every other op with examples for the context",
   expect(run.value.state).toBe("done");
 });
 
+test("a mapper change re-verifies the other ops too, and a change to the op alone doesn't", async () => {
+  for (const id of ["R-0001", "R-0002"]) {
+    const other = join(home, "worktrees", id, "x", "ops", "thing-list");
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(other, "examples.json"), JSON.stringify([{ context: "acme", input: {} }]));
+  }
+  git.changedFiles = ["x/ops/thing-find/op.ts"];
+  const alone = file();
+  await testWorkflow(
+    defineBuild(deps()),
+    { id: alone.id, home },
+    { agents: { planner: planning(), builder: building(), checker: approve } },
+  );
+  expect(verified).toEqual(["thing:find"]);
+  verified.length = 0;
+  git.changedFiles = ["x/ops/thing-find/op.ts", "x/map/graphql.ts"];
+  const shared = file();
+  await testWorkflow(
+    defineBuild(deps()),
+    { id: shared.id, home },
+    { agents: { planner: planning(), builder: building(), checker: approve } },
+  );
+  expect(verified.slice(0, 2)).toEqual(["thing:find", "thing:list"]);
+});
+
 test("an examples.json that isn't JSON fails verify and goes back to the builder, instead of ending the run", async () => {
   const r = file();
   const worktree = join(home, "worktrees", r.id);
