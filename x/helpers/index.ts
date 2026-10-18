@@ -222,15 +222,17 @@ export const gather = ({ limit = 20, until, newestFirst }: Bound) => {
       return seen.size;
     },
     /**
-     * What was read, cut to `limit`; `more` when there was more past it. No cursor: an op resumes
-     * from an id, never from X's cursor, and a cursor past a cut page would skip what was cut.
+     * What was read, cut to `limit`. `more` is true when there was more past it, false when the
+     * read reached `until` or `moreAfter` is false (X ended the timeline), absent when unknown. No
+     * cursor: an op resumes from an id, never from X's cursor, and a cursor past a cut page would
+     * skip what was cut.
      */
     page(moreAfter?: boolean): XPage<Entry> {
       const kept = [...seen].slice(0, limit);
       const pins = kept.flatMap(([key, e]) => (pinned.has(key) && e.id ? [e.id] : []));
       return clean({
         items: kept.map(([, e]) => e),
-        more: seen.size > limit || (!reachedUntil && moreAfter) ? (true as const) : undefined,
+        more: seen.size > limit ? true : reachedUntil ? false : moreAfter,
         pinned: pins.length ? pins : undefined,
       });
     },
@@ -362,7 +364,8 @@ export const xHelpers = (page: Page) => {
           .first()
           .waitFor({ state: "visible", timeout: 20_000 })
           .catch(() => {});
-        let more = false;
+        // Unknown unless set: the DOM doesn't say that X ended the timeline.
+        let more: boolean | undefined;
         for (let used = 0, idle = 0, scrolls = 0; ; scrolls++) {
           const before = read.size;
           // Enough: another scroll would only fetch more of the timeline from X, which goes on past

@@ -183,7 +183,10 @@ where it is the `next_token` an op can pass back.
 `direction: "Bottom"` **[confirmed in fixtures: raw_followers]**, or a page with cursors and no
 entries, which is how X ends a timeline that still sends a Bottom cursor **[confirmed: twscrape
 api.py comment; inferred that the cursor-only page is that end]**. A page whose entries were all
-left out (ads, suggestions) still has `more`, so a read scrolls on past it.
+left out (ads, suggestions) still has `more`, so a read scrolls on past it. A bounded read
+(`app.timeline`, `app.posts`) says `more: false` when X ended the timeline or it reached `until`,
+`true` when it stopped with more to read, and leaves `more` out when it can't tell (the DOM stopped
+growing).
 
 A profile's pinned post comes first, in a `TimelinePinEntry` **[confirmed: raw_user_tweets.json]**
 or under the DOM's "Pinned" `socialContext` **[inferred]**, out of the timeline's order. It stays

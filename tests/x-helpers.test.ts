@@ -46,6 +46,8 @@ describe("x helpers: gathering a timeline", () => {
     ]);
     expect(read.page(true)).toEqual({
       items: [post("900"), post("1010"), repost("1012", "500"), repost(undefined, "400"), post("1009")],
+      // Reaching until, the read has all there is past it: more is false, not unknown.
+      more: false,
       pinned: ["900"],
     });
     // Not newest first (bookmarks, likes, search's Top): only the until post stops it.
@@ -56,6 +58,15 @@ describe("x helpers: gathering a timeline", () => {
     const original = gather({ until: "500" });
     original.add(cells(repost("1012", "500"), repost(undefined, "500"), post("1006")));
     expect(original.page(true).items).toEqual([repost("1012", "500")]);
+  });
+
+  test("more: true past limit, false when X ended the timeline, absent when unknown, as postsPage says it", () => {
+    const read = gather({ limit: 1 });
+    read.add(cells(post("1002")));
+    expect(read.page(false).more).toBe(false);
+    expect(read.page().more).toBeUndefined();
+    read.add(cells(post("1001")));
+    expect(read.page(false).more).toBe(true);
   });
 
   test("newest first: a post above a newer one of its conversation module never stops it, and is left out as the until post", () => {
@@ -159,7 +170,7 @@ describe("x helpers: reading the page", () => {
     const app = xHelpers(page);
     // 900 is older than until but pinned; 1008 was deleted, so 1007 is the first at or before it.
     const read = await app.posts(show(profileHtml), { until: "1008", newestFirst: true });
-    expect(read).toEqual({ items: read.items, pinned: ["900"] });
+    expect(read).toEqual({ items: read.items, more: false, pinned: ["900"] });
     expect(read.items.map((e) => e.kind === "post" && e.id)).toEqual(["900", "1010", "1009"]);
     // until the pinned post itself does not stop at it either.
     expect((await app.posts(show(profileHtml), { until: "900", scrolls: 0 })).items.length).toBe(4);
@@ -171,7 +182,7 @@ describe("x helpers: reading the page", () => {
     const app = xHelpers(page);
     const read = await app.posts(show(selfThreadHtml), { until: "1008" });
     expect(read.items.map((e) => e.id)).toEqual(["1005", "1012", "1010"]);
-    expect(read.more).toBeUndefined();
+    expect(read.more).toBe(false);
     // Read as newest first, 1/ would stop it before 2/: why ops on a profile's DOM don't pass newestFirst.
     expect((await app.posts(show(selfThreadHtml), { until: "1008", newestFirst: true })).items).toEqual([]);
   });
@@ -208,7 +219,7 @@ describe("x helpers: reading the page", () => {
     expect(await app.posts(show(timelineHtml), { limit: 6 })).toMatchObject({ items: { length: 6 }, more: true });
     const untilQuote = await app.posts(show(timelineHtml), { until: "1003" });
     expect(untilQuote.items.length).toBe(2);
-    expect(untilQuote.more).toBeUndefined();
+    expect(untilQuote.more).toBe(false);
     // until the reposted post's id stops at the repost too
     expect((await app.posts(show(timelineHtml), { until: "1900" })).items.map((e) => e.kind)).toEqual(["post"]);
     expect((await app.posts(show(timelineHtml), { limit: 1, until: "1006" })).items.length).toBe(1);
@@ -234,7 +245,7 @@ describe("x helpers: reading the page", () => {
     });
     const untilSecond = await app.timeline("SearchTimeline", fetchSearch, { until: "1002" });
     expect(untilSecond.items.map((e) => e.kind === "post" && e.id)).toEqual(["1001"]);
-    expect(untilSecond.more).toBeUndefined();
+    expect(untilSecond.more).toBe(false);
 
     status = 429;
     await expect(app.timeline("SearchTimeline", fetchSearch)).rejects.toThrow(RefusedError);
@@ -279,14 +290,15 @@ describe("x helpers: reading the page", () => {
       // 3007 was deleted: the module 2990, 3006, 3008 is placed by 3008, so the read goes on to 3004.
       const deleted = await app.timeline("UserTweets", fetchTweets, { until: "3007", newestFirst: true });
       expect(deleted.items.map((e) => e.id)).toEqual(["3005", "3012", "3010", "2990", "3006", "3008"]);
-      expect(deleted.more).toBeUndefined();
+      expect(deleted.more).toBe(false);
       // 3005 is 1/ of a self-thread whose 2/ is newer: left out, and the read goes on.
       const inThread = await app.timeline("UserTweets", fetchTweets, { until: "3005", newestFirst: true });
       expect(inThread.items.map((e) => e.id)).toEqual(["3012", "3010", "2990", "3006", "3008"]);
       // A module whose newest post stops the read goes with it: 2990 and 3006 are 3008's.
       for (const until of ["3008", "3009"]) {
         const atModule = await app.timeline("UserTweets", fetchTweets, { until, newestFirst: true });
-        expect(atModule.items.map((e) => e.id)).toEqual(["3005", "3012", "3010"]);
+        expect(atModule).toMatchObject({ items: [{ id: "3005" }, { id: "3012" }, { id: "3010" }], more: false });
+        expect(atModule.items.length).toBe(3);
       }
     });
 
