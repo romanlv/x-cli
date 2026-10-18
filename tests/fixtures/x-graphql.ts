@@ -311,6 +311,22 @@ export const userTweets = {
                       },
                     ),
                   ),
+                  // A repost whose original author came as a stub, its ids and nothing else
+                  // (_issue_342_343.json, the third entry): the reposter's user_mentions name them.
+                  item(
+                    "tweet-2006",
+                    tweet("2006", ada, {
+                      full_text: "RT @XFreeze: https://t.co/x",
+                      entities: { user_mentions: [{ id_str: "77", indices: [3, 11], name: "X Freeze", screen_name: "XFreeze" }] },
+                      retweeted_status_result: {
+                        result: tweet(
+                          "1950",
+                          { __typename: "User", id: btoa("User:77"), rest_id: "77", action_counts: { favorites_count: 41998 } },
+                          { full_text: "https://t.co/x", user_id_str: "77" },
+                        ),
+                      },
+                    }),
+                  ),
                   {
                     entryId: "who-to-follow-1",
                     content: {
@@ -538,3 +554,28 @@ export const listResult = {
   created_at: 1700000000000,
   user_results: { result: ada },
 };
+
+const searchPage = (entries: object[]) => ({
+  data: { search_by_raw_query: { search_timeline: { timeline: { instructions: [{ type: "TimelineAddEntries", entries }] } } } },
+});
+
+/** A page of a timeline that holds only an ad and its cursors: X has more past it. */
+export const adsOnly = searchPage([
+  {
+    entryId: "promoted-tweet-1004-abc",
+    sortIndex: "1",
+    content: {
+      __typename: "TimelineTimelineItem",
+      itemContent: {
+        itemType: "TimelineTweet",
+        tweet_results: { result: tweet("1004", bob, { full_text: "an ad" }) },
+        promotedMetadata: {},
+      },
+    },
+  },
+  cursor("cursor-top-2", "Top", "DAADDAAC-top"),
+  cursor("cursor-bottom-2", "Bottom", "DAADDAAC-bottom"),
+]);
+
+/** The last page of a timeline: X sends its cursors and no entries (twscrape api.py). */
+export const lastPage = searchPage([cursor("cursor-top-3", "Top", "DAADDAAD-top"), cursor("cursor-bottom-3", "Bottom", "DAADDAAD-bottom")]);

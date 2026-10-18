@@ -112,7 +112,7 @@ const userUnavailable = (u: Json): UserUnavailable => {
   return clean({
     kind: "user-unavailable" as const,
     id: str(u.rest_id),
-    reason: reason === "Suspended" ? ("suspended" as const) : reason === "Deactivated" ? ("deactivated" as const) : ("unknown" as const),
+    reason: reason === "Suspended" ? ("suspended" as const) : ("unknown" as const),
     message: str(u.message),
     source: "graphql" as const,
   });
@@ -349,7 +349,10 @@ export const entryFromResult = (result: unknown, opts: PostOptions = {}): Entry 
   const id = str(r.rest_id) ?? str(f.id_str);
   if (!id) return unavailable("unknown", fallbackId);
 
-  const author = userRefFromResult(at(r, "core", "user_results", "result")) ?? opts.author ?? clean({ id: str(f.user_id_str) });
+  // A stub author (only its id, twscrape _issue_342_343.json) keeps the handle and name the hint has.
+  const own = userRefFromResult(at(r, "core", "user_results", "result"));
+  const hint = opts.author && (!own?.id || !opts.author.id || own.id === opts.author.id) ? opts.author : undefined;
+  const author = own ? { ...hint, ...own } : (opts.author ?? clean({ id: str(f.user_id_str) }));
   const createdAt = xTime(f.created_at);
 
   const retweeted = at(f, "retweeted_status_result", "result");
@@ -450,6 +453,8 @@ export interface Timeline {
   more: Record<string, string>;
   /** Entry ids X pinned to the top (a profile's pinned post). */
   pinned: string[];
+  /** X said there is nothing past this: a TimelineTerminateTimeline at the bottom, or no entries but cursors. */
+  ended: boolean;
 }
 
 /** Entries that are X's suggestions and ads, not the timeline asked for. */
@@ -499,7 +504,9 @@ const instructionsIn = (json: unknown): Json[] => {
  * ads are left out.
  */
 export const readTimeline = (json: unknown): Timeline => {
-  const t: Timeline = { items: [], cursors: {}, more: {}, pinned: [] };
+  const t: Timeline = { items: [], cursors: {}, more: {}, pinned: [], ended: false };
+  // Entries X sent that are not cursors, kept or not: a page of only ads still has more past it.
+  let sent = 0;
   const add = (entryId: string, content: Json, module?: string) => {
     const cursor = cursorOf(content);
     if (cursor) {
@@ -507,6 +514,7 @@ export const readTimeline = (json: unknown): Timeline => {
       else t.cursors[cursor.type] = cursor.value;
       return;
     }
+    sent++;
     if (NOISE.test(entryId)) return;
     const value = itemValue(content, entryId);
     if (value) t.items.push(clean({ entryId, module, display: str(content.tweetDisplayType), value }));
@@ -514,7 +522,10 @@ export const readTimeline = (json: unknown): Timeline => {
   const entry = (e: Json, pinned = false) => {
     const entryId = str(e.entryId) ?? "";
     const content = obj(e.content);
-    if (NOISE.test(entryId)) return;
+    if (NOISE.test(entryId)) {
+      sent++;
+      return;
+    }
     if (pinned) t.pinned.push(entryId);
     if (isObj(content.itemContent)) add(entryId, content.itemContent);
     else if (Array.isArray(content.items))
@@ -527,7 +538,9 @@ export const readTimeline = (json: unknown): Timeline => {
     // TimelineAddToModule: more items for a module already shown (TweetDetail's "Show replies").
     const moduleId = str(ins.moduleEntryId);
     for (const i of arr(ins.moduleItems).map(obj)) add(str(i.entryId) ?? "", obj(at(i, "item", "itemContent")), moduleId);
+    if (ins.type === "TimelineTerminateTimeline" && ins.direction === "Bottom") t.ended = true;
   }
+  if (!sent) t.ended = true;
   return t;
 };
 
@@ -539,15 +552,17 @@ const keyOf = (v: TimelineItem["value"], entryId: string) => `${v.kind}:${"id" i
 const page = <T extends TimelineItem["value"]>(t: Timeline, keep: (v: TimelineItem["value"]) => v is T): Page<T> => {
   const seen = new Set<string>();
   const items: T[] = [];
+  const pinned: string[] = [];
   for (const { entryId, value } of t.items) {
     const key = keyOf(value, entryId);
     if (!keep(value) || seen.has(key)) continue;
     seen.add(key);
     items.push(value);
+    if (t.pinned.includes(entryId) && "id" in value && value.id) pinned.push(value.id);
   }
   const cursor = t.cursors.Bottom;
-  // X sends a Bottom cursor on the last page too; a page with items and a cursor may have more.
-  return clean({ items, more: cursor ? items.length > 0 : false, cursor });
+  // X sends a Bottom cursor on the last page too, with no entries: that, or TimelineTerminateTimeline, is the end.
+  return clean({ items, more: !!cursor && !t.ended, cursor, pinned: pinned.length ? pinned : undefined });
 };
 
 /** A timeline of posts as a page: search, a profile, bookmarks, likes, a list. */

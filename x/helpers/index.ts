@@ -6,8 +6,8 @@
 // see knowledge/x.md for which have been confirmed.
 import type { Page, Response } from "playwright";
 import { InputError, PreconditionError, RefusedError } from "../../core/errors";
-import { type Article, entryFromArticle } from "../map/dom";
-import { postsPage, threadOf, userFromResult } from "../map/graphql";
+import { type Article, entryFromArticle, isPinned } from "../map/dom";
+import { clean, postsPage, threadOf, userFromResult } from "../map/graphql";
 import { type Entry, postOf, type Thread, type User, type UserUnavailable, type Page as XPage } from "../model";
 
 export const ORIGIN = "https://x.com";
@@ -28,6 +28,11 @@ export const SEL = {
   userName: '[data-testid="User-Name"]',
   /** One row of a virtualised timeline: a post, or what X shows in its place. */
   cell: '[data-testid="cellInnerDiv"]',
+  /**
+   * What X wraps an ad's article in (typefully/minimal-twitter hides `[data-testid="placementTracking"] article`,
+   * 2026-08). A video inside a post has one too, so only an article inside it is an ad.
+   */
+  ad: '[data-testid="placementTracking"]',
   /** The line above a post: "Ada reposted", "Pinned". */
   socialContext: '[data-testid="socialContext"]',
   showMore: '[data-testid="tweet-text-show-more-link"]',
@@ -55,6 +60,7 @@ const readArticles = (page: Page): Promise<Article[]> =>
           const text = (el as HTMLElement).innerText.trim();
           return /\bthis post\b/i.test(text) && text.length < 300 ? [{ labels: {}, tombstone: text }] : [];
         }
+        if (el.closest(sel.ad)) return [];
         const names = el.querySelectorAll(sel.userName);
         // An embedded quote has a User-Name of its own; the post's parts are the ones outside it.
         const quote = names[1]?.closest('[role="link"]') ?? undefined;
@@ -67,6 +73,7 @@ const readArticles = (page: Page): Promise<Article[]> =>
           if (id && !quote?.contains(b)) labels[id] = b.getAttribute("aria-label") ?? "";
         }
         const context = own(sel.socialContext);
+        const group = [...el.querySelectorAll(sel.buttons)].find((b) => !quote?.contains(b))?.closest('[role="group"]');
         return [
           {
             href: own("a[href*='/status/'] time")?.closest("a")?.getAttribute("href") ?? undefined,
@@ -76,6 +83,7 @@ const readArticles = (page: Page): Promise<Article[]> =>
             lang: text?.getAttribute("lang") ?? undefined,
             showMore: !!own(sel.showMore),
             labels,
+            group: group?.getAttribute("aria-label") ?? undefined,
             views: own("a[href$='/analytics']")?.getAttribute("aria-label") ?? undefined,
             context: context ? { text: context.innerText, href: context.closest("a")?.getAttribute("href") ?? undefined } : undefined,
             quote: quote
@@ -93,38 +101,91 @@ const readArticles = (page: Page): Promise<Article[]> =>
     SEL,
   );
 
-/**
- * The entries rendered on the page now, in order, as the DOM shows them (`source: "dom"`): posts,
- * reposts, and tombstones where X draws one. X virtualises timelines: only what is near the viewport
- * is in the DOM.
- */
-export const readPosts = async (page: Page): Promise<Entry[]> => (await readArticles(page)).flatMap((a) => entryFromArticle(a) ?? []);
-
-/** Where a read stops: at most `limit` entries, and before the post `until` (a post id; it is not included). */
-export interface Bound {
-  limit?: number;
-  until?: string;
+/** One entry as a read found it: `pinned` when X put it above the timeline, out of its order. */
+export interface Cell {
+  entry: Entry;
+  pinned?: boolean;
 }
 
+const readCells = async (page: Page): Promise<Cell[]> =>
+  (await readArticles(page)).flatMap((a) => {
+    const entry = entryFromArticle(a);
+    return entry ? [clean({ entry, pinned: isPinned(a) || undefined })] : [];
+  });
+
 /**
- * Entries once each, in the order read, until `limit` or the `until` post. A tombstone the DOM shows
- * has no id, so it is known by the entry before it.
+ * The entries rendered on the page now, in order, as the DOM shows them (`source: "dom"`): posts,
+ * reposts, and tombstones where X draws one; ads are left out. X virtualises timelines: only what is
+ * near the viewport is in the DOM.
  */
-const gather = ({ limit = 20, until }: Bound) => {
+export const readPosts = async (page: Page): Promise<Entry[]> => (await readCells(page)).map((c) => c.entry);
+
+/** Scrolls one call makes at most (bot-detection.md, recommendation 5). */
+export const MAX_SCROLLS = 10;
+
+/** Where a read stops: at most `limit` entries, before the post `until`, after at most `scrolls` scrolls. */
+export interface Bound {
+  limit?: number;
+  /** A post id; it is not included. */
+  until?: string;
+  /**
+   * The timeline is newest first by id (a profile, search's Latest), so a read stops at the first
+   * entry at or before `until`, even when that post was deleted. Otherwise only `until` itself stops it.
+   */
+  newestFirst?: boolean;
+  /** At most this many scrolls (MAX_SCROLLS); a read cut short by it says `more`. */
+  scrolls?: number;
+}
+
+/** How `gather` knows an entry again: its kind and id; a DOM repost, which has no id, by its post's. */
+const keyOf = (e: Entry) => {
+  const id = e.kind === "repost" ? (e.id ?? postOf(e).id) : e.id;
+  return id ? `${e.kind}:${id}` : undefined;
+};
+
+/**
+ * Entries once each, in the order read, until `limit` or the `until` post. A pinned entry is kept and
+ * marked, and never stops the read. A tombstone the DOM shows has no id, so it is known by the entry
+ * before it, or when it is first in a read by the entry after it (and was seen already if that was).
+ */
+export const gather = ({ limit = 20, until, newestFirst }: Bound) => {
   const seen = new Map<string, Entry>();
+  const pinned = new Set<string>();
   let reachedUntil = false;
+  const isUntil = (e: Entry) => {
+    if (!until) return false;
+    if (e.id === until || postOf(e).id === until) return true;
+    // A repost is placed by its own id; a DOM repost has none, so only equality stops at one.
+    return !!newestFirst && !!e.id && BigInt(e.id) <= BigInt(until);
+  };
   return {
     /** Adds one read's entries; true once the read has what it needs. */
-    add(entries: Entry[]): boolean {
-      let previous = "";
-      for (const e of entries) {
-        const id = e.kind === "repost" ? (e.id ?? postOf(e).id) : e.id;
-        if (until && (id === until || postOf(e).id === until)) {
+    add(cells: Cell[]): boolean {
+      let previous: string | undefined;
+      let skipping = false;
+      for (const [i, { entry: e, pinned: pin }] of cells.entries()) {
+        if (!pin && isUntil(e)) {
           reachedUntil = true;
           break;
         }
-        previous = id ? `${e.kind}:${id}` : `${e.kind}@${previous}`;
-        if (!seen.has(previous)) seen.set(previous, e);
+        let key = keyOf(e);
+        if (key) skipping = false;
+        else if (skipping) continue;
+        else if (previous === undefined) {
+          const next = cells
+            .slice(i + 1)
+            .map((c) => keyOf(c.entry))
+            .find(Boolean);
+          if (next && seen.has(next)) {
+            skipping = true;
+            continue;
+          }
+          key = `${e.kind}^${next ?? ""}`;
+        } else key = `${e.kind}@${previous}`;
+        previous = key;
+        if (seen.has(key)) continue;
+        seen.set(key, e);
+        if (pin) pinned.add(key);
       }
       return reachedUntil || seen.size >= limit;
     },
@@ -136,8 +197,13 @@ const gather = ({ limit = 20, until }: Bound) => {
      * from an id, never from X's cursor, and a cursor past a cut page would skip what was cut.
      */
     page(moreAfter?: boolean): XPage<Entry> {
-      const items = [...seen.values()].slice(0, limit);
-      return seen.size > limit || (!reachedUntil && moreAfter) ? { items, more: true } : { items };
+      const kept = [...seen].slice(0, limit);
+      const pins = kept.flatMap(([key, e]) => (pinned.has(key) && e.id ? [e.id] : []));
+      return clean({
+        items: kept.map(([, e]) => e),
+        more: seen.size > limit || (!reachedUntil && moreAfter) ? (true as const) : undefined,
+        pinned: pins.length ? pins : undefined,
+      });
     },
   };
 };
@@ -157,6 +223,16 @@ const ACCOUNT_ERRORS: Record<number, string> = {
   326: "the account is locked: sign in by hand and clear X's challenge",
 };
 
+/** A timeline read stops once X's budget for the call is at or below this share of its limit. */
+const LOW_BUDGET = 0.1;
+
+/** X's budget for a call, from the response's x-rate-limit-limit and -remaining. */
+const budgetOf = (headers: Record<string, string>) => {
+  const limit = Number(headers["x-rate-limit-limit"]);
+  const remaining = Number(headers["x-rate-limit-remaining"] ?? Number.NaN);
+  return limit > 0 && Number.isFinite(remaining) ? { limit, remaining } : undefined;
+};
+
 /** When a rate limit resets, from the response's x-rate-limit-reset (epoch seconds). */
 const resetAt = (headers: Record<string, string>): string => {
   const reset = Number(headers["x-rate-limit-reset"]);
@@ -171,6 +247,12 @@ const bodyOf = async (operation: string, response: Response): Promise<unknown> =
   if (response.status() === 429) throw new RefusedError(`X rate limited ${operation}${resetAt(headers)}`);
   const body = (await response.json().catch(() => undefined)) as { errors?: { code?: number; message?: string }[] } | undefined;
   const code = body?.errors?.map((e) => e.code).find((c) => c !== undefined && c in ACCOUNT_ERRORS);
+  const budget = budgetOf(headers);
+  // Rate limited with budget left is X limiting the account, not the call (bot-detection.md, recommendation 5).
+  if (code === 88 && budget && budget.remaining > 0)
+    throw new RefusedError(
+      `X: the account looks limited or locked: ${operation} was refused as rate limited (code 88) with ${budget.remaining} of ${budget.limit} calls left. Check the account by hand in the browser before running more`,
+    );
   if (code !== undefined) throw new RefusedError(`X: ${ACCOUNT_ERRORS[code]} (${operation}, code ${code})${resetAt(headers)}`);
   if (!response.ok() || !body) throw new Error(`${operation} answered ${response.status()} ${body ? "" : "without JSON"}`.trim());
   return body;
@@ -210,8 +292,9 @@ export const xHelpers = (page: Page) => {
 
     /**
      * The timeline on the page as the DOM shows it, scrolled and collected until `limit` entries or
-     * the `until` post, or until scrolling brings nothing new a few times running. Paced like a person
-     * reading, never faster. `app.timeline` reads the same from GraphQL, with more in each entry.
+     * the `until` post, until scrolling brings nothing new a few times running, or after `scrolls`
+     * scrolls. Paced like a person reading, never faster. `app.timeline` reads the same from GraphQL,
+     * with more in each entry.
      */
     async posts(bound: Bound = {}): Promise<XPage<Entry>> {
       const read = gather(bound);
@@ -220,14 +303,20 @@ export const xHelpers = (page: Page) => {
         .first()
         .waitFor({ state: "visible", timeout: 20_000 })
         .catch(() => {});
-      for (let idle = 0; idle < 3; ) {
+      let capped = false;
+      for (let idle = 0, scrolls = 0; ; scrolls++) {
         const before = read.size;
         // Enough: another scroll would only fetch more of the timeline from X.
-        if (read.add(await readPosts(page))) break;
+        if (read.add(await readCells(page))) break;
         idle = read.size === before ? idle + 1 : 0;
+        if (idle >= 3) break;
+        if (scrolls >= (bound.scrolls ?? MAX_SCROLLS)) {
+          capped = true;
+          break;
+        }
         await scroll(page);
       }
-      return read.page();
+      return read.page(capped);
     },
 
     /**
@@ -246,8 +335,10 @@ export const xHelpers = (page: Page) => {
     /**
      * The posts of a timeline call (`SearchTimeline`, `UserTweets`, `Bookmarks`, `Likes`, ...) that
      * `open` makes the page send, then of the calls scrolling sends, at a person's pace, until `limit`
-     * entries or the `until` post, or until X has no more. Every response is kept as it comes, so a
-     * page that lands between scrolls is not lost.
+     * entries or the `until` post, until X has no more, or after `scrolls` scrolls. Every response is
+     * kept as it comes, so a page that lands between scrolls is not lost. Once X's budget for the call
+     * (x-rate-limit-remaining) is down to a tenth of its limit, it stops with what it has and `more`;
+     * with nothing read yet, that is `RefusedError`.
      */
     async timeline(operation: string, open: () => Promise<unknown>, bound: Bound = {}, timeout = 30_000): Promise<XPage<Entry>> {
       const match = callOf(operation);
@@ -262,15 +353,30 @@ export const xHelpers = (page: Page) => {
         if (!responses.length) await page.waitForResponse((r) => match.test(r.url()), { timeout });
         let more: boolean | undefined;
         let done = false;
-        for (let used = 0, idle = 0; idle < 3; ) {
+        for (let used = 0, idle = 0, scrolls = 0; ; scrolls++) {
           const before = used;
           while (!done && used < responses.length) {
-            const got = postsPage(await bodyOf(operation, responses[used++]!));
+            const response = responses[used++]!;
+            const got = postsPage(await bodyOf(operation, response));
             more = got.more;
-            done = read.add(got.items) || more === false;
+            const cells = got.items.map((entry) => ({ entry, pinned: !!entry.id && !!got.pinned?.includes(entry.id) }));
+            done = read.add(cells) || more === false;
+            const budget = budgetOf(response.headers());
+            if (!done && budget && budget.remaining <= budget.limit * LOW_BUDGET) {
+              if (!read.size)
+                throw new RefusedError(
+                  `X's budget for ${operation} is down to ${budget.remaining} of ${budget.limit}; stopping before it runs out${resetAt(response.headers())}`,
+                );
+              done = true;
+            }
           }
           if (done) break;
           idle = used === before ? idle + 1 : 0;
+          if (idle >= 3) break;
+          if (scrolls >= (bound.scrolls ?? MAX_SCROLLS)) {
+            more = true;
+            break;
+          }
           await scroll(page);
         }
         return read.page(more);

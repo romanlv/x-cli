@@ -7,10 +7,17 @@ interface Cell {
   handle: string;
   name: string;
   text?: string;
-  /** aria-label by button testid. */
-  labels?: Record<string, string>;
+  /** aria-label by button testid; null draws the button with none. */
+  labels?: Record<string, string | null>;
+  /** The action bar's own aria-label (XClipper, huashu-chrome: "3 replies, 5 reposts, 152 likes, 175 bookmarks, 45025 views"). */
+  group?: string;
   views?: string;
+  /** The reposter's handle: "<handle> reposted" above the post. */
   context?: string;
+  /** "Pinned" above the post, as on a profile. */
+  pinned?: boolean;
+  /** An ad: the article inside placementTracking (typefully/minimal-twitter). */
+  ad?: boolean;
   showMore?: boolean;
   quote?: string;
 }
@@ -26,20 +33,21 @@ const names = (handle: string, name: string, permalink?: string, time = "2026-07
 const DEFAULT_LABELS = { reply: "3 Replies. Reply", retweet: "1,204 reposts. Repost", like: "12K Likes. Like", bookmark: "Bookmark" };
 
 export const cell = (c: Cell) => `
-<div data-testid="cellInnerDiv">
+<div data-testid="cellInnerDiv">${c.ad ? `<div data-testid="placementTracking">` : ""}
   <article data-testid="tweet" role="article" tabindex="0">
     ${c.context ? `<a href="/${c.context}" role="link"><span data-testid="socialContext">${c.context} reposted</span></a>` : ""}
+    ${c.pinned ? `<div><span data-testid="socialContext">Pinned</span></div>` : ""}
     ${names(c.handle, c.name, `/${c.handle}/status/${c.id}`)}
     ${c.text === undefined ? "" : `<div data-testid="tweetText" lang="en" dir="auto"><span>${c.text}</span></div>`}
     ${c.showMore ? `<button data-testid="tweet-text-show-more-link" type="button">Show more</button>` : ""}
     ${c.quote ?? ""}
-    <div role="group">
+    <div role="group"${c.group ? ` aria-label="${c.group}"` : ""}>
       ${Object.entries(c.labels ?? DEFAULT_LABELS)
-        .map(([id, label]) => `<button data-testid="${id}" aria-label="${label}" type="button"></button>`)
+        .map(([id, label]) => `<button data-testid="${id}"${label === null ? "" : ` aria-label="${label}"`} type="button"></button>`)
         .join("")}
       ${c.views ? `<a href="/${c.handle}/status/${c.id}/analytics" aria-label="${c.views}"></a>` : ""}
     </div>
-  </article>
+  </article>${c.ad ? "</div>" : ""}
 </div>`;
 
 /** X's embedded quote: a box that is a link as a whole, with its own User-Name and text; `id` when it carries a permalink. */
@@ -68,4 +76,23 @@ export const timelineHtml = `<main data-testid="primaryColumn"><section>${[
   tombstone("This Post was deleted by the Post author."),
   cell({ id: "1005", handle: "dan", name: "Dan", quote: quoteBox("bob", "a quote with no link") }),
   cell({ id: "1006", handle: "eve", name: "Eve", text: "last" }),
+].join("")}</section></main>`;
+
+/**
+ * A profile, newest first: an old post pinned above it, a post, an ad, a post whose action bar names
+ * its counts, and one whose buttons have no labels. 1008, between them, was deleted.
+ */
+export const profileHtml = `<main data-testid="primaryColumn"><section>${[
+  cell({ id: "900", handle: "ada", name: "Ada", text: "pinned long ago", pinned: true }),
+  cell({ id: "1010", handle: "ada", name: "Ada", text: "newest" }),
+  cell({ id: "5000", handle: "brand", name: "Brand", text: "buy now", ad: true }),
+  cell({
+    id: "1009",
+    handle: "ada",
+    name: "Ada",
+    text: "counted",
+    group: "3 replies, 5 reposts, 152 likes, 175 bookmarks, 45025 views",
+    labels: { reply: "3 Replies. Reply", retweet: "5 reposts. Repost", like: "152 Likes. Like", bookmark: "Bookmark" },
+  }),
+  cell({ id: "1007", handle: "ada", name: "Ada", text: "no labels", labels: { reply: null, retweet: null, like: null, bookmark: null } }),
 ].join("")}</section></main>`;

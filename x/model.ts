@@ -36,7 +36,7 @@ export const UserRef = Type.Object(
   { description: "at least one of id and handle; id from GraphQL and the API, the DOM has only the handle" },
 );
 
-/** Ranges are offsets into `text` in Unicode code points, as X gives them; `end` is exclusive. */
+/** Ranges are offsets into GraphQL's `text` in Unicode code points, as X gives them; `end` is exclusive. The DOM has none. */
 export const Entities = Type.Object({
   mentions: Type.Array(Type.Object({ start: Offset, end: Offset, handle: Type.String(), id: Type.Optional(UserId) })),
   hashtags: Type.Array(Type.Object({ start: Offset, end: Offset, tag: Type.String() })),
@@ -134,7 +134,10 @@ const postFields = {
   source: Source,
   author: UserRef,
   createdAt: Type.Optional(Time),
-  text: Type.String({ description: "the full text, long posts included; the reply's leading @handles too" }),
+  text: Type.String({
+    description:
+      "the full text, long posts included. GraphQL's has a reply's leading @handles and trailing t.co links for media and quotes; the DOM's has neither. Entity offsets are into GraphQL's",
+  }),
   truncated: Type.Optional(Type.Literal(true, { description: "text is cut short where it was read (the DOM's Show more)" })),
   lang: Type.Optional(Type.String()),
   conversationId: Type.Optional(PostId),
@@ -220,7 +223,7 @@ export const UserUnavailable = Type.Object({
   kind: Type.Literal("user-unavailable"),
   id: Type.Optional(UserId),
   handle: Type.Optional(Type.String()),
-  reason: Type.Union([Type.Literal("suspended"), Type.Literal("deactivated"), Type.Literal("unknown")]),
+  reason: Type.Union([Type.Literal("suspended"), Type.Literal("unknown")]),
   message: Type.Optional(Type.String()),
   source: Source,
 });
@@ -237,16 +240,7 @@ export const XList = Type.Object({
   counts: Type.Optional(Type.Object({ members: Type.Optional(Count), followers: Type.Optional(Count) })),
 });
 
-export const NotificationType = Type.Union([
-  Type.Literal("like"),
-  Type.Literal("repost"),
-  Type.Literal("follow"),
-  Type.Literal("follow-request"),
-  Type.Literal("mention"),
-  Type.Literal("reply"),
-  Type.Literal("quote"),
-  Type.Literal("other"),
-]);
+export const NotificationType = Type.Union([Type.Literal("like"), Type.Literal("repost"), Type.Literal("follow"), Type.Literal("other")]);
 
 /** One line of the notifications tab: who (actors) did what (type) to which posts (targets). Mentions and replies are posts. */
 export const Notification = Type.Object({
@@ -263,10 +257,16 @@ export const Notification = Type.Object({
 /**
  * A bounded read of a timeline. `more` says X had more past the last item. `cursor` is X's opaque
  * bottom cursor, kept for the record: ops never send their own calls, so a later read resumes from
- * an id (`until`) rather than from it.
+ * an id (`until`) rather than from it. `pinned` names the items X pinned above the timeline (a
+ * profile's pinned post): they are out of its order, and `until` never stops at them.
  */
 export const Page = <T extends TSchema>(item: T) =>
-  Type.Object({ items: Type.Array(item), more: Type.Optional(Type.Boolean()), cursor: Type.Optional(Type.String()) });
+  Type.Object({
+    items: Type.Array(item),
+    more: Type.Optional(Type.Boolean()),
+    cursor: Type.Optional(Type.String()),
+    pinned: Type.Optional(Type.Array(PostId, { description: "ids of the items X pinned to the top, out of the timeline's order" })),
+  });
 
 /** Replies shown together: X's conversation module, a reply to the focal post and the replies under it. */
 export const ReplyGroup = Type.Object({
@@ -357,13 +357,22 @@ export type Draft = Static<typeof Draft>;
 export type PostAction = Static<typeof PostAction>;
 export type UserAction = Static<typeof UserAction>;
 export type MessageDraft = Static<typeof MessageDraft>;
-export type Page<T> = { items: T[]; more?: boolean; cursor?: string };
+export type Page<T> = { items: T[]; more?: boolean; cursor?: string; pinned?: string[] };
 
 /** A post's link that works whatever its author is called now. */
 export const postUrl = (id: string): string => `https://x.com/i/status/${id}`;
 
-/** When a post was made, from its id alone: X's ids are snowflakes, milliseconds since 2010-11-04 in the top bits. */
-export const timeOfId = (id: string): string => new Date(Number((BigInt(id) >> 22n) + 1288834974657n)).toISOString();
+/** The first ids are counters, not snowflakes: X switched on 2010-11-04, near this id. */
+const FIRST_SNOWFLAKE = 29_700_000_000n;
+
+/**
+ * When a post was made, from its id alone: X's ids since 2010-11-04 are snowflakes, milliseconds
+ * since then in the top bits. Undefined for an older id (jack/status/20), which holds no time.
+ */
+export const timeOfId = (id: string): string | undefined => {
+  const n = BigInt(id);
+  return n < FIRST_SNOWFLAKE ? undefined : new Date(Number((n >> 22n) + 1288834974657n)).toISOString();
+};
 
 /** The post an entry is about: a repost's original, or the post itself. */
 export const postOf = (entry: Entry): Post | Unavailable => (entry.kind === "repost" ? entry.post : entry);
@@ -383,5 +392,6 @@ export const entryText = (entry: Entry): string => {
     ? `  ${n(c.replies)} replies · ${n(c.reposts)} reposts · ${n(c.likes)} likes${c.views ? ` · ${n(c.views)} views` : ""}`
     : "";
   const quoted = entry.quoted ? `\n  > ${entryText(entry.quoted).replace(/\n/g, "\n  > ")}` : "";
-  return `${who(entry.author)} · ${entry.createdAt ?? timeOfId(entry.id)} · ${postUrl(entry.id)}\n${entry.text}${quoted}${counts ? `\n${counts}` : ""}`;
+  const time = entry.createdAt ?? timeOfId(entry.id);
+  return `${who(entry.author)} · ${time ? `${time} · ` : ""}${postUrl(entry.id)}\n${entry.text}${quoted}${counts ? `\n${counts}` : ""}`;
 };

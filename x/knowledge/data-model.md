@@ -25,7 +25,7 @@ User ◄─author── Post ──quoted (one level)──► QuotedPost | Unav
  ├── owner ── XList ── members: Page<User>          Notification ─ actors: UserRef[], targets: PostId[]
  └── Page<User | UserUnavailable>   (followers, following, list members, reposters, follow requests)
 
-Thread = { focal, ancestors[], replies: ReplyGroup[] }      Page<T> = { items, more?, cursor? }
+Thread = { focal, ancestors[], replies: ReplyGroup[] }      Page<T> = { items, more?, cursor?, pinned? }
 Writes: Draft (text, replyTo?, quote?, media?, poll?), PostAction, UserAction, MessageDraft
 ```
 
@@ -54,7 +54,9 @@ Bookmarks and likes have no type of their own. `bookmarks:list` is a `Page<Entry
 - `postUrl(id)` gives `https://x.com/i/status/<id>`, which works whatever the author is now called
   **[inferred: X redirects /i/status/ to the canonical URL]**. No URL is stored.
 - `timeOfId(id)` gives a post's time from its id (snowflake bits 22+, epoch 1288834974657)
-  **[confirmed: X's snowflake format]**. When `createdAt` is missing, this fills it.
+  **[confirmed: X's snowflake format]**. When `createdAt` is missing, this fills it. Ids from before
+  snowflakes (2010-11-04, below about 2.97e10, such as jack/status/20) are counters with no time in
+  them: `timeOfId` gives undefined, and `entryText` leaves the time out.
 - A `UserRef` from the DOM has only a `handle`, because the page shows no user ids. GraphQL and the
   API always give `id` **[confirmed: rest_id in every fixture]**. If an op needs account ids, it
   reads GraphQL.
@@ -73,6 +75,10 @@ Bookmarks and likes have no type of their own. `bookmarks:list` is a `Page<Entry
 - `truncated: true` marks text known to be cut short, for example a DOM post behind "Show more".
   GraphQL text is complete. A long post's full text is in `note_tweet`, and the mapper uses it
   **[confirmed: raw_search.json; twikit and twscrape both prefer note_tweet]**.
+- `text` is not the same string from each source. GraphQL's `full_text` keeps a reply's leading
+  `@handles` and the trailing t.co links X adds for media and a quote (`display_text_range` marks
+  the part shown); the DOM's `tweetText` has neither. `entities` offsets are into GraphQL's text, so
+  never apply them to a DOM post's text. The mapper doesn't keep `display_text_range` yet.
 - The mapper's `clean()` drops `undefined` keys, so JSON output and `Value.Check` agree on "absent".
 
 ## Counts and exactness
@@ -83,17 +89,22 @@ Text output prefixes an inexact count with `~`.
 
 | Count | GraphQL (`legacy` or top level) | API v2 `public_metrics` | DOM |
 | --- | --- | --- | --- |
-| replies | `reply_count` | `reply_count` | `reply` button aria-label |
-| reposts | `retweet_count` | `retweet_count` | `retweet` / `unretweet` aria-label |
+| replies | `reply_count` | `reply_count` | action bar label, else `reply` button aria-label |
+| reposts | `retweet_count` | `retweet_count` | action bar label, else `retweet` / `unretweet` aria-label |
 | quotes | `quote_count` | `quote_count` | not shown in the timeline |
-| likes | `favorite_count` | `like_count` | `like` / `unlike` aria-label |
-| bookmarks | `bookmark_count` | `bookmark_count` | `bookmark` aria-label (unconfirmed) |
-| views | `views.count`, a string; absent unless `state` is `EnabledWithCount` | `impression_count` | the analytics link's aria-label |
+| likes | `favorite_count` | `like_count` | action bar label, else `like` / `unlike` aria-label |
+| bookmarks | `bookmark_count` | `bookmark_count` | action bar label, else a number in `removeBookmark`'s label; `bookmark`'s is just "Bookmark" |
+| views | `views.count`, a string; absent unless `state` is `EnabledWithCount` | `impression_count` | action bar label, else the analytics link's aria-label |
 
 All GraphQL entries are **[confirmed in fixtures]**. The API names are **[confirmed: docs.x.com
-data dictionary]**. The DOM entries are **[inferred: knowledge/x.md, unconfirmed]**. Whether the
-aria-labels carry exact numbers ("1,204 Likes") while the visible text is rounded is unconfirmed: it
-decides whether the DOM can set `exact: true`. A repost's own counts in GraphQL echo the original's
+data dictionary]**. The action bar is the post's `div[role=group]`, whose aria-label names its
+counts in full, "264 replies, 687 reposts, 6523 likes, 3355 bookmarks, 1778078 views"
+**[secondary: zendegani/XClipper src/content/tweet.ts, pushed 2026-10-17; alchaincyf/huashu-chrome
+docs/经验/x.com.md, 2026-09; neither confirmed against this account]**. Neither says whether a count
+of 0 is left out of it, so a count it doesn't name stays absent there. The buttons' entries are
+**[inferred: knowledge/x.md, unconfirmed]**. Whether a button's aria-label carries an exact number
+("1,204 Likes") while the visible text is rounded is unconfirmed: it decides whether the DOM can set
+`exact: true` when the action bar has no label. A repost's own counts in GraphQL echo the original's
 `retweet_count` and are otherwise 0 **[confirmed: raw_user_tweets.json]**, so `Repost` has no
 counts, and the original post carries them.
 
@@ -139,7 +150,9 @@ A user's counts are followers, following, posts, likes, media and listed. The ne
 - A repost of a quote is a `Repost` whose `post` has `quoted`.
 - X sometimes sends a nested post's author as `UserUnavailable` or as a stub. The author is then
   rebuilt from the outer post's `user_mentions` (reposts) or `quoted_status_permalink` (quotes)
-  **[confirmed: twscrape #342, #343, _issue_342_343.json]**.
+  **[confirmed: twscrape #342, #343, _issue_342_343.json]**. A stub is a `User` result with
+  `rest_id` and none of `core` or `legacy` (that file's third entry): its id is kept and the handle
+  and name come from the outer post, when its id matches.
 
 ## Deleted, withheld, protected, unavailable
 
@@ -149,7 +162,7 @@ A user's counts are followers, following, posts, likes, media and listed. The ne
 | `TweetUnavailable` with `reason` (`Protected`, `NsfwLoggedOut`, …) | `Unavailable` **[confirmed: yt-dlp]** |
 | `TweetWithVisibilityResults { tweet, limitedActionResults }` | The inner post, with `limitedActions` (for example `["Reply"]`) **[confirmed: raw_list_timeline.json]** |
 | an empty `tweet_results` | `Unavailable`, reason `unknown`, id from the entry **[inferred]** |
-| `UserUnavailable { reason, message }` | `UserUnavailable`; `Suspended` becomes `suspended` **[confirmed: the-convocation profile.ts]** |
+| `UserUnavailable { reason, message }` | `UserUnavailable`; `Suspended` becomes `suspended` **[confirmed: the-convocation profile.ts]**, any other reason (`NoReason` in _issue_342_343.json) `unknown`. No source names a reason for a deactivated account, so the model has none. |
 | `withheld_in_countries` | `withheldIn` **[inferred: twikit user.py, v1.1 legacy field]** |
 
 API v2 reports a missing referenced post as an `errors[]` entry next to `data` (resource_type
@@ -158,14 +171,32 @@ API v2 reports a missing referenced post as an `errors[]` entry next to `data` (
 
 ## Pagination
 
-`Page<T> = { items, more?, cursor? }`. Ops never make calls of their own (`authoring.md`), so an op
-can't resume a GraphQL cursor: scrolling sends the page's next request. A read is bounded by
-`limit`, or by a stopping id or time (`until`), and a later read resumes from an id. Post ids are
+`Page<T> = { items, more?, cursor?, pinned? }`. Ops never make calls of their own
+(`authoring.md`), so an op can't resume a GraphQL cursor: scrolling sends the page's next request.
+A read is bounded by
+`limit`, or by a stopping id (`until`), and a later read resumes from an id. Post ids are
 time-ordered snowflakes. `cursor` holds X's Bottom cursor for the record, and for the API source,
-where it is the `next_token` an op can pass back. `more` is inferred: X sends a Bottom cursor on the
-last page too **[confirmed: twscrape api.py comment]**. So "items and a cursor" means there may be
-more. `TimelineTerminateTimeline` marks a true end **[confirmed in fixtures]**, but the mapper
-doesn't use it yet.
+where it is the `next_token` an op can pass back.
+
+`more` is X's Bottom cursor, unless X said the timeline ends: a `TimelineTerminateTimeline` with
+`direction: "Bottom"` **[confirmed in fixtures: raw_followers]**, or a page with cursors and no
+entries, which is how X ends a timeline that still sends a Bottom cursor **[confirmed: twscrape
+api.py comment; inferred that the cursor-only page is that end]**. A page whose entries were all
+left out (ads, suggestions) still has `more`, so a read scrolls on past it.
+
+A profile's pinned post comes first, in a `TimelinePinEntry` **[confirmed: raw_user_tweets.json]**
+or under the DOM's "Pinned" `socialContext` **[inferred]**, out of the timeline's order. It stays
+in `items`, and `pinned` lists its id, so an op can drop or label it. `until` never stops at a
+pinned entry. Where the timeline is newest first by id (a profile, search's Latest), an op says so
+(`newestFirst`) and a read stops at the first entry whose id is at or before `until`, so a deleted
+`until` post still stops it: a post by its id, a GraphQL repost by its own (when it was reposted),
+and a DOM repost, which has no id of its own, only when its post is `until`. Elsewhere (bookmarks
+and likes are in the order they were saved, search's Top by rank) only `until` itself stops a read.
+
+`app.posts` reads the DOM, where a tombstone has no id: it is known by the entry before it, or,
+first in a read, by the entry after it, and is skipped when that entry was seen already (it was then
+read the time before). Every read is capped at 10 scrolls (`scrolls`), and one cut short by the cap
+says `more`.
 
 Cursor kinds: `Top`, `Bottom`, `ShowMore` (inside a module), `ShowMoreThreads`. Their values are
 opaque strings, and Followers uses `"<n>|<n>"` **[confirmed]**. Instructions: `TimelineAddEntries`,
@@ -196,7 +227,9 @@ timeline instructions. A notification is
 `{ id, timestampMs, icon.id, message.text, template.aggregateUserActionsV1.{fromUsers,targetObjects} }`
 **[confirmed: twikit client.py]**. Which call today's web app makes for `/notifications` is
 unconfirmed, so there is no mapper yet. `Notification.type` comes from the icon (`heart_icon` like,
-`retweet_icon` repost, `person_icon` follow) **[inferred]**. Mentions and replies are posts.
+`retweet_icon` repost, `person_icon` follow) **[inferred]**, else `other`. Mentions, replies and
+quotes are posts, not notifications, so `type` has no value for them; no source names a type for a
+follow request either. A mapper adds a type when it has a source for it.
 
 ## Field mapping: DOM, GraphQL, API v2
 
@@ -260,9 +293,17 @@ sent them.
   User-Name. No account id.
 - `createdAt` from `time[datetime]`; `text` and `lang` from `tweetText`, with `truncated: true` when
   `tweet-text-show-more-link` is there.
-- `counts` from the buttons' aria-labels via `count()`: `exact: false` when the number has K or M,
-  else `exact: true`, since X rounds only with a suffix (open question 1 confirms it). A button with
-  no number in its label is 0. Views come from the analytics link; quotes aren't shown.
+- `counts` from the action bar's aria-label where it names one (see Counts), else the buttons'
+  aria-labels, via `count()`: `exact: false` when the number has K or M, else `exact: true`, since X
+  rounds only with a suffix (open question 1 confirms it). A reply, repost or like button whose
+  label has no number ("Reply") is 0 **[inferred]**; a button with no label says nothing, and the
+  bookmark button's label ("Bookmark") never has a number, so bookmarks come only from the action
+  bar or a number in a label. Views come from the analytics link; quotes aren't shown.
+- An article inside `[data-testid="placementTracking"]` is an ad and is left out, as GraphQL's
+  promoted entries are **[secondary: typefully/minimal-twitter css/main.css hides
+  `[data-testid="placementTracking"] article`, 2026-08; it notes that a post's video has a
+  placementTracking of its own, so only an article inside one is an ad]**.
+- A `socialContext` "Pinned" line marks the post pinned (`Page.pinned`) **[inferred]**.
 - `viewer` from which button of each pair shows (`unlike` means liked).
 - A `socialContext` "reposted" line makes the entry a `Repost` with `by: { handle }` from its link,
   no `id`, and the article's post as `post`.
@@ -271,8 +312,8 @@ sent them.
 - A cell with no article whose text names "this post" is `Unavailable`, reason from the sentence,
   no id.
 
-Everything else stays absent. `app.posts` keys what it has seen by id (an id-less tombstone by the
-entry before it) and stops at `limit` or before `until`, as `app.timeline` does over GraphQL.
+Everything else stays absent. `app.posts` keys what it has seen by id (an id-less tombstone as
+Pagination says) and stops at `limit` or before `until`, as `app.timeline` does over GraphQL.
 
 ## Writes reuse the types
 
@@ -301,7 +342,8 @@ API v2's `non_public_metrics`/`organic_metrics`. Add each when an op needs it, f
 
 ## Open questions
 
-1. **DOM counts**: do the aria-labels carry exact numbers? This decides `exact` for DOM counts.
+1. **DOM counts**: does the action bar's label always carry exact numbers, and leave 0 out? Do the
+   buttons' aria-labels carry exact numbers? This decides `exact` and 0 for DOM counts.
 2. **Notifications**: which call does `/notifications` make today: REST `notifications/all.json`
    (twikit) or a GraphQL `NotificationsTimeline`? Check with `page:requests`, then write its mapper.
 3. **Bookmarks path**: the GraphQL operation name and path (`Bookmarks`,
@@ -310,7 +352,8 @@ API v2's `non_public_metrics`/`organic_metrics`. Add each when an op needs it, f
    every reason `unknown`. Should the sign-in profile be pinned to English?
 5. **Edited posts**: when a timeline shows an older version, does GraphQL give the latest id
    (`edit_control.initial_tweet_id`)? Should an op return the latest version, as API v2 does?
-6. **Should `more` use `TimelineTerminateTimeline`** to say "no more" for sure?
+6. **The end of a timeline**: `more` now uses `TimelineTerminateTimeline` and a page with no
+   entries. Does every timeline end one of those two ways on this account?
 7. **Repost time**: is a repost's `created_at` when it was reposted? The fixtures suggest yes, since
    the outer and inner times differ, but this is unchecked.
 8. **API v2 as a source**: there is no mapper for it, since the tool doesn't use the API
@@ -336,3 +379,8 @@ API v2's `non_public_metrics`/`organic_metrics`. Add each when an op needs it, f
   `src/profile.ts` (UserUnavailable Suspended). https://github.com/the-convocation/twitter-scraper
 - yt-dlp `yt_dlp/extractor/twitter.py` `_graphql_to_legacy` (TweetTombstone, TweetUnavailable
   reasons). https://github.com/yt-dlp/yt-dlp
+- DOM, secondary (small projects that read x.com's page): typefully/minimal-twitter `css/main.css`
+  (placementTracking ads, pushed 2026-08-18) https://github.com/typefully/minimal-twitter ;
+  zendegani/XClipper `src/content/tweet.ts` (the action bar's aria-label, pushed 2026-10-17)
+  https://github.com/zendegani/XClipper ; alchaincyf/huashu-chrome `docs/经验/x.com.md` (the same
+  label, exact counts, 2026-09) https://github.com/alchaincyf/huashu-chrome

@@ -44,8 +44,10 @@ X marks controls with `data-testid`; class names are generated and change every 
 | `tweetText` | a post's text; `tweet-text-show-more-link` when it is cut short |
 | `User-Name` | a post's author: display name, `@handle`, time; an embedded quote has its own |
 | `socialContext` | the line above a post: "Ada reposted" (a repost, linking to the reposter), "Pinned" |
-| `reply`, `retweet`, `like`, `bookmark` | a post's buttons; the counts are in their `aria-label` ("12 Likes. Like"), none when 0 |
+| `reply`, `retweet`, `like`, `bookmark` | a post's buttons; the counts are in their `aria-label` ("12 Likes. Like"), none when 0; `bookmark`'s is just "Bookmark" |
 | `unretweet`, `unlike`, `removeBookmark` | the same buttons when the signed-in account has reposted, liked or bookmarked it |
+| `div[role=group]` (no testid) | a post's action bar around the buttons; its `aria-label` names the counts in full: "3 replies, 5 reposts, 152 likes, 175 bookmarks, 45025 views" (secondary sources, data-model.md) |
+| `placementTracking` | wraps an ad's `article` (an ad is the article inside one); a post's video has one inside the article too (typefully/minimal-twitter) |
 | `emptyState` | a timeline with nothing in it |
 | `toast` | a passing message, such as a rate limit |
 | `error-detail` | a timeline's error in place of posts ("Something went wrong") |

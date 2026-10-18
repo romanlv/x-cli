@@ -18,8 +18,10 @@ export interface Article {
   lang?: string;
   /** The text ends in "Show more": it is cut short. */
   showMore?: boolean;
-  /** The aria-label of each of the post's buttons, by data-testid (reply, like or unlike, ...). */
+  /** The aria-label of each of the post's buttons, by data-testid (reply, like or unlike, ...); "" when it has none. */
   labels: Record<string, string>;
+  /** The action bar's (`div[role=group]`) aria-label: "3 replies, 5 reposts, 152 likes, 175 bookmarks, 45025 views". */
+  group?: string;
   /** The analytics link's aria-label. */
   views?: string;
   /** The line above the post ("Ada reposted", "Pinned") and where it links. */
@@ -48,8 +50,21 @@ export const count = (label?: string): Count | undefined => {
   return { value: Math.round(value), exact: false };
 };
 
-/** A button with no number in its label shows none of it: X leaves 0 out (inferred). */
-const button = (label?: string): Count | undefined => (label === undefined ? undefined : (count(label) ?? { value: 0, exact: true }));
+/** The count the action bar's label names ("152 likes"), if it names one. */
+const inGroup = (group: string | undefined, noun: string): Count | undefined => {
+  const m = group?.match(new RegExp(`(\\d[\\d.,]*\\s?[KM]?)\\s+${noun}`, "i"));
+  return m ? count(m[1]) : undefined;
+};
+
+/**
+ * A reply, repost or like button: a label with no number ("Reply") shows none, which X does for 0
+ * (inferred); no label at all says nothing. Bookmarks never take this: the bookmark button's label
+ * is "Bookmark" whatever the count.
+ */
+const button = (label?: string): Count | undefined => (label ? (count(label) ?? { value: 0, exact: true }) : undefined);
+
+/** "Pinned" above a post: X put it at the top of the profile, out of the timeline's order. */
+export const isPinned = (a: Article): boolean => !!a.context && /^pinned\b/i.test(a.context.text.trim());
 
 /** The button X shows says which way it would go: `unlike` means the account liked it (inferred). */
 const toggled = (labels: Record<string, string>, on: string, off: string) => (on in labels ? true : off in labels ? false : undefined);
@@ -72,12 +87,13 @@ export const entryFromArticle = (a: Article): Entry | undefined => {
         lang: a.quote?.lang,
       })
     : undefined;
+  const g = a.group;
   const counts: PostCounts | undefined = nonEmpty({
-    replies: button(l.reply),
-    reposts: button(l.retweet ?? l.unretweet),
-    likes: button(l.like ?? l.unlike),
-    bookmarks: button(l.bookmark ?? l.removeBookmark),
-    views: count(a.views),
+    replies: inGroup(g, "repl") ?? button(l.reply),
+    reposts: inGroup(g, "repost") ?? button(l.retweet ?? l.unretweet),
+    likes: inGroup(g, "like") ?? button(l.like ?? l.unlike),
+    bookmarks: inGroup(g, "bookmark") ?? count(l.bookmark ?? l.removeBookmark),
+    views: inGroup(g, "view") ?? count(a.views),
   });
   const viewer: PostViewer | undefined = nonEmpty({
     liked: toggled(l, "unlike", "like"),

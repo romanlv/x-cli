@@ -4,7 +4,9 @@ import Value from "typebox/value";
 import { entryFromResult, listFromResult, postsPage, readTimeline, threadOf, userFromResult, usersPage, xTime } from "../x/map/graphql";
 import { Draft, Entry, entryText, Page, type Post, postUrl, type Repost, Thread, timeOfId, User, UserUnavailable, XList } from "../x/model";
 import {
+  adsOnly,
   followers,
+  lastPage,
   legacyUser,
   listResult,
   searchTimeline,
@@ -99,6 +101,11 @@ describe("x model: GraphQL posts", () => {
     });
   });
 
+  test("an original author that is a stub with only its id keeps the handle and name from the mentions", () => {
+    const r = postsPage(userTweets).items.find((e) => e.kind === "repost" && e.id === "2006") as Repost;
+    expect(r.post).toMatchObject({ id: "1950", author: { id: "77", handle: "XFreeze", name: "X Freeze" } });
+  });
+
   test("a quote embeds the quoted post one level deep, with what X limits on it", () => {
     const { items } = postsPage(userTweets);
     const q = items.find((e) => e.kind === "post" && e.id === "2003") as Post;
@@ -138,7 +145,16 @@ describe("x model: GraphQL posts", () => {
     const t = readTimeline(userTweets);
     expect(t.pinned).toEqual(["tweet-2001"]);
     expect(t.items.some((i) => i.entryId.startsWith("who-to-follow"))).toBe(false);
-    valid(Page(Entry), postsPage(userTweets));
+    const p = postsPage(userTweets);
+    valid(Page(Entry), p);
+    expect(p.pinned).toEqual(["2001"]);
+    expect(postsPage(searchTimeline).pinned).toBeUndefined();
+  });
+
+  test("more follows X's cursor and end: a page of only ads has more, the last page and a terminated one none", () => {
+    expect(postsPage(adsOnly)).toEqual({ items: [], more: true, cursor: "DAADDAAC-bottom" });
+    expect(postsPage(lastPage)).toMatchObject({ items: [], more: false });
+    expect(usersPage(followers).more).toBe(false); // TimelineTerminateTimeline at the bottom
   });
 
   test("an unavailable post (TweetUnavailable) and an empty result", () => {
@@ -256,8 +272,16 @@ describe("x model: helpers and writes", () => {
     expect(xTime("Wed Jul 08 21:59:10 +0000 2026")).toBe("2026-07-08T21:59:10.000Z");
     expect(xTime("Wed Jul 08 21:59:10 -0130 2026")).toBe("2026-07-08T23:29:10.000Z");
     expect(xTime("yesterday")).toBeUndefined();
-    expect(timeOfId("2074976613713031490").slice(0, 4)).toBe("2026");
+    expect(timeOfId("2074976613713031490")?.slice(0, 4)).toBe("2026");
+    // Ids before 2010-11-04 are counters: jack/status/20 holds no time.
+    expect(timeOfId("20")).toBeUndefined();
+    expect(timeOfId("29000000000")).toBeUndefined();
     expect(postUrl("1")).toBe("https://x.com/i/status/1");
+  });
+
+  test("text for a person leaves out a time it does not have", () => {
+    const old: Post = { kind: "post", id: "20", source: "dom", author: { handle: "jack" }, text: "just setting up my twttr" };
+    expect(entryText(old)).toBe("@jack · https://x.com/i/status/20\njust setting up my twttr");
   });
 
   test("text for a person: a repost and a quote", () => {

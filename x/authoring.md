@@ -36,7 +36,11 @@ export default defineOp({
   output: Page(Entry),
   async run({ app, step }, input) {
     return step("read posts", () =>
-      app.timeline("SearchTimeline", () => app.search(input.query, "latest"), { limit: input.limit ?? 20, until: input.until }),
+      app.timeline("SearchTimeline", () => app.search(input.query, "latest"), {
+        limit: input.limit ?? 20,
+        until: input.until,
+        newestFirst: true,
+      }),
     );
   },
   format: (page) => page.items.map(entryText).join("\n\n"),
@@ -57,7 +61,10 @@ This is a sketch, not a built op: the first real one replaces it here.
 - **Bound every read.** A timeline never ends, so every op that scrolls takes a `limit` (with a
   default) and may take `until`, a post id that a later read stops before (the newest one an earlier
   read returned), and the help says which. Never a cursor: ops make no calls, so they can't resume
-  one of X's.
+  one of X's. A timeline that is newest first by id (a profile, search's Latest) passes
+  `newestFirst: true`, so `until` stops it even when that post was deleted; bookmarks, likes and
+  search's Top don't. A profile's pinned post is in `items` and named in the page's `pinned`, and
+  never stops a read. Every read stops after `scrolls` scrolls (10), with `more`.
 - **Read GraphQL through the mappers.** `app.timeline(operation, open, { limit, until })` is a
   timeline's posts as the page and scrolling fetch them, `app.thread(id)` a post's TweetDetail,
   `app.user(handle)` its UserByScreenName. For any other call, `app.graphql` returns the raw JSON
@@ -84,6 +91,8 @@ This is a sketch, not a built op: the first real one replaces it here.
   the GraphQL responses the page fetches, which carry more than the DOM (exact counts, ids, full
   text). Find the operation with `page:requests` while exploring, as the `direct-calls` skill says,
   and write its shape in notes.md.
+- **Don't use `page:fetch` on X**: it sends Playwright's own HTTP, which X flags. Find calls with
+  `page:requests` only.
 
 ## Pace and limits
 
@@ -92,7 +101,10 @@ X limits each account, not each op, and a locked account stops every op. So:
 - One page at a time per account: no parallel calls, no parallel pages.
 - Scroll and fetch at a person's pace (the helpers' `posts` already does); never tighten it.
 - A rate limit is `RefusedError`, with when it resets when X says so. Never retry in a loop.
-  `app.graphql` does this for X's error codes 88 (rate limited) and 326 (locked).
+  `app.graphql` does this for X's error codes 88 (rate limited) and 326 (locked); code 88 while the
+  call's budget has calls left is worded as a limited or locked account, for the person to check.
+- `app.timeline` reads X's budget (`x-rate-limit-remaining` of `-limit`) on every response and stops
+  at a tenth of it with what it has read and `more` (`RefusedError` if it has read nothing).
 - A challenge, a captcha or the login page mid-run is the person's to clear, by hand: stop, never
   try to get past it.
 
