@@ -28,7 +28,10 @@ export interface Outcome {
   error?: string;
   next?: NextHint[];
   exitCode?: number;
-  /** The request a pending outcome is about, for `--wait` to follow; never printed. */
+  /**
+   * The request the outcome is about, never printed: a pending one's, for `--wait` to follow, or the
+   * repair a done call filed for its direct way, for the worker to take up.
+   */
   request?: string;
 }
 

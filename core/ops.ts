@@ -315,8 +315,7 @@ export const runOp = async (
   try {
     const outcome = check(await entry.definition.run({ app, page: open.page, step: run.step, context, dryRun }, input));
     run.history({ ok: true, ...(fellBack ? { fellBack: fellBack.step } : {}) });
-    if (fellBack) fileDirectRepair(env, entry, input, ctx, fellBack);
-    return outcome;
+    return fellBack ? { ...outcome, request: fileDirectRepair(env, entry, input, ctx, fellBack) } : outcome;
   } catch (err) {
     if (err instanceof DryRunReached) {
       const shot = join(domain.home, "dry-runs", `${opFolder(entry.name)}-${Date.now()}.png`);
@@ -346,8 +345,8 @@ export const runOp = async (
   }
 };
 
-/** The browser way did what the direct way could not: the caller has its output, and the direct way a repair. */
-const fileDirectRepair = (env: RunEnv, entry: OpEntry, input: Record<string, unknown>, ctx: Context, { step, error }: FellBack): void => {
+/** The browser way did what the direct way could not: the caller has its output, and the direct way a repair, whose id this is. */
+const fileDirectRepair = (env: RunEnv, entry: OpEntry, input: Record<string, unknown>, ctx: Context, { step, error }: FellBack): string => {
   const bundle = saveFailureBundle(env.domain, entry, input, ctx, { network: [] }, step, error);
   const { record } = env.requests.fileOrJoinRepair({
     kind: "repair",
@@ -358,6 +357,7 @@ const fileDirectRepair = (env: RunEnv, entry: OpEntry, input: Record<string, unk
     failure: { step, error: error.message, bundle, fellBack: true },
   });
   progress(`${entry.name} ran in the browser; ${record.id} repairs the direct way`);
+  return record.id;
 };
 
 /** Triage, by rules only: is this failure someone else's, and which exit says so? First from the error alone. */

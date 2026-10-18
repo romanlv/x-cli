@@ -511,9 +511,10 @@ const callOp = async (env: Env, name: string, rest: string[]): Promise<Outcome> 
     browser: args.global.browser === true,
     call,
   });
-  if (outcome.exitCode === EXIT.PENDING && outcome.request && env.fileRepairs) {
+  // A repair the call filed or joined is taken up, the direct way's beside a done call too; only a pending call waits on it.
+  if (outcome.request && env.fileRepairs) {
     startWorker(env);
-    if (wait !== undefined) return waitFor(env, outcome.request, wait, again);
+    if (outcome.exitCode === EXIT.PENDING && wait !== undefined) return waitFor(env, outcome.request, wait, again);
   }
   return outcome;
 };

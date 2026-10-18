@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { Contexts } from "../core/contexts";
 import { envName } from "../core/env";
 import { Requests } from "../core/requests";
 import { runWorker } from "../core/worker";
@@ -143,4 +144,57 @@ test("a request blocked on signing in gets one sign-in try from the worker, wher
   });
   expect(tried).toEqual(["acme"]);
   expect(requests.get(r.id)).toMatchObject({ state: "done", answers: [{ text: "signed in again" }] });
+});
+
+test("a call whose direct way failed and whose browser way did it starts the worker for the direct way's repair", async () => {
+  const server = Bun.serve({ port: 0, fetch: () => new Response("<h1>Home</h1>", { headers: { "content-type": "text/html" } }) });
+  try {
+    // A CLI of its own, as the fixture's is X's, which makes no direct calls.
+    const dir = join(t.home, "t");
+    mkdirSync(join(dir, "ops", "thing-find"), { recursive: true });
+    writeFileSync(
+      join(dir, "ops", "thing-find", "op.ts"),
+      `const out = { type: "object", properties: { id: { type: "string" } }, required: ["id"] };
+export default {
+  name: "thing:find",
+  description: "Find a thing",
+  input: { type: "object", properties: {}, required: [] },
+  output: out,
+  run: async () => ({ id: "from the page" }),
+  direct: async ({ step }) => step("call the app", async () => { throw new Error("the call moved"); }),
+};
+`,
+    );
+    const entry = join(t.home, "main.ts");
+    writeFileSync(
+      entry,
+      `import { main } from ${JSON.stringify(join(ROOT, "core", "cli"))};
+await main({
+  name: "t", dir: ${JSON.stringify(dir)}, root: ${JSON.stringify(t.home)}, home: ${JSON.stringify(t.home)}, worktree: false,
+  helpers: () => ({}),
+  signInState: async (page) => ((await page.getByRole("heading").count()) ? "signed-in" : "unknown"),
+});
+`,
+    );
+    const ctx = new Contexts(t.home, "t").add("acme", server.url.href);
+    mkdirSync(join(ctx.authFile, ".."), { recursive: true });
+    writeFileSync(ctx.authFile, JSON.stringify({ cookies: [], origins: [] }));
+    const child = Bun.spawn(["bun", entry, "thing:find", "--json"], {
+      cwd: ROOT,
+      env: { ...process.env, [envName("HOME")]: t.home, [envName("AWF")]: AWF, [envName("STEP_TIMEOUT_MS")]: "2000" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+    expect(code).toBe(0);
+    expect(JSON.parse(stdout).data).toEqual({ id: "from the page" });
+    const [repair] = requests.list();
+    expect(repair).toMatchObject({ kind: "repair", op: "thing:find", failure: { fellBack: true } });
+    // The worker it started hands the repair to awf, here the fake, which ends it done.
+    const until = Date.now() + 10_000;
+    while (requests.get(repair!.id)!.state !== "done" && Date.now() < until) await Bun.sleep(50);
+    expect(existsSync(join(t.home, "awf-calls.jsonl")) && calls().map((c) => c.id)).toEqual([repair!.id]);
+  } finally {
+    server.stop(true);
+  }
 });
