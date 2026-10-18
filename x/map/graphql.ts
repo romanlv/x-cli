@@ -11,29 +11,29 @@
 // 2025-2026 users with no `legacy` (core, avatar, privacy, relationship_counts, ...) and, since
 // 2026-05 per twscrape, posts with `legacy` null and its fields at the top. Every read here looks in
 // both places.
-import type {
-  Card,
-  Count,
-  Edits,
-  Entities,
-  Entry,
-  Media,
-  Page,
-  Poll,
-  Post,
-  QuotedPost,
-  Relationship,
-  ReplyGroup,
-  Repost,
-  Thread,
-  Unavailable,
-  UnavailableReason,
-  User,
-  UserRef,
-  UserUnavailable,
-  XList,
+import {
+  type Card,
+  type Count,
+  type Edits,
+  type Entities,
+  type Entry,
+  type Media,
+  type Page,
+  type Poll,
+  type Post,
+  postOf,
+  type QuotedPost,
+  type Relationship,
+  type ReplyGroup,
+  type Repost,
+  type Thread,
+  type Unavailable,
+  type UnavailableReason,
+  type User,
+  type UserRef,
+  type UserUnavailable,
+  type XList,
 } from "../model";
-import { postOf } from "../model";
 
 type Json = Record<string, unknown>;
 
@@ -107,11 +107,11 @@ const userRefFromResult = (result: unknown): UserRef | undefined => {
   return id || handle ? clean({ id, handle, name }) : undefined;
 };
 
-const userUnavailable = (u: Json, id?: string): UserUnavailable => {
+const userUnavailable = (u: Json): UserUnavailable => {
   const reason = str(u.reason);
   return clean({
     kind: "user-unavailable" as const,
-    id: str(u.rest_id) ?? id,
+    id: str(u.rest_id),
     reason: reason === "Suspended" ? ("suspended" as const) : reason === "Deactivated" ? ("deactivated" as const) : ("unknown" as const),
     message: str(u.message),
     source: "graphql" as const,

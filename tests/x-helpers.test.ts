@@ -5,7 +5,7 @@ import { launch } from "../core/browser";
 import { RefusedError } from "../core/errors";
 import { readPosts, xHelpers } from "../x/helpers";
 import { count } from "../x/map/dom";
-import { Entry, type Post, type Repost } from "../x/model";
+import { Entry, entryText, type Post, type Repost } from "../x/model";
 import { timelineHtml } from "./fixtures/x-dom";
 import { searchTimeline } from "./fixtures/x-graphql";
 
@@ -57,6 +57,8 @@ describe("x helpers: reading the page", () => {
       },
       viewer: { liked: false, reposted: false, bookmarked: false },
     });
+    // A person sees which counts are rounded.
+    expect(entryText(entries[0]!)).toContain("3 replies · 1204 reposts · ~12000 likes · 25900 views");
   });
 
   test("readPosts: a repost is by the reposter's handle, the account's own state read from the buttons", async () => {
