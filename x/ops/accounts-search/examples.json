@@ -1,0 +1,6 @@
+[
+  { "context": "me", "input": { "query": "machine learning", "limit": 5 } },
+  { "context": "me", "input": { "query": "dhh", "limit": 3 } },
+  { "context": "me", "input": { "query": "zzqxv9k_nomatch_77" } },
+  { "context": "me", "input": { "query": "from:NASA since:2025-01-01", "limit": 3 } }
+]
