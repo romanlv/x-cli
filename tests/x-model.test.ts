@@ -9,6 +9,7 @@ import {
   lastPage,
   legacyUser,
   listResult,
+  profileConversations,
   searchTimeline,
   tweetDetail,
   unavailableTweet,
@@ -139,6 +140,23 @@ describe("x model: GraphQL posts", () => {
       closed: false,
     });
     expect(p.card).toBeUndefined();
+  });
+
+  test("a profile's conversation modules: items keep their module, oldest first; the page flattens them", () => {
+    const t = readTimeline(profileConversations);
+    expect(t.items.map((i) => [i.module ?? "", (i.value as Post).id])).toEqual([
+      ["profile-conversation-9001", "3005"],
+      ["profile-conversation-9001", "3012"],
+      ["", "3010"],
+      ["profile-conversation-9002", "2990"],
+      ["profile-conversation-9002", "3006"],
+      ["profile-conversation-9002", "3008"],
+      ["", "3004"],
+      ["", "3003"],
+    ]);
+    const p = postsPage(profileConversations);
+    valid(Page(Entry), p);
+    expect(p.items.map((e) => e.id)).toEqual(["3005", "3012", "3010", "2990", "3006", "3008", "3004", "3003"]);
   });
 
   test("a profile's pinned post is marked, suggestions are left out", () => {

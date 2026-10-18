@@ -7,7 +7,7 @@
 import type { Page, Response } from "playwright";
 import { InputError, PreconditionError, RefusedError } from "../../core/errors";
 import { type Article, entryFromArticle, isPinned } from "../map/dom";
-import { clean, postsPage, threadOf, userFromResult } from "../map/graphql";
+import { clean, hasMore, isEntry, readTimeline, type TimelineItem, threadOf, userFromResult } from "../map/graphql";
 import { type Entry, postOf, type Thread, type User, type UserUnavailable, type Page as XPage } from "../model";
 
 export const ORIGIN = "https://x.com";
@@ -26,6 +26,8 @@ export const SEL = {
   post: 'article[data-testid="tweet"]',
   postText: '[data-testid="tweetText"]',
   userName: '[data-testid="User-Name"]',
+  /** A profile's name and handle above its timeline (inferred). */
+  profileName: '[data-testid="UserName"]',
   /** One row of a virtualised timeline: a post, or what X shows in its place. */
   cell: '[data-testid="cellInnerDiv"]',
   /**
@@ -101,10 +103,17 @@ const readArticles = (page: Page): Promise<Article[]> =>
     SEL,
   );
 
-/** One entry as a read found it: `pinned` when X put it above the timeline, out of its order. */
+/** One entry as a read found it, and where it sits when that is out of the timeline's order. */
 export interface Cell {
   entry: Entry;
+  /** X put it above the timeline (a profile's pinned post). It never stops a read. */
   pinned?: boolean;
+  /**
+   * It is above a newer post of its conversation module, which X lays out oldest first (a parent
+   * above its reply, a self-thread's 1/ above 2/). Only a module's newest post is in the timeline's
+   * order, so this one never stops a read, and is left out when it is the `until` post.
+   */
+  earlier?: boolean;
 }
 
 const readCells = async (page: Page): Promise<Cell[]> =>
@@ -129,8 +138,11 @@ export interface Bound {
   /** A post id; it is not included. */
   until?: string;
   /**
-   * The timeline is newest first by id (a profile, search's Latest), so a read stops at the first
-   * entry at or before `until`, even when that post was deleted. Otherwise only `until` itself stops it.
+   * The timeline is newest first by id, so a read stops at the first entry at or before `until`, even
+   * when that post was deleted. Otherwise only `until` itself stops it. GraphQL marks the posts of
+   * X's conversation modules that are out of order (`Cell.earlier`), so for `timeline` a profile,
+   * its replies, a list and search's Latest are newest first. The DOM can't tell, so for `posts` only
+   * search's Latest is: a profile shows a self-thread oldest first, on its Posts tab too.
    */
   newestFirst?: boolean;
   /** At most this many scrolls (MAX_SCROLLS); a read cut short by it says `more`. */
@@ -146,28 +158,36 @@ const keyOf = (e: Entry) => {
 /**
  * Entries once each, in the order read, until `limit` or the `until` post. A pinned entry is kept and
  * marked, and never stops the read. A tombstone the DOM shows has no id, so it is known by the entry
- * before it, or when it is first in a read by the entry after it (and was seen already if that was).
+ * before it. First in a read, it is skipped when the entry after it was seen already (it was read
+ * then too); otherwise it follows on from the last entry with an id that the reads before had, so
+ * one that ends a read and starts the next is counted once. In the first read, the entry after it names it.
  */
 export const gather = ({ limit = 20, until, newestFirst }: Bound) => {
   const seen = new Map<string, Entry>();
   const pinned = new Set<string>();
   let reachedUntil = false;
-  const isUntil = (e: Entry) => {
-    if (!until) return false;
-    if (e.id === until || postOf(e).id === until) return true;
-    // A repost is placed by its own id; a DOM repost has none, so only equality stops at one.
-    return !!newestFirst && !!e.id && BigInt(e.id) <= BigInt(until);
+  /** The key of the last entry with an id read so far. */
+  let lastKeyed: string | undefined;
+  /** "stop" the read here, "skip" the entry (the until post, out of order), or keep it. */
+  const untilOf = ({ entry: e, pinned: pin, earlier }: Cell): "stop" | "skip" | undefined => {
+    if (!until || pin) return undefined;
+    // A repost is placed by its own id; a DOM repost has none, so by its post's.
+    if ((e.id ?? postOf(e).id) === until) return earlier ? "skip" : "stop";
+    return newestFirst && !earlier && e.id && BigInt(e.id) <= BigInt(until) ? "stop" : undefined;
   };
   return {
     /** Adds one read's entries; true once the read has what it needs. */
     add(cells: Cell[]): boolean {
       let previous: string | undefined;
       let skipping = false;
-      for (const [i, { entry: e, pinned: pin }] of cells.entries()) {
-        if (!pin && isUntil(e)) {
+      for (const [i, cell] of cells.entries()) {
+        const { entry: e, pinned: pin } = cell;
+        const stop = untilOf(cell);
+        if (stop === "stop") {
           reachedUntil = true;
           break;
         }
+        if (stop === "skip") continue;
         let key = keyOf(e);
         if (key) skipping = false;
         else if (skipping) continue;
@@ -180,9 +200,10 @@ export const gather = ({ limit = 20, until, newestFirst }: Bound) => {
             skipping = true;
             continue;
           }
-          key = `${e.kind}^${next ?? ""}`;
+          key = lastKeyed ? `${e.kind}@${lastKeyed}` : `${e.kind}^${next ?? ""}`;
         } else key = `${e.kind}@${previous}`;
         previous = key;
+        if (keyOf(e)) lastKeyed = key;
         if (seen.has(key)) continue;
         seen.set(key, e);
         if (pin) pinned.add(key);
@@ -239,10 +260,15 @@ const resetAt = (headers: Record<string, string>): string => {
   return reset ? `; it resets at ${new Date(reset * 1000).toISOString()}` : "";
 };
 
+const GRAPHQL = /\/i\/api\/graphql\/[^/]+\/(\w+)(\?|$)/;
 const callOf = (operation: string) => new RegExp(`/i/api/graphql/[^/]+/${operation}(\\?|$)`);
 
-/** A GraphQL response's JSON; a rate limit or a locked account is `RefusedError`, never retried. */
-const bodyOf = async (operation: string, response: Response): Promise<unknown> => {
+/**
+ * X's limits on one GraphQL response, the same for every read: a rate limit or a locked account is
+ * `RefusedError`, never retried. `low` is set once X's budget for the call is down to a tenth of its
+ * limit: a read then stops with what it has and `more`, or refuses with `low` when it has nothing.
+ */
+const limitsOf = async (operation: string, response: Response): Promise<{ body: unknown; low?: string }> => {
   const headers = response.headers();
   if (response.status() === 429) throw new RefusedError(`X rate limited ${operation}${resetAt(headers)}`);
   const body = (await response.json().catch(() => undefined)) as { errors?: { code?: number; message?: string }[] } | undefined;
@@ -254,8 +280,19 @@ const bodyOf = async (operation: string, response: Response): Promise<unknown> =
       `X: the account looks limited or locked: ${operation} was refused as rate limited (code 88) with ${budget.remaining} of ${budget.limit} calls left. Check the account by hand in the browser before running more`,
     );
   if (code !== undefined) throw new RefusedError(`X: ${ACCOUNT_ERRORS[code]} (${operation}, code ${code})${resetAt(headers)}`);
-  if (!response.ok() || !body) throw new Error(`${operation} answered ${response.status()} ${body ? "" : "without JSON"}`.trim());
-  return body;
+  const low =
+    budget && budget.remaining <= budget.limit * LOW_BUDGET
+      ? `X's budget for ${operation} is down to ${budget.remaining} of ${budget.limit}; stopping before it runs out${resetAt(headers)}`
+      : undefined;
+  return { body, low };
+};
+
+/** A GraphQL response's JSON, through `limitsOf`; a response that isn't one is an error. */
+const bodyOf = async (operation: string, response: Response) => {
+  const answer = await limitsOf(operation, response);
+  if (!response.ok() || !answer.body)
+    throw new Error(`${operation} answered ${response.status()} ${answer.body ? "" : "without JSON"}`.trim());
+  return answer;
 };
 
 export const xHelpers = (page: Page) => {
@@ -281,42 +318,70 @@ export const xHelpers = (page: Page) => {
       const clean = handle.replace(/^@/, "");
       if (!HANDLE.test(clean)) throw new InputError(`"${handle}" is not an X handle (letters, digits and _, at most 15)`);
       await helpers.open(`/${clean}`);
-      if (
-        await page
-          .getByText(/this account doesn.t exist/i)
-          .isVisible()
-          .catch(() => false)
-      )
-        throw new PreconditionError(`no account @${clean}`);
+      // The main column comes before either: wait for the profile or X's message, then decide.
+      const missing = page.getByText(/this account doesn.t exist/i);
+      await page
+        .locator(SEL.profileName)
+        .or(missing)
+        .first()
+        .waitFor({ state: "visible", timeout: 20_000 })
+        .catch(() => {});
+      if (await missing.isVisible().catch(() => false)) throw new PreconditionError(`no account @${clean}`);
     },
 
     /**
      * The timeline on the page as the DOM shows it, scrolled and collected until `limit` entries or
      * the `until` post, until scrolling brings nothing new a few times running, or after `scrolls`
-     * scrolls. Paced like a person reading, never faster. `app.timeline` reads the same from GraphQL,
-     * with more in each entry.
+     * scrolls. Paced like a person reading, never faster. Scrolling makes the page fetch the timeline
+     * through GraphQL, so X's limits stop it as they stop `timeline`: a rate limit or a locked account
+     * is `RefusedError`, and a budget down to a tenth ends the read with `more`. `app.timeline` reads
+     * the same from GraphQL, with more in each entry.
      */
     async posts(bound: Bound = {}): Promise<XPage<Entry>> {
-      const read = gather(bound);
-      await page
-        .locator(`${SEL.post}, ${SEL.emptyState}`)
-        .first()
-        .waitFor({ state: "visible", timeout: 20_000 })
-        .catch(() => {});
-      let capped = false;
-      for (let idle = 0, scrolls = 0; ; scrolls++) {
-        const before = read.size;
-        // Enough: another scroll would only fetch more of the timeline from X.
-        if (read.add(await readCells(page))) break;
-        idle = read.size === before ? idle + 1 : 0;
-        if (idle >= 3) break;
-        if (scrolls >= (bound.scrolls ?? MAX_SCROLLS)) {
-          capped = true;
-          break;
+      const responses: Response[] = [];
+      const listen = (r: Response) => {
+        if (GRAPHQL.test(r.url())) responses.push(r);
+      };
+      page.on("response", listen);
+      try {
+        const read = gather(bound);
+        await page
+          .locator(`${SEL.post}, ${SEL.emptyState}`)
+          .first()
+          .waitFor({ state: "visible", timeout: 20_000 })
+          .catch(() => {});
+        let more = false;
+        for (let used = 0, idle = 0, scrolls = 0; ; scrolls++) {
+          const before = read.size;
+          // Enough: another scroll would only fetch more of the timeline from X.
+          if (read.add(await readCells(page))) break;
+          let low: string | undefined;
+          while (used < responses.length) {
+            const response = responses[used++]!;
+            low ??= (await limitsOf(response.url().match(GRAPHQL)![1]!, response)).low;
+          }
+          if (low) {
+            if (!read.size) throw new RefusedError(low);
+            more = true;
+            break;
+          }
+          idle = read.size === before ? idle + 1 : 0;
+          if (idle >= 3) {
+            // A timeline that stopped growing may be X turning the account away.
+            const refused = await helpers.errors();
+            if (refused.length) throw new RefusedError(refused.join("; "));
+            break;
+          }
+          if (scrolls >= (bound.scrolls ?? MAX_SCROLLS)) {
+            more = true;
+            break;
+          }
+          await scroll(page);
         }
-        await scroll(page);
+        return read.page(more);
+      } finally {
+        page.off("response", listen);
       }
-      return read.page(capped);
     },
 
     /**
@@ -329,7 +394,7 @@ export const xHelpers = (page: Page) => {
     async graphql<T = unknown>(operation: string, act: () => Promise<unknown>, timeout = 30_000): Promise<T> {
       const match = callOf(operation);
       const [response] = await Promise.all([page.waitForResponse((r) => match.test(r.url()), { timeout }), act()]);
-      return (await bodyOf(operation, response)) as T;
+      return (await bodyOf(operation, response)).body as T;
     },
 
     /**
@@ -356,17 +421,20 @@ export const xHelpers = (page: Page) => {
         for (let used = 0, idle = 0, scrolls = 0; ; scrolls++) {
           const before = used;
           while (!done && used < responses.length) {
-            const response = responses[used++]!;
-            const got = postsPage(await bodyOf(operation, response));
-            more = got.more;
-            const cells = got.items.map((entry) => ({ entry, pinned: !!entry.id && !!got.pinned?.includes(entry.id) }));
+            const { body, low } = await bodyOf(operation, responses[used++]!);
+            const t = readTimeline(body);
+            more = hasMore(t);
+            const items = t.items.filter((i): i is TimelineItem & { value: Entry } => isEntry(i.value));
+            const cells = items.map(({ entryId, module, value }, n) =>
+              clean({
+                entry: value,
+                pinned: t.pinned.includes(entryId) || undefined,
+                earlier: (!!module && items[n + 1]?.module === module) || undefined,
+              }),
+            );
             done = read.add(cells) || more === false;
-            const budget = budgetOf(response.headers());
-            if (!done && budget && budget.remaining <= budget.limit * LOW_BUDGET) {
-              if (!read.size)
-                throw new RefusedError(
-                  `X's budget for ${operation} is down to ${budget.remaining} of ${budget.limit}; stopping before it runs out${resetAt(response.headers())}`,
-                );
+            if (!done && low) {
+              if (!read.size) throw new RefusedError(low);
               done = true;
             }
           }

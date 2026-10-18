@@ -61,10 +61,14 @@ This is a sketch, not a built op: the first real one replaces it here.
 - **Bound every read.** A timeline never ends, so every op that scrolls takes a `limit` (with a
   default) and may take `until`, a post id that a later read stops before (the newest one an earlier
   read returned), and the help says which. Never a cursor: ops make no calls, so they can't resume
-  one of X's. A timeline that is newest first by id (a profile, search's Latest) passes
-  `newestFirst: true`, so `until` stops it even when that post was deleted; bookmarks, likes and
-  search's Top don't. A profile's pinned post is in `items` and named in the page's `pinned`, and
-  never stops a read. Every read stops after `scrolls` scrolls (10), with `more`.
+  one of X's. A timeline that is newest first by id passes `newestFirst: true`, so `until` stops it
+  even when that post was deleted: with `app.timeline`, a profile (Posts or with replies), a list
+  and search's Latest; with `app.posts`, only search's Latest. A profile and a list show a
+  conversation oldest first (a self-thread's 1/ above 2/, on the Posts tab too); GraphQL says where
+  each conversation ends, the DOM doesn't, so a DOM read there would stop at the 1/ and lose the 2/.
+  Bookmarks, likes and search's Top are never newest first. A profile's pinned post is in `items`
+  and named in the page's `pinned`, and never stops a read. Every read stops after `scrolls`
+  scrolls (10), with `more`.
 - **Read GraphQL through the mappers.** `app.timeline(operation, open, { limit, until })` is a
   timeline's posts as the page and scrolling fetch them, `app.thread(id)` a post's TweetDetail,
   `app.user(handle)` its UserByScreenName. For any other call, `app.graphql` returns the raw JSON
@@ -103,8 +107,11 @@ X limits each account, not each op, and a locked account stops every op. So:
 - A rate limit is `RefusedError`, with when it resets when X says so. Never retry in a loop.
   `app.graphql` does this for X's error codes 88 (rate limited) and 326 (locked); code 88 while the
   call's budget has calls left is worded as a limited or locked account, for the person to check.
-- `app.timeline` reads X's budget (`x-rate-limit-remaining` of `-limit`) on every response and stops
-  at a tenth of it with what it has read and `more` (`RefusedError` if it has read nothing).
+- `app.timeline` and `app.posts` read X's budget (`x-rate-limit-remaining` of `-limit`) on every
+  GraphQL response the page receives and stop at a tenth of it with what they have read and `more`
+  (`RefusedError` if they have read nothing); a rate limit or a lock in one is `RefusedError`, the
+  same rules for both. `app.posts` also checks X's messages before it takes a timeline that stopped
+  growing as its end.
 - A challenge, a captcha or the login page mid-run is the person's to clear, by hand: stop, never
   try to get past it.
 

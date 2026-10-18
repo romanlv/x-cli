@@ -96,3 +96,15 @@ export const profileHtml = `<main data-testid="primaryColumn"><section>${[
   }),
   cell({ id: "1007", handle: "ada", name: "Ada", text: "no labels", labels: { reply: null, retweet: null, like: null, bookmark: null } }),
 ].join("")}</section></main>`;
+
+/**
+ * A profile with a self-thread, drawn as X lays out a conversation, oldest first: 1/ (1005) above
+ * 2/ (1012), then 1010, the until post 1008, and 1007. The DOM doesn't say where the thread ends.
+ */
+export const selfThreadHtml = `<main data-testid="primaryColumn"><section>${[
+  cell({ id: "1005", handle: "ada", name: "Ada", text: "1/ a thread" }),
+  cell({ id: "1012", handle: "ada", name: "Ada", text: "2/ more of it" }),
+  cell({ id: "1010", handle: "ada", name: "Ada", text: "another" }),
+  cell({ id: "1008", handle: "ada", name: "Ada", text: "read last time" }),
+  cell({ id: "1007", handle: "ada", name: "Ada", text: "older" }),
+].join("")}</section></main>`;

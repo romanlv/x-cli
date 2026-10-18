@@ -2,12 +2,12 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Browser, Page } from "playwright";
 import Value from "typebox/value";
 import { launch } from "../core/browser";
-import { RefusedError } from "../core/errors";
+import { PreconditionError, RefusedError } from "../core/errors";
 import { gather, readPosts, xHelpers } from "../x/helpers";
 import { count } from "../x/map/dom";
 import { Entry, entryText, type Post, type Repost, type Unavailable } from "../x/model";
-import { profileHtml, timelineHtml } from "./fixtures/x-dom";
-import { adsOnly, searchTimeline, userTweets } from "./fixtures/x-graphql";
+import { profileHtml, selfThreadHtml, timelineHtml } from "./fixtures/x-dom";
+import { adsOnly, profileConversations, searchTimeline, userTweets } from "./fixtures/x-graphql";
 
 const post = (id: string): Post => ({ kind: "post", id, source: "dom", author: { handle: "ada" }, text: "" });
 const gone: Unavailable = { kind: "unavailable", reason: "deleted", source: "dom" };
@@ -19,6 +19,11 @@ describe("x helpers: gathering a timeline", () => {
     read.add(cells(post("1001"), gone, post("1003")));
     read.add(cells(gone, post("1003"), post("1004")));
     expect(read.page().items).toEqual([post("1001"), gone, post("1003"), post("1004")]);
+    // One that ends a read and starts the next, before a post neither has seen.
+    const split = gather({ limit: 50 });
+    split.add(cells(post("1001"), gone));
+    split.add(cells(gone, post("1003")));
+    expect(split.page().items).toEqual([post("1001"), gone, post("1003")]);
   });
 
   test("a tombstone first in the first read is kept, and two in a row stay two", () => {
@@ -47,6 +52,17 @@ describe("x helpers: gathering a timeline", () => {
     const any = gather({ until: "1008" });
     any.add(cells(post("1010"), post("1007"), post("1008"), post("1006")));
     expect(any.page(true).items.map((e) => e.id)).toEqual(["1010", "1007"]);
+    // A repost with an id of its own is placed by it, not by its original's.
+    const original = gather({ until: "500" });
+    original.add(cells(repost("1012", "500"), repost(undefined, "500"), post("1006")));
+    expect(original.page(true).items).toEqual([repost("1012", "500")]);
+  });
+
+  test("newest first: a post above a newer one of its conversation module never stops it, and is left out as the until post", () => {
+    const thread = (...entries: [string, boolean?][]) => entries.map(([id, earlier]) => ({ entry: post(id), earlier }));
+    const read = gather({ until: "1005", newestFirst: true });
+    read.add(thread(["1005", true], ["1012"], ["1010"], ["990", true], ["1003", true], ["1008"], ["1004"]));
+    expect(read.page(true).items.map((e) => e.id)).toEqual(["1012", "1010", "990", "1003", "1008"]);
   });
 });
 
@@ -137,7 +153,7 @@ describe("x helpers: reading the page", () => {
     expect(unlabelled.viewer).toEqual({ liked: false, reposted: false, bookmarked: false });
   });
 
-  test("posts on a profile: the pinned post is kept and marked, never stops until, and newest first stops past a deleted until", async () => {
+  test("posts: the pinned post is kept and marked and never stops until; newest first (search's Latest) stops past a deleted until", async () => {
     await page.setContent(profileHtml);
     const app = xHelpers(page);
     // 900 is older than until but pinned; 1008 was deleted, so 1007 is the first at or before it.
@@ -148,6 +164,16 @@ describe("x helpers: reading the page", () => {
     expect((await app.posts({ until: "900", scrolls: 0 })).items.length).toBe(4);
     // A read cut short by the scroll cap says there is more.
     expect(await app.posts({ scrolls: 0 })).toMatchObject({ more: true, pinned: ["900"] });
+  });
+
+  test("posts on a profile: a self-thread, oldest first, keeps its older 1/ and stops only at until, as the DOM isn't newest first there", async () => {
+    await page.setContent(selfThreadHtml);
+    const app = xHelpers(page);
+    const read = await app.posts({ until: "1008" });
+    expect(read.items.map((e) => e.id)).toEqual(["1005", "1012", "1010"]);
+    expect(read.more).toBeUndefined();
+    // Read as newest first, 1/ would stop it before 2/: why ops on a profile's DOM don't pass newestFirst.
+    expect((await app.posts({ until: "1008", newestFirst: true })).items).toEqual([]);
   });
 
   test("readPosts: the quote's parts stay in the quote; one with no permalink is left out", async () => {
@@ -214,38 +240,120 @@ describe("x helpers: reading the page", () => {
     await page.unroute("https://x.com/i/api/graphql/**");
   });
 
-  test("timeline: a pinned post is marked and never stops until; X's budget at a tenth stops the read; code 88 with budget left is the account", async () => {
-    let json: unknown = userTweets;
+  describe("X's GraphQL answers", () => {
+    let json: unknown;
     let budget: Record<string, string> = {};
-    await page.route("https://x.com/i/api/graphql/**", (route) =>
-      route.fulfill({
-        json,
-        headers: { "access-control-allow-origin": "*", "x-rate-limit-reset": "1800000000", ...budget },
-      }),
+    beforeAll(() =>
+      page.route("https://x.com/i/api/graphql/**", (route) =>
+        route.fulfill({
+          json,
+          headers: { "access-control-allow-origin": "*", "x-rate-limit-reset": "1800000000", ...budget },
+        }),
+      ),
     );
-    await page.setContent("<main></main>");
-    const app = xHelpers(page);
+    afterAll(() => page.unroute("https://x.com/i/api/graphql/**"));
+    const serve = async (body: unknown, headers: Record<string, string> = {}) => {
+      json = body;
+      budget = headers;
+      await page.setContent("<main></main>");
+    };
     const fetchTweets = () =>
       page.evaluate(() => fetch("https://x.com/i/api/graphql/q1/UserTweets?variables=%7B%7D").then((r) => r.text()));
+    const low = { "x-rate-limit-limit": "500", "x-rate-limit-remaining": "40" };
 
-    // The pinned 2001 is the until post, but out of the timeline's order: the read goes on past it.
-    const pinned = await app.timeline("UserTweets", fetchTweets, { until: "2001", scrolls: 0 });
-    expect(pinned).toMatchObject({ more: true, pinned: ["2001"] });
-    expect(pinned.items.map((e) => e.id)).toEqual(["2001", "2002", "2003", "2004", "2005", "2006"]);
+    test("timeline: a pinned post is marked and never stops until", async () => {
+      await serve(userTweets);
+      // The pinned 2001 is the until post, but out of the timeline's order: the read goes on past it.
+      const pinned = await xHelpers(page).timeline("UserTweets", fetchTweets, { until: "2001", scrolls: 0 });
+      expect(pinned).toMatchObject({ more: true, pinned: ["2001"] });
+      expect(pinned.items.map((e) => e.id)).toEqual(["2001", "2002", "2003", "2004", "2005", "2006"]);
+    });
 
-    // 40 of 500 left: what was read, and more, without another scroll.
-    budget = { "x-rate-limit-limit": "500", "x-rate-limit-remaining": "40" };
-    expect(await app.timeline("UserTweets", fetchTweets)).toMatchObject({ items: { length: 6 }, more: true });
+    test("timeline: newest first, a conversation module stops it only at its newest post; until inside one is left out", async () => {
+      await serve(profileConversations);
+      const app = xHelpers(page);
+      // 3007 was deleted: the module 2990, 3006, 3008 is placed by 3008, so the read goes on to 3004.
+      const deleted = await app.timeline("UserTweets", fetchTweets, { until: "3007", newestFirst: true });
+      expect(deleted.items.map((e) => e.id)).toEqual(["3005", "3012", "3010", "2990", "3006", "3008"]);
+      expect(deleted.more).toBeUndefined();
+      // 3005 is 1/ of a self-thread whose 2/ is newer: left out, and the read goes on.
+      const inThread = await app.timeline("UserTweets", fetchTweets, { until: "3005", newestFirst: true });
+      expect(inThread.items.map((e) => e.id)).toEqual(["3012", "3010", "2990", "3006", "3008"]);
+    });
 
-    // Nothing read yet (a page of only an ad) is a refusal with when it resets.
-    json = adsOnly;
-    await expect(app.timeline("UserTweets", fetchTweets)).rejects.toThrow(/down to 40 of 500.*resets at 2027-01-15/);
+    test("timeline: X's budget at a tenth stops the read with more, without another scroll", async () => {
+      await serve(userTweets, low);
+      expect(await xHelpers(page).timeline("UserTweets", fetchTweets)).toMatchObject({ items: { length: 6 }, more: true });
+    });
 
-    json = { errors: [{ code: 88, message: "Rate limit exceeded" }] };
-    budget = { "x-rate-limit-limit": "500", "x-rate-limit-remaining": "300" };
-    await expect(app.timeline("UserTweets", fetchTweets)).rejects.toThrow(/account looks limited or locked/);
-    budget = { "x-rate-limit-limit": "500", "x-rate-limit-remaining": "0" };
-    await expect(app.timeline("UserTweets", fetchTweets)).rejects.toThrow(/rate limited \(UserTweets, code 88\); it resets/);
-    await page.unroute("https://x.com/i/api/graphql/**");
+    test("timeline: X's budget at a tenth with nothing read (a page of only an ad) is a refusal with when it resets", async () => {
+      await serve(adsOnly, low);
+      await expect(xHelpers(page).timeline("UserTweets", fetchTweets)).rejects.toThrow(/down to 40 of 500.*resets at 2027-01-15/);
+    });
+
+    test("timeline: code 88 with budget left is the account, with none left a rate limit", async () => {
+      const limited = { errors: [{ code: 88, message: "Rate limit exceeded" }] };
+      await serve(limited, { "x-rate-limit-limit": "500", "x-rate-limit-remaining": "300" });
+      await expect(xHelpers(page).timeline("UserTweets", fetchTweets)).rejects.toThrow(/account looks limited or locked/);
+      await serve(limited, { "x-rate-limit-limit": "500", "x-rate-limit-remaining": "0" });
+      await expect(xHelpers(page).timeline("UserTweets", fetchTweets)).rejects.toThrow(/rate limited \(UserTweets, code 88\); it resets/);
+    });
+
+    /** A page that draws `html` once the timeline call it sends is answered with `body`, as X's does. */
+    const late = async (html: string, body: unknown, headers: Record<string, string>) => {
+      json = body;
+      budget = headers;
+      await page.setContent(
+        `<script>setTimeout(() => fetch("https://x.com/i/api/graphql/q1/UserTweets?variables=%7B%7D").then((r) => r.text()).then(() => setTimeout(() => { document.body.innerHTML = ${JSON.stringify(html)}; }, 200)), 300);</script>`,
+      );
+    };
+
+    test("posts: X's budget at a tenth on a call the page made stops it with what it read, and more", async () => {
+      await late(profileHtml, userTweets, low);
+      // Without the budget it would scroll on.
+      expect(await xHelpers(page).posts({ scrolls: 3 })).toMatchObject({ items: { length: 4 }, more: true });
+    });
+
+    test("posts: X's budget at a tenth with nothing read is a refusal", async () => {
+      await late(`<main data-testid="primaryColumn"><div data-testid="emptyState">Nothing yet</div></main>`, userTweets, low);
+      await expect(xHelpers(page).posts()).rejects.toThrow(/down to 40 of 500/);
+    });
+
+    test("posts: code 88 on a call the page made, with budget left, is the account", async () => {
+      await late(
+        profileHtml,
+        { errors: [{ code: 88, message: "Rate limit exceeded" }] },
+        { "x-rate-limit-limit": "500", "x-rate-limit-remaining": "300" },
+      );
+      await expect(xHelpers(page).posts()).rejects.toThrow(/account looks limited or locked/);
+    });
+  });
+
+  describe("profile: waits for the profile or X's message that it doesn't exist, which X draws after the main column", () => {
+    // A page of its own: one the tests before navigated is slow to go to another site.
+    let profilePage: Page;
+    const draw = (html: string) =>
+      `<main data-testid="primaryColumn"><p>Loading</p></main><script>setTimeout(() => { document.querySelector("main").innerHTML = ${JSON.stringify(html)}; }, 500);</script>`;
+    beforeAll(async () => {
+      profilePage = await browser.newPage();
+      await profilePage.route("https://x.com/*", (route) =>
+        route.fulfill({
+          contentType: "text/html; charset=utf-8",
+          body: route.request().url().endsWith("/nobody")
+            ? draw(`<div data-testid="emptyState"><span>This account doesn’t exist</span></div>`)
+            : draw(`<div data-testid="UserName"><span>Ada</span></div>`),
+        }),
+      );
+    });
+    afterAll(() => profilePage.close());
+
+    test("an account that isn't there is a precondition", async () => {
+      await expect(xHelpers(profilePage).profile("nobody")).rejects.toThrow(PreconditionError);
+    });
+
+    test("one that is opens", async () => {
+      await xHelpers(profilePage).profile("ada");
+      expect(await profilePage.locator('[data-testid="UserName"]').isVisible()).toBe(true);
+    });
   });
 });

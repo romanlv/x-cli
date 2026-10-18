@@ -441,6 +441,49 @@ export const tweetDetail = {
   },
 };
 
+const selfReply = (id: string, conversation: string, parent?: string) =>
+  tweet(id, ada, { full_text: `post ${id}`, conversation_id_str: conversation, in_reply_to_status_id_str: parent });
+
+/**
+ * UserTweets with conversation modules (twscrape raw_user_tweets.json and
+ * raw_user_tweets_and_replies.json have profile-conversation-<n> modules of two and three items,
+ * item ids profile-conversation-<n>-tweet-<id>): each module is laid out oldest first and placed by
+ * its newest post. Newest first by module: 3012, 3010, 3008, 3004.
+ */
+export const profileConversations = {
+  data: {
+    user: {
+      result: {
+        __typename: "User",
+        timeline: {
+          timeline: {
+            instructions: [
+              {
+                type: "TimelineAddEntries",
+                entries: [
+                  module("profile-conversation-9001", [
+                    moduleItem("profile-conversation-9001-tweet-3005", selfReply("3005", "3005"), "SelfThread"),
+                    moduleItem("profile-conversation-9001-tweet-3012", selfReply("3012", "3005", "3005"), "SelfThread"),
+                  ]),
+                  item("tweet-3010", selfReply("3010", "3010")),
+                  module("profile-conversation-9002", [
+                    moduleItem("profile-conversation-9002-tweet-2990", selfReply("2990", "2990")),
+                    moduleItem("profile-conversation-9002-tweet-3006", selfReply("3006", "2990", "2990")),
+                    moduleItem("profile-conversation-9002-tweet-3008", selfReply("3008", "2990", "3006")),
+                  ]),
+                  item("tweet-3004", selfReply("3004", "3004")),
+                  item("tweet-3003", selfReply("3003", "3003")),
+                  cursor("cursor-bottom-4", "Bottom", "DAAHCgAB-bottom-4"),
+                ],
+              },
+            ],
+          },
+        },
+      },
+    },
+  },
+};
+
 /** UserByScreenName (twscrape raw_user_by_login.json). */
 export const userByScreenName = {
   data: {

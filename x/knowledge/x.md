@@ -43,6 +43,7 @@ X marks controls with `data-testid`; class names are generated and change every 
 | `tweet` (an `article`) | one post in a timeline |
 | `tweetText` | a post's text; `tweet-text-show-more-link` when it is cut short |
 | `User-Name` | a post's author: display name, `@handle`, time; an embedded quote has its own |
+| `UserName` | a profile's name and `@handle` above its timeline; `profile()` waits for it or "This account doesn't exist", which X draws after the main column |
 | `socialContext` | the line above a post: "Ada reposted" (a repost, linking to the reposter), "Pinned" |
 | `reply`, `retweet`, `like`, `bookmark` | a post's buttons; the counts are in their `aria-label` ("12 Likes. Like"), none when 0; `bookmark`'s is just "Bookmark" |
 | `unretweet`, `unlike`, `removeBookmark` | the same buttons when the signed-in account has reposted, liked or bookmarked it |

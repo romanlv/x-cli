@@ -133,9 +133,10 @@ A user's counts are followers, following, posts, likes, media and listed. The ne
     `ShowMoreThreads` cursor ("Show more replies", the lower-ranked section)
     **[confirmed: card_poll.json, article.json]**.
   - Ads (`…-promoted-tweet-…`) and "you might also like" modules are left out.
-- A profile's "with replies" tab and a list timeline also group conversations into modules
-  (`profile-conversation-<id>`, `list-conversation-<id>`) **[confirmed]**. `postsPage` flattens them
-  into entries, and `readTimeline().items[].module` keeps the grouping for an op that wants it.
+- A profile (its Posts tab too, for a self-thread, and "with replies") and a list timeline also
+  group conversations into modules (`profile-conversation-<id>`, `list-conversation-<id>`), oldest
+  first **[confirmed]**. `postsPage` flattens them into entries, and `readTimeline().items[].module`
+  keeps the grouping for an op that wants it (and for `until`, Pagination).
 
 ## Reposts and quotes
 
@@ -187,16 +188,26 @@ left out (ads, suggestions) still has `more`, so a read scrolls on past it.
 A profile's pinned post comes first, in a `TimelinePinEntry` **[confirmed: raw_user_tweets.json]**
 or under the DOM's "Pinned" `socialContext` **[inferred]**, out of the timeline's order. It stays
 in `items`, and `pinned` lists its id, so an op can drop or label it. `until` never stops at a
-pinned entry. Where the timeline is newest first by id (a profile, search's Latest), an op says so
-(`newestFirst`) and a read stops at the first entry whose id is at or before `until`, so a deleted
-`until` post still stops it: a post by its id, a GraphQL repost by its own (when it was reposted),
-and a DOM repost, which has no id of its own, only when its post is `until`. Elsewhere (bookmarks
-and likes are in the order they were saved, search's Top by rank) only `until` itself stops a read.
+pinned entry. Where the timeline is newest first by id, an op says so (`newestFirst`) and a read
+stops at the first entry whose id is at or before `until`, so a deleted `until` post still stops
+it: a post by its id, a GraphQL repost by its own (when it was reposted), and a DOM repost, which
+has no id of its own, by its post's. `until` itself stops a read by the same ids. Elsewhere
+(bookmarks and likes are in the order they were saved, search's Top by rank) only `until` itself
+stops a read.
 
-`app.posts` reads the DOM, where a tombstone has no id: it is known by the entry before it, or,
-first in a read, by the entry after it, and is skipped when that entry was seen already (it was then
-read the time before). Every read is capped at 10 scrolls (`scrolls`), and one cut short by the cap
-says `more`.
+A profile (Posts and with replies) and a list group a conversation into a module laid out oldest
+first, a parent above its reply and a self-thread's 1/ above 2/, placed in the timeline by its
+newest post **[confirmed: profile-conversation- modules of two and three items in twscrape's
+raw_user_tweets.json and raw_user_tweets_and_replies.json]**. So for GraphQL (`app.timeline`) only
+an entry outside a module and a module's last post compare by id; a post above it in its module
+never stops a read and is left out when it is the `until` post. The DOM can't see modules, so for
+`app.posts` only search's Latest, which has none, is newest first.
+
+`app.posts` reads the DOM, where a tombstone has no id: it is known by the entry before it. First
+in a read, it is skipped when the entry after it was seen already (it was then read the time
+before); otherwise it follows on from the last entry with an id the reads before had, so one that
+ends a read and starts the next is counted once. Every read is capped at 10 scrolls (`scrolls`),
+and one cut short by the cap says `more`.
 
 Cursor kinds: `Top`, `Bottom`, `ShowMore` (inside a module), `ShowMoreThreads`. Their values are
 opaque strings, and Followers uses `"<n>|<n>"` **[confirmed]**. Instructions: `TimelineAddEntries`,

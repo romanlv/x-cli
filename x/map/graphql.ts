@@ -544,8 +544,11 @@ export const readTimeline = (json: unknown): Timeline => {
   return t;
 };
 
-const isEntry = (v: TimelineItem["value"]): v is Entry => v.kind === "post" || v.kind === "repost" || v.kind === "unavailable";
+export const isEntry = (v: TimelineItem["value"]): v is Entry => v.kind === "post" || v.kind === "repost" || v.kind === "unavailable";
 const isAccount = (v: TimelineItem["value"]): v is User | UserUnavailable => v.kind === "user" || v.kind === "user-unavailable";
+
+/** X has more past this page: a Bottom cursor, on a timeline X didn't end (it sends one on the last page too, with no entries). */
+export const hasMore = (t: Timeline): boolean => !!t.cursors.Bottom && !t.ended;
 
 const keyOf = (v: TimelineItem["value"], entryId: string) => `${v.kind}:${"id" in v && v.id ? v.id : entryId}`;
 
@@ -560,9 +563,7 @@ const page = <T extends TimelineItem["value"]>(t: Timeline, keep: (v: TimelineIt
     items.push(value);
     if (t.pinned.includes(entryId) && "id" in value && value.id) pinned.push(value.id);
   }
-  const cursor = t.cursors.Bottom;
-  // X sends a Bottom cursor on the last page too, with no entries: that, or TimelineTerminateTimeline, is the end.
-  return clean({ items, more: !!cursor && !t.ended, cursor, pinned: pinned.length ? pinned : undefined });
+  return clean({ items, more: hasMore(t), cursor: t.cursors.Bottom, pinned: pinned.length ? pinned : undefined });
 };
 
 /** A timeline of posts as a page: search, a profile, bookmarks, likes, a list. */
