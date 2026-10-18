@@ -22,5 +22,5 @@ command reference. The machinery comes from `../workday-cli`; only `x/` is X's.
 - `bun run ci:fast` is everything but browser e2e tests (seconds), `ci:sandbox` that without the
   workflow tests (what sandboxed agents run); `bun run ci:check` runs Biome, tsc, the bun tests and
   the workflow tests (`awf test core/workflows`). There are no e2e tests yet: they need a mock X.
-- Test env: `XCLI_NO_WORKER=1` files requests without starting the worker; `XCLI_STEP_TIMEOUT_MS`
-  and `XCLI_SIGNIN_WAIT_MS` shorten waits.
+- Test env: `XCLI_NO_WORKER=1` files requests without starting the worker; `XCLI_STEP_TIMEOUT_MS` (one
+  action or call) and `XCLI_SIGNIN_WAIT_MS` (a loaded page showing whether it is signed in) shorten waits.

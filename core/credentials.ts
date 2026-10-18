@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "playwright";
 import type { Domain } from "./domain";
-import { envNumber, envValue } from "./env";
+import { envValue } from "./env";
 import { progress } from "./output";
 
 export interface Credentials {
@@ -29,6 +29,9 @@ export const savedCredentials = (root: string, context: string): Credentials | u
   return username && password ? { username, password } : undefined;
 };
 
+/** How long after the password is sent a form still asking for it has turned it down. */
+const TURNED_DOWN_MS = 20_000;
+
 /** How a sign-in in progress is waited for, by hand or with credentials. */
 export interface SignInWait {
   ms: number;
@@ -48,8 +51,9 @@ export const submitCredentials = async (
   const as = `the sign-in as ${credentials.username}`;
   progress(`signing in to ${url} as ${credentials.username}`);
   await submit(page, credentials);
-  // A form still asking for the password well after it was sent turned it down.
-  const refusedBy = Date.now() + envNumber("SIGNIN_WAIT_MS", 20_000);
+  // A form still asking for the password this long after it was sent turned it down: a fixed wait,
+  // not SIGNIN_WAIT_MS, which is how long a loaded page may take to say whether it is signed in.
+  const refusedBy = Date.now() + TURNED_DOWN_MS;
   const password = page.locator('input[type="password"]').first();
   return {
     ms: timeoutMs,
