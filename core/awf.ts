@@ -171,8 +171,41 @@ const doing = (activity: Activity): string => {
 
 const since = (iso: string, now: number) => formatDuration(Math.max(0, now - Date.parse(iso)));
 
-/** A run's stages, the running one with the turns open in the latest attempt. */
-export const describeRun = (view: RunView, turns: TurnLine[], now = Date.now()): StageRow[] => {
+/** An attempt as awf records it once it ends: each stage it ran, and for how long. */
+interface AttemptRecord {
+  attempt?: number;
+  stages?: { stage: string; source?: string; spanMs?: number }[];
+}
+
+/**
+ * How long each stage ran in the attempts before the latest, in order. A stage interrupted and run
+ * again ran in several; the latest attempt reuses the ones that had succeeded, and shows them as
+ * taking no time.
+ */
+export const earlierSpans = (attempts: AttemptRecord[]): Map<string, number[]> => {
+  const latest = Math.max(0, ...attempts.map((a) => a.attempt ?? 0));
+  const spans = new Map<string, number[]>();
+  for (const a of [...attempts].sort((x, y) => (x.attempt ?? 0) - (y.attempt ?? 0))) {
+    if ((a.attempt ?? 0) === latest) continue;
+    for (const s of a.stages ?? [])
+      if (s.source === "ran" && typeof s.spanMs === "number") spans.set(s.stage, [...(spans.get(s.stage) ?? []), s.spanMs]);
+  }
+  return spans;
+};
+
+/** The time a stage has run in all, and each attempt's part when it ran in more than one. */
+const stageTime = (spans: number[]): string => {
+  if (spans.length === 0) return "";
+  const total = formatDuration(spans.reduce((sum, ms) => sum + ms, 0));
+  return spans.length > 1 ? `${total} (${spans.map(formatDuration).join(" + ")})` : total;
+};
+
+/**
+ * A run's stages, the running one with the turns open in the latest attempt. Their times are their
+ * attempts' together, from `earlier` (`earlierSpans`) and the latest's; a stage the latest reused
+ * shows as it ended.
+ */
+export const describeRun = (view: RunView, turns: TurnLine[], now = Date.now(), earlier: Map<string, number[]> = new Map()): StageRow[] => {
   // The latest attempt's turns: one an earlier attempt left open never settles.
   const attempt = Math.max(0, ...turns.map((t) => t.attempt ?? 0));
   const open = new Map<string, TurnLine>();
@@ -183,8 +216,13 @@ export const describeRun = (view: RunView, turns: TurnLine[], now = Date.now()):
   const live = new Map((view.agents ?? []).map((a) => [a.key, a.live?.lastActivity]));
   return (view.stages ?? []).map((stage) => ({
     stage: stage.stage,
-    state: stage.state,
-    time: stage.started ? formatDuration(Math.max(0, (stage.ended ? Date.parse(stage.ended) : now) - Date.parse(stage.started))) : "",
+    state: stage.state === "reused" ? "succeeded" : stage.state,
+    time: stageTime([
+      ...(earlier.get(stage.stage) ?? []),
+      ...(stage.started && stage.state !== "reused"
+        ? [Math.max(0, (stage.ended ? Date.parse(stage.ended) : now) - Date.parse(stage.started))]
+        : []),
+    ]),
     turns:
       stage.state === "running"
         ? [...open.values()].map((t) => {
@@ -208,7 +246,12 @@ export const runActivity = async (home: string, id: string): Promise<StageRow[] 
     const child = Bun.spawn([awfCommand(), "runs", id, "--run-root", runRoot(home), "--json"], { stdout: "pipe", stderr: "ignore" });
     const out = await new Response(child.stdout).text();
     if ((await child.exited) !== 0) return undefined;
-    return describeRun(JSON.parse(out) as RunView, readJsonLines<TurnLine>(join(dir, "turns.jsonl")));
+    const attempts = existsSync(join(dir, "attempts"))
+      ? readdirSync(join(dir, "attempts"))
+          .filter((f) => f.endsWith(".json"))
+          .map((f) => readJson<AttemptRecord>(join(dir, "attempts", f), {}))
+      : [];
+    return describeRun(JSON.parse(out) as RunView, readJsonLines<TurnLine>(join(dir, "turns.jsonl")), Date.now(), earlierSpans(attempts));
   } catch {
     return undefined;
   }

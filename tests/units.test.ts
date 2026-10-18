@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Type from "typebox";
-import { awfArgs, describeRun, formatCost, runUsage } from "../core/awf";
+import { awfArgs, describeRun, earlierSpans, formatCost, runUsage } from "../core/awf";
 import { launch, readSignIn, signedInContext } from "../core/browser";
 import { callOf, parseArgs } from "../core/cli";
 import { Contexts } from "../core/contexts";
@@ -425,6 +425,38 @@ describe("request ledger", () => {
     expect(describeRun(view, [...stale, { kind: "attempt-started", attempt: 2 }], now)[1]!.turns).toEqual([]);
     // Between turns, as while the checks run, the stage alone.
     expect(describeRun(view, turns.slice(0, 2), now)[1]!.turns).toEqual([]);
+  });
+
+  test("a stage's time is its attempts' together, those the latest reused included", () => {
+    const now = Date.parse("2026-10-18T14:00:00Z");
+    const attempts = [
+      { attempt: 3, stages: [] },
+      { attempt: 1, stages: [{ stage: "intake", source: "ran", spanMs: 1_000 }] },
+      {
+        attempt: 2,
+        stages: [
+          { stage: "intake", source: "ran", spanMs: 154_000 },
+          { stage: "write", source: "ran", spanMs: 85_000 },
+          { stage: "check", source: "ran", spanMs: 541_000 },
+        ],
+      },
+    ];
+    const at = "2026-10-18T13:44:28Z";
+    const view = {
+      stages: [
+        { stage: "intake", state: "reused", started: at, ended: at },
+        { stage: "write", state: "reused", started: at, ended: at },
+        { stage: "check", state: "running", started: "2026-10-18T13:52:00Z" },
+        { stage: "merge", state: "pending" },
+      ],
+    };
+    const rows = describeRun(view, [], now, earlierSpans(attempts));
+    expect(rows.map((r) => [r.stage, r.state, r.time])).toEqual([
+      ["intake", "succeeded", "3m (1s + 3m)"],
+      ["write", "succeeded", "1m"],
+      ["check", "running", "17m (9m + 8m)"],
+      ["merge", "pending", ""],
+    ]);
   });
 
   test("a retry of a run that stopped continues from the stage that stopped", () => {
