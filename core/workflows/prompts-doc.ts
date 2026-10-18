@@ -168,7 +168,7 @@ export const renderPrompts = (cli: string, domainFolder: string, config: Workflo
     ),
     section(
       "earlier answers",
-      "Appended to most prompts once a person has answered a question; here, explore's.",
+      "Appended to most prompts once a person has answered a question; here, explore's. The checker changes no files, so review's says only to follow the answers.",
       prompts.explore(answered, op, plan, false),
     ),
     "## In a sandbox",

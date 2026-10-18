@@ -48,13 +48,18 @@ const tag = (name: string, body: string, attrs: Record<string, string> = {}): st
   return `<${name}${attributes}>\n${body}\n</${name}>`;
 };
 
-/** What the person answered so far, for a prompt that may be reading it for the first time. */
-const answers = (request: RequestRecord): string => {
+/**
+ * What the person answered so far, for a prompt that may be reading it for the first time. `readOnly`
+ * for an agent that changes no files, which follows the answers without writing them down.
+ */
+const answers = (request: RequestRecord, readOnly = false): string => {
   if (!request.answers.length) return "";
   return [
     "",
     "",
-    "A person answered questions this request asked earlier. Follow the answers, and write each into the level of knowledge it belongs to (the op's notes.md, knowledge/*.md, or the context's file) so it is not asked again.",
+    readOnly
+      ? "A person answered questions this request asked earlier. Follow the answers."
+      : "A person answered questions this request asked earlier. Follow the answers, and write each into the level of knowledge it belongs to (the op's notes.md, knowledge/*.md, or the context's file) so it is not asked again.",
     tag("answers", request.answers.map((a) => `- Q: ${a.question ?? "(none)"}\n  A: ${a.text}`).join("\n")),
   ].join("\n");
 };
@@ -186,7 +191,7 @@ export const explore = (run: PromptRun, op: string, summary: string, change: boo
   - Survey the ways a person could do it in the app: its search, its pages and menus, filters; knowledge/ names this app's. For each, write in ${opDir(run, op)}/notes.md (append; never remove what an earlier build wrote) what it gives and what it lacks for the intent.
   - Pick the way that serves it best, and do the task once that way through the page commands, on test data. Write down every screen, label, prompt and wait that mattered. The trace records the locator each command used.
   - When the op finds records by a value the person gives, the way is the app's own search or filter for it, letting the app match. Reading every record to match in the op is a last resort, and notes.md says why each search doesn't serve.
-  - If the op reads, find the calls behind it and the tokens they need, as the direct-calls skill says, unless authoring.md rules it out.
+  - If the op reads, find the calls behind it as the direct-calls skill says, and the tokens they need for a direct way, unless authoring.md rules out a direct way: then the skill's layers 1 and 2 only.
   - If no way serves the intent, answer missing with what you tried. If the ways differ in what the person would get back (how a name matches, which records are left out), and the intent doesn't settle it, ask.
   - Otherwise answer done with the way you picked and why.${answers(run.request)}
 `;
@@ -316,7 +321,7 @@ export const review = (run: PromptRun, op: string, summary: string, verified: Ve
     Each finding says where and what is wrong, and how severe it is:
     - blocking: ${SEVERITY.blocking}.
     - minor: ${SEVERITY.minor}.
-    No findings approves it.${answers(request)}
+    No findings approves it.${answers(request, true)}
   `;
 };
 

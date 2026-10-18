@@ -357,6 +357,9 @@ test("an answered question reaches the stage that asked, and the checker, on the
   );
   expect(run.turnsOf("builder")[0]!.prompt).toContain("A: lamp");
   expect(run.turnsOf("checker")[0]!.prompt).toContain("A: lamp");
+  // The checker changes no files, so it isn't told to write the answer down.
+  expect(run.turnsOf("builder")[0]!.prompt).toContain("write each into the level of knowledge");
+  expect(run.turnsOf("checker")[0]!.prompt).not.toContain("write each into the level of knowledge");
   expect(run.value.state).toBe("done");
 });
 
