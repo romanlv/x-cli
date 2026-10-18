@@ -573,6 +573,24 @@ export const postsPage = (json: unknown): Page<Entry> => page(readTimeline(json)
 /** A timeline of accounts as a page: followers, following, list members, reposters. */
 export const usersPage = (json: unknown): Page<User | UserUnavailable> => page(readTimeline(json), isAccount);
 
+/** Reply groups of a TweetDetail's items: a group per conversation module (or lone entry), in the order X sent them. */
+const groupsOf = (items: TimelineItem[], more: Record<string, string>): ReplyGroup[] => {
+  const groups = new Map<string, ReplyGroup>();
+  for (const { entryId, module, display, value } of items) {
+    if (!isEntry(value)) continue;
+    const key = module ?? entryId;
+    const group = groups.get(key) ?? { posts: [] };
+    group.posts.push(postOf(value));
+    if (display === "SelfThread") group.selfThread = true;
+    if (module && more[module]) group.more = true;
+    groups.set(key, group);
+  }
+  return [...groups.values()];
+};
+
+/** X has more replies to offer past this TweetDetail response: a cursor it didn't end (it sends a Bottom one on the last page too). */
+const moreReplies = (t: Timeline): boolean => !t.ended && !!(t.cursors.Bottom || t.cursors.ShowMoreThreads);
+
 /**
  * TweetDetail as a Thread around `focalId`: the entries before the focal post are its ancestors, each
  * conversation module after it is a group of replies, the first of them the author's self-thread
@@ -582,28 +600,32 @@ export const threadOf = (json: unknown, focalId: string): Thread => {
   const t = readTimeline(json);
   let focal: Post | Unavailable | undefined;
   const ancestors: (Post | Unavailable)[] = [];
-  const groups = new Map<string, ReplyGroup>();
-  for (const { entryId, module, display, value } of t.items) {
+  let after = 0;
+  for (const [i, { entryId, value }] of t.items.entries()) {
     if (!isEntry(value)) continue;
     const post = postOf(value);
-    if (!focal) {
-      if (idOfEntry(entryId) === focalId || post.id === focalId) focal = post;
-      else ancestors.push(post);
-      continue;
+    if (idOfEntry(entryId) === focalId || post.id === focalId) {
+      focal = post;
+      after = i + 1;
+      break;
     }
-    const key = module ?? entryId;
-    const group = groups.get(key) ?? { posts: [] };
-    group.posts.push(post);
-    if (display === "SelfThread") group.selfThread = true;
-    if (module && t.more[module]) group.more = true;
-    groups.set(key, group);
+    ancestors.push(post);
   }
   const f = focal ?? unavailable("unknown", focalId);
   return clean({
     conversationId: f.kind === "post" ? f.conversationId : undefined,
     focal: f,
     ancestors: focal ? ancestors : [],
-    replies: [...groups.values()],
-    more: !!(t.cursors.Bottom || t.cursors.ShowMoreThreads),
+    replies: focal ? groupsOf(t.items.slice(after), t.more) : [],
+    more: moreReplies(t),
   });
+};
+
+/**
+ * The reply groups of a TweetDetail call that scrolling made (a `cursor` in its variables): all
+ * replies, no focal post or ancestors. `more` is true when X offers more past it.
+ */
+export const moreRepliesOf = (json: unknown): { replies: ReplyGroup[]; more: boolean } => {
+  const t = readTimeline(json);
+  return { replies: groupsOf(t.items, t.more), more: moreReplies(t) };
 };

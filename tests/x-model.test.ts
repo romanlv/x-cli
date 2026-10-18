@@ -5,6 +5,7 @@ import {
   entryFromResult,
   iso,
   listFromResult,
+  moreRepliesOf,
   postsPage,
   readTimeline,
   threadOf,
@@ -244,6 +245,19 @@ describe("x model: GraphQL threads", () => {
     const t = readTimeline(tweetDetail);
     expect(t.cursors).toEqual({ ShowMoreThreads: "JQAA-threads" });
     expect(t.more).toEqual({ "conversationthread-3004": "PAAA-showmore" });
+  });
+
+  test("a Bottom cursor on a timeline X ended is not more; a scrolled call's groups are all replies", () => {
+    // X sends a Bottom cursor with a TimelineTerminateTimeline Bottom on a page with no more replies (2026-10-18).
+    const ended = JSON.parse(JSON.stringify(tweetDetail));
+    const ins = ended.data.threaded_conversation_with_injections_v2.instructions;
+    ins.push({ type: "TimelineTerminateTimeline", direction: "Bottom" });
+    expect(threadOf(ended, "3001").more).toBe(false);
+    const next = moreRepliesOf({ data: { threaded_conversation_with_injections_v2: { instructions: [ins[1]] } } });
+    // Every entry is a reply here: the lone ones too, as a continuation call has no focal post.
+    expect(next.replies.length).toBe(4);
+    expect(next.replies.flatMap((g) => g.posts.map((p) => p.id))).toContain("3004");
+    expect(next.more).toBe(true);
   });
 
   test("a focal post the response lacks is Unavailable, not an error", () => {

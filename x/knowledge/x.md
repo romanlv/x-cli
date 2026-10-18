@@ -132,6 +132,20 @@ Confirmed against this account:
   8000 px), so a read can't count early scrolls without a new call as the end: `app.timeline` counts
   one only at the page's bottom.
 
+- `TweetDetail` (2026-10-18, `post:thread`): a post's page makes `TweetResultByRestId`, then `TweetDetail`
+  (GET, `variables.focalTweetId`, `rankingMode: "Relevance"`). The thread is at
+  `data.threaded_conversation_with_injections_v2.instructions`: one `TimelineAddEntries` of `tweet-<id>`
+  entries (the ancestors, root first, then the post; `tweetDisplayType: "SelfThread"` when it is the
+  author's own thread), one `conversationthread-<id>` module per reply group (a lone post each on the
+  NASA post), ads among them as `conversationthread-<id>-promoted-tweet-…`, and a `cursor-bottom-…`.
+  `threadOf` read the post and its counts as they came, and the ads were dropped; it differed in one
+  thing, fixed: X sends a Bottom cursor on the last page too (with Terminate Bottom), so `more` follows
+  `ended`. About 36 replies of 76 come in the first call, about 8 more in a second when the page is
+  scrolled (`cursor` in its variables, no ancestors or post: `moreRepliesOf`), and then a
+  `cursor-showmorethreads-…` that is the button "Show additional replies". The order is X's ranking and
+  varies between loads. A post that doesn't exist: `tweet_results: {}` and "Hmm...this page doesn't
+  exist".
+
 The first op that reads another operation through a mapper adds it here, with the date and what
 differed from the mapper.
 

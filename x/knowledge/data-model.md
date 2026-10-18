@@ -136,7 +136,8 @@ A user's counts are followers, following, posts, likes, media and listed. The ne
     replies X shows under it **[confirmed]**. `group.more` means the module has a `ShowMore` cursor
     ("Show replies") **[confirmed: card_poll.json]**. `thread.more` means there is a `Bottom` or
     `ShowMoreThreads` cursor ("Show more replies", the lower-ranked section)
-    **[confirmed: card_poll.json, article.json]**.
+    **[confirmed: card_poll.json, article.json]**, unless X ended the timeline (Terminate Bottom, which
+    comes with a Bottom cursor on the last page too) **[confirmed on this account, 2026-10-18]**.
   - Ads (`…-promoted-tweet-…`) and "you might also like" modules are left out.
 - A profile (its Posts tab too, for a self-thread, and "with replies") and a list timeline also
   group conversations into modules (`profile-conversation-<id>`, `list-conversation-<id>`), oldest

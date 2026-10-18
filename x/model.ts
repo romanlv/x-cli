@@ -489,6 +489,60 @@ export const pageText = (page: { items: Entry[]; more?: boolean; pinned?: string
 /** `pageText` for a timeline X ranks (home), which has no `--until` to read on from. */
 export const rankedPageText = (page: { items: Entry[]; more?: boolean }): string => pageText(page, false);
 
+/** An exact count with thousands separators: the focal post's counts are read in full, not rounded. */
+const full = (c?: Count) => (c ? `${c.exact ? "" : "~"}${c.value.toLocaleString("en-US")}` : "?");
+
+/** The post a thread is about, in full: id, who and when, all of the text, media, links, quote, every count. */
+const focalText = (post: Post | Unavailable): string => {
+  if (post.kind === "unavailable") return unavailableText(post);
+  const lines = [
+    header(post),
+    `post ${post.id} · author ${post.author.id ?? "?"}${post.replyTo?.post ? ` · replies to ${post.replyTo.post}` : ""}`,
+    "",
+    post.text,
+  ];
+  for (const m of post.media ?? []) lines.push(`  [${m.type}] ${m.url}${m.alt ? ` — ${m.alt}` : ""}`);
+  for (const u of post.entities?.urls ?? [])
+    if (u.expanded && !/^https?:\/\/(x|twitter)\.com\/\w+\/status\//.test(u.expanded)) lines.push(`  link ${u.expanded}`);
+  if (post.card?.title) lines.push(`  card: ${post.card.title}${post.card.domain ? ` (${post.card.domain})` : ""}`);
+  if (post.poll) lines.push(...post.poll.options.map((o) => `  poll: ${o.label}${o.votes ? ` · ${full(o.votes)}` : ""}`));
+  const q = post.quoted;
+  if (q?.kind === "unavailable") lines.push(`  ┃ ${unavailableText(q)}`);
+  else if (q) lines.push(`  ┃ ${header(q)} · ${q.id}`, ...q.text.split("\n").map((l) => `  ┃ ${l}`));
+  const c = post.counts;
+  if (c) {
+    const reposts =
+      c.reposts || !c.repostsAndQuotes
+        ? `${full(c.reposts)} reposts · ${full(c.quotes)} quotes`
+        : `${full(c.repostsAndQuotes)} reposts and quotes`;
+    lines.push(
+      "",
+      `${full(c.replies)} replies · ${reposts} · ${full(c.likes)} likes · ${full(c.bookmarks)} bookmarks · ${full(c.views)} views`,
+    );
+  }
+  lines.push(postUrl(post.id));
+  return lines.join("\n");
+};
+
+/**
+ * A post's page as text: the posts above it oldest first, the post in full under a marker, then its
+ * replies in X's order (a self-thread's continuation marked), each as `entryText` cuts it, and what
+ * was left out. `--json` has everything.
+ */
+export const threadText = (thread: Thread): string => {
+  const blocks: string[] = [];
+  if (thread.ancestors.length) blocks.push(`↑ ${thread.ancestors.length} above, oldest first`, ...thread.ancestors.map(entryText));
+  blocks.push(`▶ the post\n${focalText(thread.focal)}`);
+  const posts = thread.replies.reduce((sum, g) => sum + g.posts.length, 0);
+  if (thread.replies.length) {
+    blocks.push(`↓ ${posts} ${posts === 1 ? "reply" : "replies"}, in X's order`);
+    for (const g of thread.replies)
+      blocks.push(...g.posts.map((p, i) => (g.selfThread && i === 0 ? `the author continues\n${entryText(p)}` : entryText(p))));
+  } else if (thread.focal.kind === "post") blocks.push("no replies");
+  if (thread.more) blocks.push("more replies than these: raise --limit, or see the post on x.com");
+  return blocks.join(`\n${RULE}\n`);
+};
+
 /** One account as a person reads it in the terminal: who, how it relates to the viewer, its bio and counts. */
 export const userText = (user: User | UserUnavailable): string => {
   if (user.kind === "user-unavailable") return `[${user.reason}] ${user.message ?? "account unavailable"}${user.id ? ` ${user.id}` : ""}`;

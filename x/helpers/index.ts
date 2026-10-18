@@ -7,8 +7,18 @@
 import type { BrowserContext, Page, Response } from "playwright";
 import { InputError, PreconditionError, RefusedError } from "../../core/errors";
 import { type Article, entryFromArticle, isPinned } from "../map/dom";
-import { clean, hasMore, isEntry, readTimeline, type TimelineItem, threadOf, userFromResult, usersPage } from "../map/graphql";
-import { type Entry, postOf, type Thread, type User, type UserUnavailable, type Page as XPage } from "../model";
+import {
+  clean,
+  hasMore,
+  isEntry,
+  moreRepliesOf,
+  readTimeline,
+  type TimelineItem,
+  threadOf,
+  userFromResult,
+  usersPage,
+} from "../map/graphql";
+import { type Entry, postOf, type ReplyGroup, type Thread, type User, type UserUnavailable, type Page as XPage } from "../model";
 
 export const ORIGIN = "https://x.com";
 
@@ -729,10 +739,86 @@ export const xHelpers = (page: Page) => {
       }
     },
 
-    /** A post with its ancestors and replies, from the TweetDetail call its page makes. */
-    async thread(id: string): Promise<Thread> {
+    /**
+     * A post with its ancestors and replies, from the TweetDetail calls its page makes: the first when
+     * it opens, then one more each time a scroll near the bottom asks for the next replies (X's ranked
+     * ones; its "Show additional replies" button, which holds the lower-ranked, is never pressed). The
+     * replies are in the order X ranks them, cut to `limit` posts (every post of every group counts,
+     * a self-thread's continuation and sub-replies too); `more` says X had more. Limits are
+     * `timeline`'s: a rate limit or a lock is `RefusedError`, a budget down to a tenth ends the read.
+     */
+    async thread(id: string, bound: Pick<Bound, "limit" | "scrolls"> = {}, timeout = 30_000): Promise<Thread> {
       if (!/^\d+$/.test(id)) throw new InputError(`"${id}" is not a post id (digits, as in a post's URL)`);
-      return threadOf(await helpers.graphql("TweetDetail", () => helpers.open(`/i/status/${id}`)), id);
+      const limit = bound.limit ?? 20;
+      const match = callOf("TweetDetail");
+      const responses: Response[] = [];
+      const listen = (r: Response) => {
+        if (!match.test(r.url())) return;
+        // Fetch the body now: the browser drops it once the page moves on.
+        r.body().catch(() => {});
+        responses.push(r);
+      };
+      page.on("response", listen);
+      try {
+        await helpers.open(`/i/status/${id}`);
+        if (!responses.length) await page.waitForResponse((r) => match.test(r.url()), { timeout });
+        let thread: Thread | undefined;
+        const groups = new Map<string, ReplyGroup>();
+        const count = () => [...groups.values()].reduce((sum, g) => sum + g.posts.length, 0);
+        const add = (replies: ReplyGroup[]) => {
+          for (const g of replies) {
+            const key = g.posts.map((p) => p.id ?? "").join(",");
+            if (!groups.has(key)) groups.set(key, g);
+          }
+        };
+        let more = false;
+        let low: string | undefined;
+        let atEnd = false;
+        for (let used = 0, idle = 0, scrolls = 0; ; scrolls++) {
+          const before = used;
+          while (used < responses.length) {
+            const answer = await bodyOf("TweetDetail", responses[used++]!);
+            low ??= answer.low;
+            if (!thread) {
+              thread = threadOf(answer.body, id);
+              add(thread.replies);
+              more = !!thread.more;
+            } else {
+              const next = moreRepliesOf(answer.body);
+              add(next.replies);
+              more = next.more;
+            }
+          }
+          if (!thread || thread.focal.kind === "unavailable" || !more || count() >= limit) break;
+          if (low) break;
+          // Only a scroll that reached the bottom without a new call counts as idle.
+          idle = used !== before ? 0 : atEnd ? idle + 1 : idle;
+          if (idle >= 3) break;
+          if (scrolls >= (bound.scrolls ?? MAX_SCROLLS)) break;
+          atEnd = await scroll(page);
+        }
+        // Cut to `limit` posts, a group mid-way if it comes to that.
+        let room = limit;
+        const replies: ReplyGroup[] = [];
+        let cut = false;
+        for (const g of groups.values()) {
+          if (room <= 0) {
+            cut = true;
+            break;
+          }
+          if (g.posts.length > room) {
+            replies.push({ ...g, posts: g.posts.slice(0, room), more: true });
+            room = 0;
+            cut = true;
+            break;
+          }
+          replies.push(g);
+          room -= g.posts.length;
+        }
+        return clean({ ...thread!, replies, more: cut || more });
+      } finally {
+        page.off("response", listen);
+      }
     },
 
     /** An account, from the UserByScreenName call its profile makes. A suspended account is `UserUnavailable`. */
