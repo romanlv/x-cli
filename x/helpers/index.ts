@@ -176,18 +176,25 @@ export const gather = ({ limit = 20, until, newestFirst }: Bound) => {
     return newestFirst && !earlier && e.id && BigInt(e.id) <= BigInt(until) ? "stop" : undefined;
   };
   return {
-    /** Adds one read's entries; true once the read has what it needs. */
+    /**
+     * Adds one read's entries; true once the read has what it needs. A module's earlier posts are
+     * held until its last: kept with it, or dropped with it when it stops the read.
+     */
     add(cells: Cell[]): boolean {
       let previous: string | undefined;
       let skipping = false;
+      /** Earlier posts added since the last entry in the timeline's order. */
+      let held: string[] = [];
       for (const [i, cell] of cells.entries()) {
-        const { entry: e, pinned: pin } = cell;
+        const { entry: e, pinned: pin, earlier } = cell;
         const stop = untilOf(cell);
         if (stop === "stop") {
           reachedUntil = true;
+          for (const key of held) seen.delete(key);
           break;
         }
         if (stop === "skip") continue;
+        if (!earlier) held = [];
         let key = keyOf(e);
         if (key) skipping = false;
         else if (skipping) continue;
@@ -206,6 +213,7 @@ export const gather = ({ limit = 20, until, newestFirst }: Bound) => {
         if (keyOf(e)) lastKeyed = key;
         if (seen.has(key)) continue;
         seen.set(key, e);
+        if (earlier) held.push(key);
         if (pin) pinned.add(key);
       }
       return reachedUntil || seen.size >= limit;

@@ -279,6 +279,11 @@ describe("x helpers: reading the page", () => {
       // 3005 is 1/ of a self-thread whose 2/ is newer: left out, and the read goes on.
       const inThread = await app.timeline("UserTweets", fetchTweets, { until: "3005", newestFirst: true });
       expect(inThread.items.map((e) => e.id)).toEqual(["3012", "3010", "2990", "3006", "3008"]);
+      // A module whose newest post stops the read goes with it: 2990 and 3006 are 3008's.
+      for (const until of ["3008", "3009"]) {
+        const atModule = await app.timeline("UserTweets", fetchTweets, { until, newestFirst: true });
+        expect(atModule.items.map((e) => e.id)).toEqual(["3005", "3012", "3010"]);
+      }
     });
 
     test("timeline: X's budget at a tenth stops the read with more, without another scroll", async () => {

@@ -200,7 +200,8 @@ first, a parent above its reply and a self-thread's 1/ above 2/, placed in the t
 newest post **[confirmed: profile-conversation- modules of two and three items in twscrape's
 raw_user_tweets.json and raw_user_tweets_and_replies.json]**. So for GraphQL (`app.timeline`) only
 an entry outside a module and a module's last post compare by id; a post above it in its module
-never stops a read and is left out when it is the `until` post. The DOM can't see modules, so for
+never stops a read, is left out when it is the `until` post, and is left out with its module's
+last post when that stops the read. The DOM can't see modules, so for
 `app.posts` only search's Latest, which has none, is newest first.
 
 `app.posts` reads the DOM, where a tombstone has no id: it is known by the entry before it. First
