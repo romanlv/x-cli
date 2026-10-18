@@ -153,7 +153,7 @@ export interface Paths {
   trace: string;
   /** Where sandboxed agents keep their CLI state and sockets; absent when agents run unsandboxed. */
   sandbox?: SandboxPaths;
-  /** A command as an agent runs it: in a sandbox, with `awf` on PATH and the host's browser. */
+  /** A command as an agent runs it: in a sandbox, with the host's browser and a temp directory it can write. */
   run(command: string): string;
 }
 

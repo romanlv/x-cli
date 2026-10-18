@@ -25,7 +25,7 @@ export const renderPrompts = (cli: string, domainFolder: string, config: Workflo
     id: "R-0001",
     kind: "new",
     text: "the things that match a word, newest first",
-    context: "sandbox",
+    context: "acme",
     domain: { name: cli, root: ROOT, dir: join(ROOT, domainFolder), home: join(ROOT, ".state") },
     call: { op: "thing:find", argv: ["thing:find", "--query", "lamp"] },
     state: "building",

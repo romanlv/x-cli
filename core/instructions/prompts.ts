@@ -90,7 +90,7 @@ const runAndCheck = ({ request, paths }: PromptRun, op: string): string => md`
 
 /** What agents that drive the app may change in it, as the domain says. */
 const testData = ({ paths }: PromptRun): string =>
-  `Change in the app only what ${paths.domainDir}/authoring.md, under "Test data", allows; a step that would change anything else, try with --dry-run.`;
+  `Change in the app only what ${paths.domainDir}/authoring.md, under "Test data", allows. Page commands have no dry run: stop before a step that would change anything else. An op's saving step can be tried with --dry-run.`;
 
 // ── Instructions ──────────────────────────────────────────────────────────────────────────────────
 /** Where the planner and the builders work, and what they read first. */
@@ -182,7 +182,7 @@ export const intake = ({ request, paths }: PromptRun, others: RequestRecord[], e
 export const explore = (run: PromptRun, op: string, summary: string, change: boolean): string => md`
   ${brief(run, op, summary)}
 
-  Find how ${run.request.domain.name} serves the intent${change ? `, for the part that changes; ${opDir(run, op)}/spec.md says what the op does now` : ""}. Start from the home page, as the op will.
+  Find how ${run.request.domain.name} serves the intent${change ? `, for the part that changes; ${opDir(run, op)}/spec.md says what the op does now` : ""}. Start where a page session opens (the context's start page), as the op will.
   - Survey the ways a person could do it in the app: its search, its pages and menus, filters; knowledge/ names this app's. For each, write in ${opDir(run, op)}/notes.md (append; never remove what an earlier build wrote) what it gives and what it lacks for the intent.
   - Pick the way that serves it best, and do the task once that way through the page commands, on test data. Write down every screen, label, prompt and wait that mattered. The trace records the locator each command used.
   - When the op finds records by a value the person gives, the way is the app's own search or filter for it, letting the app match. Reading every record to match in the op is a last resort, and notes.md says why each search doesn't serve.
@@ -205,7 +205,7 @@ export const spec = (run: PromptRun, op: string, summary: string, change: boolea
   - its inputs, each a flag, typed, with which values differ between contexts
   - its outputs, as the app gives them back
   - what done looks like in ${run.request.domain.name}, so someone can check it there
-  Follow the shape of the spec.md of the reference op that authoring.md names, once there is one. Say only what the notes show of the app. If another way the builder found serves the intent better, choose it in the spec and say why: the op is written to the spec.${answers(run.request)}
+  Follow the shape of the spec.md of the reference op authoring.md names, once it names one. Say only what the notes show of the app. If another way the builder found serves the intent better, choose it in the spec and say why: the op is written to the spec.${answers(run.request)}
 `;
 
 export const write = (run: PromptRun, op: string, summary: string): string => {
@@ -213,7 +213,7 @@ export const write = (run: PromptRun, op: string, summary: string): string => {
   return md`
     ${brief(run, op, summary)}
 
-    Write ${opDir(run, op)}/op.ts from the trace and ${opDir(run, op)}/notes.md, with both authoring.md files and the reference op open. If spec.md chose a way you didn't do the task through while exploring, do it that way once first, and write it in notes.md.
+    Write ${opDir(run, op)}/op.ts from the trace and ${opDir(run, op)}/notes.md, with both authoring.md files open, and the reference op authoring.md names, once it names one. If spec.md chose a way you didn't do the task through while exploring, do it that way once first, and write it in notes.md.
     - Use the helpers; add one to ${paths.domainDir}/helpers/ when a move holds for every screen and isn't there yet.
     - Name every step.
     - Write it to spec.md: its inputs, outputs and errors, and the way in the app it names.
@@ -234,7 +234,8 @@ export const repairSummary = (op: string, failure: Failure): string =>
 
 export const diagnose = (run: PromptRun, op: string, failure: Failure): string => {
   const { request } = run;
-  const onTestData = "on test data (as authoring.md says) shaped like the failed input, never on the failed input's own records";
+  const onTestData =
+    "on the failed input where that changes nothing in the app (a read); where a step would change one of its records, on test data shaped like it, as authoring.md says";
   const how = failure.fellBack
     ? `Its direct way failed and the browser way worked, so the bundle has no screenshot. Run the op without \`--browser\`, ${onTestData}, to see it fail; then do the task in the browser and compare the calls it makes now with those in notes.md, as the direct-calls skill says: a URL, a header, a token, a response's shape.`
     : `Reproduce the failure in your own browser session with the page commands, ${onTestData}, and find what changed: a label, a screen, a wait, an endpoint.`;
@@ -303,7 +304,7 @@ export const review = (run: PromptRun, op: string, summary: string, verified: Ve
     ${describeVerify(verified, request.context)}${builder}
 
     1. Run it yourself on an input of your own, not one from examples.json, and find the result in ${request.domain.name} through the CLI's page commands: the record it made or changed, or what it read, shown in the app. Check it is what spec.md says done looks like.
-    2. Read the change against the intent, spec.md, ${coreAuthoring(paths)}, ${paths.domainDir}/authoring.md and the reference op it names. Look for:
+    2. Read the change against the intent, spec.md, ${coreAuthoring(paths)}, ${paths.domainDir}/authoring.md and the reference op authoring.md names, once it names one. Look for:
        - an op that does what spec.md says but not what the intent asks
        - values copied from exploring that should be inputs or come from the context's knowledge file
        - logic that belongs in a helper, or the same move written out in two ops

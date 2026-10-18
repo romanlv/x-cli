@@ -9,10 +9,13 @@ Clicking through the app is slow: a browser starts, the app loads, every screen 
 screen shows comes from a few calls the page makes. An op can make those calls itself over plain
 HTTP, on the context's saved sign-in, and answer in seconds without starting a browser.
 
-Read first: the app's knowledge file, its "Direct calls" section (what is already known about the
-app's calls and tokens), and the helpers for direct calls next to the other helpers. An op that
-already has a `direct` way is the example to copy. If there is no such section yet, you are the
-first: start it.
+Read first: the app's knowledge file, its section on the app's calls (e.g. "Direct calls": what is
+already known about the calls and tokens), and the helpers for direct calls next to the other
+helpers. An op that already has a `direct` way is the example to copy. If there is no such section
+yet, you are the first: start it.
+
+Where the domain's authoring.md rules out a direct way, do layers 1 and 2 only: find the calls and
+write them in notes.md, then stop. Don't use `page:fetch` there (it may not even be offered).
 
 ## How an op with a direct way runs
 
@@ -88,11 +91,12 @@ export default defineOp({
 
 ## Where it applies
 
-- Reads: a list, a search, a record's fields. Try it for every read.
+- Reads: a list, a search, a record's fields. Try it for every read the domain's authoring.md
+  doesn't rule it out for.
 - Writes stay in the browser.
 - No call carries the data (it comes inside the page), or a call needs what only the page's own
   script computes: no `direct`, and write in notes.md what you looked at, so the next build doesn't
   look again.
 - What holds for every call of the app (a header, where a token comes from, how URLs are built)
-  goes in the knowledge file's "Direct calls" section; a move two ops make becomes a helper, a plain
+  goes in the knowledge file's section on the app's calls; a move two ops make becomes a helper, a plain
   function taking `http`.

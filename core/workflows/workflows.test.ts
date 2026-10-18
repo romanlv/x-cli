@@ -8,6 +8,7 @@ import { type RequestRecord, Requests } from "../requests";
 import { defineBuild } from "./build";
 import { type Deps, type Git, realDeps, type Verified } from "./deps";
 import { defineRepair } from "./repair";
+import { sandboxPaths, sandboxSpec } from "./sandbox";
 import {
   cleanUpCancelled,
   INTAKE as DECIDED,
@@ -854,10 +855,17 @@ test("a repair that reproduces is patched, checked and merged", async () => {
   );
   const [diagnose, patch] = run.turnsOf("builder");
   expect(diagnose!.prompt).toContain("/b/1");
-  expect(diagnose!.prompt).toContain("never on the failed input's own records");
+  expect(diagnose!.prompt).toContain("on the failed input where that changes nothing in the app (a read)");
   expect(patch!.prompt).toContain("goes through the step that failed");
   expect(run.value).toEqual({ state: "done", summary: "repaired thing:list (0 revision(s)): the Name label is now Title" });
   expect(git.calls).toContain(`squash ${r.id} repair thing:list`);
+});
+
+test("a sandboxed repair's agents read the op's failure bundles, those that join later included", () => {
+  const r = repairOf();
+  const paths = sandboxPaths(r);
+  expect(sandboxSpec(r, "/wt", paths).read).toContain(join(home, "failures", "thing-list"));
+  expect(sandboxSpec(file(), "/wt", paths).read!.filter((path) => path.startsWith(join(home, "failures")))).toEqual([]);
 });
 
 test("a repair of a direct way is diagnosed from its calls, not a screenshot", async () => {
