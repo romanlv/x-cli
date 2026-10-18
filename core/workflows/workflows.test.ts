@@ -6,9 +6,18 @@ import { answer, reply, testWorkflow } from "agentswf/testing";
 import { ENV_PREFIX as P } from "../env";
 import { type RequestRecord, Requests } from "../requests";
 import { defineBuild } from "./build";
-import type { Deps, Git, Verified } from "./deps";
+import { type Deps, type Git, realDeps, type Verified } from "./deps";
 import { defineRepair } from "./repair";
-import { INTAKE as DECIDED, DIAGNOSIS as DIAGNOSED, DONE as FINISHED, orQuestion, QUESTION, REVIEW, EXPLORED as SURVEYED } from "./shared";
+import {
+  cleanUpCancelled,
+  INTAKE as DECIDED,
+  DIAGNOSIS as DIAGNOSED,
+  DONE as FINISHED,
+  orQuestion,
+  QUESTION,
+  REVIEW,
+  EXPLORED as SURVEYED,
+} from "./shared";
 
 // What the agents are asked for: each answer, or the question.
 const INTAKE = orQuestion(DECIDED);
@@ -47,7 +56,7 @@ type FakeGit = Git & {
 const fakeGit = (): FakeGit => {
   const g: FakeGit = {
     calls: [],
-    changedFiles: ["x/ops/candidate-merge/op.ts"],
+    changedFiles: ["x/ops/thing-find/op.ts"],
     mainFiles: [],
     bases: [],
     current: "base0",
@@ -80,17 +89,17 @@ const fakeGit = (): FakeGit => {
   return g;
 };
 
-const passed = (op = "candidate:merge"): Verified => ({
+const passed = (op = "thing:find"): Verified => ({
   op,
   ok: true,
-  runs: [{ input: { keep: "C-1" }, exitCode: 0, ok: true }],
+  runs: [{ input: { query: "lamp" }, exitCode: 0, ok: true }],
   signedOut: false,
   noExamples: false,
 });
-const failed = (error: string, op = "candidate:merge"): Verified => ({
+const failed = (error: string, op = "thing:find"): Verified => ({
   op,
   ok: false,
-  runs: [{ input: { keep: "C-1" }, exitCode: 1, ok: false, error }],
+  runs: [{ input: { query: "lamp" }, exitCode: 1, ok: false, error }],
   signedOut: false,
   noExamples: false,
 });
@@ -122,15 +131,15 @@ const domain = () => ({ name: "x", root: "/repo", dir: "/repo/x", home });
 const file = (over: Partial<RequestRecord> = {}): RequestRecord =>
   requests.file({
     kind: "new",
-    op: "candidate:merge",
-    text: "merge two duplicate candidates",
+    op: "thing:find",
+    text: "the things that match a word",
     context: "acme",
     domain: domain(),
-    call: { op: "candidate:merge", argv: ["candidate:merge", "--keep", "C-1", "--drop", "C-2"] },
+    call: { op: "thing:find", argv: ["thing:find", "--query", "lamp"] },
     ...over,
   });
 
-const planned = { kind: "build", op: "candidate:merge", change: false, summary: "merge two candidates" } as const;
+const planned = { kind: "build", op: "thing:find", summary: "find things by a word" } as const;
 const done = (summary: string) => answer(DONE, { kind: "done", summary });
 const planning = () => [answer(INTAKE, planned), done("spec written")];
 const explored = answer(EXPLORED, { kind: "done", summary: "explored" });
@@ -139,7 +148,7 @@ const approve = answer(REVIEW, { findings: [] });
 /** Stages a continue reuses, as an earlier attempt recorded them up to `upTo`. */
 const recordedUpTo = (upTo: "intake" | "explore" | "spec" | "write" | "check") => {
   const all = {
-    intake: planned,
+    intake: { ...planned, change: false },
     explore: { kind: "done", summary: "explored" },
     spec: { kind: "done", summary: "spec written" },
     write: { kind: "done", summary: "written" },
@@ -150,7 +159,7 @@ const recordedUpTo = (upTo: "intake" | "explore" | "spec" | "write" | "check") =
 };
 
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), "wd-wf-"));
+  home = mkdtempSync(join(tmpdir(), "wf-"));
   requests = new Requests(home);
   git = fakeGit();
   verifies = [];
@@ -174,23 +183,23 @@ test("a new op goes through every stage, is merged, and the request ends done", 
     { id: r.id, home },
     { agents: { planner: planning(), builder: building(), checker: approve } },
   );
-  expect(run.value).toEqual({ state: "done", summary: "built candidate:merge (0 revision(s)): merge two candidates" });
+  expect(run.value).toEqual({ state: "done", summary: "built thing:find (0 revision(s)): find things by a word" });
   expect(requests.get(r.id)).toMatchObject({
     state: "done",
-    result: { commit: "abc1234567", command: "x candidate:merge --keep C-1 --drop C-2" },
+    result: { commit: "abc1234567", command: "x thing:find --query lamp" },
   });
   expect(git.calls).toEqual([
     `worktree ${home}/worktrees/${r.id}`,
-    `squash ${r.id} build candidate:merge`,
+    `squash ${r.id} build thing:find`,
     "rebase",
     `ff req/${r.id}`,
     `remove ${home}/worktrees/${r.id}`,
   ]);
   expect(closed).toEqual([[r.id, `${r.id}-check`]]);
-  expect(requests.lockOp("candidate:merge", "R-9999")).toBeUndefined();
+  expect(requests.lockOp("thing:find", "R-9999")).toBeUndefined();
   // Every stage after intake carries the whole brief, since a builder may start fresh at any of them.
   for (const turn of run.turnsOf("builder").slice(1)) {
-    expect(turn.prompt).toContain("merge two duplicate candidates");
+    expect(turn.prompt).toContain("the things that match a word");
     expect(turn.prompt).toContain(`${home}/sessions/${r.id}/trace.jsonl`);
   }
   // Agents call the worktree's CLI in the request's home, filing nothing.
@@ -208,8 +217,8 @@ test("a new op goes through every stage, is merged, and the request ends done", 
 });
 
 test.each([
-  ["duplicate", answer(INTAKE, { kind: "duplicate", command: "x candidate:create --help", reason: "candidate:create does it" })],
-  ["deferred", answer(INTAKE, { kind: "deferred", reason: "needs the Merge task, which this context hides" })],
+  ["duplicate", answer(INTAKE, { kind: "duplicate", command: "x thing:list --help", reason: "thing:list does it" })],
+  ["deferred", answer(INTAKE, { kind: "deferred", reason: "needs a page this context can't see" })],
   ["declined", answer(INTAKE, { kind: "declined", reason: "too vague" })],
 ] as const)("intake ends a %s request without a build, and cleans up", async (state, intake) => {
   const r = file({ kind: "intake", op: undefined, call: undefined });
@@ -235,13 +244,27 @@ test("a retry over a recorded ending records it again instead of leaving the req
   expect(requests.get(r.id)!.state).toBe("deferred");
 });
 
+test("an op intake names that is there already is changed, whatever the request was filed as", async () => {
+  const root = join(home, "checkout");
+  mkdirSync(join(root, "x", "ops", "thing-find"), { recursive: true });
+  const r = file({ kind: "intake", domain: { ...domain(), root, dir: join(root, "x") } });
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    { agents: { planner: planning(), builder: building(), checker: approve } },
+  );
+  expect(requests.get(r.id)!.kind).toBe("change");
+  expect(git.calls).toContain(`squash ${r.id} change thing:find`);
+  expect(run.value.summary).toStartWith("changed thing:find");
+});
+
 test("an op name that isn't noun:verb stops intake", async () => {
   const r = file();
   const run = await testWorkflow(
     defineBuild(deps()),
     { id: r.id, home },
     {
-      agents: { planner: answer(INTAKE, { ...planned, op: "job-req:create" }) },
+      agents: { planner: answer(INTAKE, { ...planned, op: "thing-list:find" }) },
     },
   );
   expect(run.stopped).toMatchObject({ stage: "intake" });
@@ -308,21 +331,21 @@ test("a question stops the run blocked on it, at the stage that asked", async ()
     {
       agents: {
         planner: [answer(INTAKE, planned)],
-        builder: [answer(EXPLORED, { kind: "question", question: "Which source should test candidates use?" })],
+        builder: [answer(EXPLORED, { kind: "question", question: "Which word should the examples search for?" })],
       },
     },
   );
   expect(run.stopped?.stage).toBe("explore");
-  expect(requests.get(r.id)).toMatchObject({ state: "blocked", question: "Which source should test candidates use?", stage: "explore" });
+  expect(requests.get(r.id)).toMatchObject({ state: "blocked", question: "Which word should the examples search for?", stage: "explore" });
   // A blocked request keeps its op and its worktree for the answer.
-  expect(requests.lockOp("candidate:merge", "R-9999")).toBe(r.id);
+  expect(requests.lockOp("thing:find", "R-9999")).toBe(r.id);
   expect(git.calls.some((c) => c.startsWith("remove"))).toBe(false);
 });
 
 test("an answered question reaches the stage that asked, and the checker, on the continue", async () => {
   const r = file();
-  requests.update(r.id, () => ({ state: "blocked", question: "Which source?" }));
-  requests.answer(r.id, "Referral");
+  requests.update(r.id, () => ({ state: "blocked", question: "Which word?" }));
+  requests.answer(r.id, "lamp");
   const run = await testWorkflow(
     defineBuild(deps()),
     { id: r.id, home },
@@ -331,8 +354,8 @@ test("an answered question reaches the stage that asked, and the checker, on the
       agents: { planner: done("spec written"), builder: building(), checker: approve },
     },
   );
-  expect(run.turnsOf("builder")[0]!.prompt).toContain("A: Referral");
-  expect(run.turnsOf("checker")[0]!.prompt).toContain("A: Referral");
+  expect(run.turnsOf("builder")[0]!.prompt).toContain("A: lamp");
+  expect(run.turnsOf("checker")[0]!.prompt).toContain("A: lamp");
   expect(run.value.state).toBe("done");
 });
 
@@ -345,20 +368,17 @@ test("a failed verify goes back to the builder, and so does a finding", async ()
     {
       agents: {
         planner: planning(),
-        builder: [...building(), done("fixed the wait"), done("made the source an input")],
-        checker: [
-          answer(REVIEW, { findings: [{ where: "op.ts:12", problem: "'Referral' is a constant", severity: "blocking" }] }),
-          approve,
-        ],
+        builder: [...building(), done("fixed the wait"), done("made the order an input")],
+        checker: [answer(REVIEW, { findings: [{ where: "op.ts:12", problem: "'newest' is a constant", severity: "blocking" }] }), approve],
       },
     },
   );
   const revisions = run.turnsOf("builder").slice(2);
   expect(revisions[0]!.prompt).toContain("timeout at fill name");
-  expect(revisions[1]!.prompt).toContain("op.ts:12: 'Referral' is a constant");
+  expect(revisions[1]!.prompt).toContain("op.ts:12: 'newest' is a constant");
   // Each review reads the builder's latest answer.
   expect(run.turnsOf("checker")[0]!.prompt).toContain("<builder>\nfixed the wait\n</builder>");
-  expect(run.turnsOf("checker")[1]!.prompt).toContain("<builder>\nmade the source an input\n</builder>");
+  expect(run.turnsOf("checker")[1]!.prompt).toContain("<builder>\nmade the order an input\n</builder>");
   expect(run.value.summary).toContain("(2 revision(s))");
 });
 
@@ -393,7 +413,7 @@ test("minor findings are fixed without another review, and the full checks run o
   expect(run.turnsOf("builder")[2]!.prompt).toContain("spec.md:3: names the wrong task path");
   expect(checked).toEqual(["fast", "full"]);
   // The polish changed code, so verify ran again before approval.
-  expect(verified).toEqual(["candidate:merge", "candidate:merge"]);
+  expect(verified).toEqual(["thing:find", "thing:find"]);
   expect(run.value.summary).toContain("(0 revision(s))");
 });
 
@@ -488,12 +508,12 @@ test("a troubleshooter round that gets no further asks a person one question", a
       agents: {
         planner: planning(),
         builder: [...building(), done("1")],
-        troubleshooter: [done("2"), answer(QUESTION, { kind: "question", question: "Is the Merge task enabled for this context?" })],
+        troubleshooter: [done("2"), answer(QUESTION, { kind: "question", question: "Can this context see the search page?" })],
       },
     },
   );
   expect(run.stopped?.stage).toBe("check");
-  expect(requests.get(r.id)).toMatchObject({ state: "blocked", question: "Is the Merge task enabled for this context?" });
+  expect(requests.get(r.id)).toMatchObject({ state: "blocked", question: "Can this context see the search page?" });
 });
 
 test("explore finding no way in the app ends the request deferred, with no spec written", async () => {
@@ -504,7 +524,7 @@ test("explore finding no way in the app ends the request deferred, with no spec 
     {
       agents: {
         planner: [answer(INTAKE, planned)],
-        builder: answer(EXPLORED, { kind: "missing", reason: "no merge task, no related action, searched both" }),
+        builder: answer(EXPLORED, { kind: "missing", reason: "no search, no list of them, tried both" }),
       },
     },
   );
@@ -533,7 +553,7 @@ test("with the context's sign-in in the checkout, verify signs in again and goes
   );
   expect(run.value.state).toBe("done");
   expect(signIns).toEqual(["acme"]);
-  expect(verified.slice(0, 2)).toEqual(["candidate:merge", "candidate:merge"]);
+  expect(verified.slice(0, 2)).toEqual(["thing:find", "thing:find"]);
 });
 
 test("an agent that finds the session signed out goes on in the same turn once the run signs in again", async () => {
@@ -573,29 +593,57 @@ test("a helper change re-verifies every other op with examples for the context",
   git.changedFiles = ["x/helpers/index.ts"];
   const opsDir = join(home, "worktrees", "R-0001", "x", "ops");
   for (const [folder, context] of [
-    ["candidate-create", "acme"],
-    ["application-move", "other"],
+    ["thing-list", "acme"],
+    ["item-list", "other"],
   ] as const) {
     mkdirSync(join(opsDir, folder), { recursive: true });
     writeFileSync(join(opsDir, folder, "examples.json"), JSON.stringify([{ context, input: {} }]));
   }
-  verifies = [passed(), failed("Given Name not found", "candidate:create")];
+  verifies = [passed(), failed("Name not found", "thing:list")];
   const r = file();
   const run = await testWorkflow(
     defineBuild(deps()),
     { id: r.id, home },
     { agents: { planner: planning(), builder: [...building(), done("kept the helper compatible")], checker: approve } },
   );
-  expect(verified.slice(0, 2)).toEqual(["candidate:merge", "candidate:create"]);
-  expect(run.turnsOf("builder")[2]!.prompt).toContain("candidate:create");
+  expect(verified.slice(0, 2)).toEqual(["thing:find", "thing:list"]);
+  expect(run.turnsOf("builder")[2]!.prompt).toContain("thing:list");
   expect(run.value.state).toBe("done");
+});
+
+test("an examples.json that isn't JSON fails verify and goes back to the builder, instead of ending the run", async () => {
+  const r = file();
+  const worktree = join(home, "worktrees", r.id);
+  mkdirSync(join(worktree, "x", "ops", "thing-find"), { recursive: true });
+  writeFileSync(join(worktree, "x", "ops", "thing-find", "examples.json"), '[{ "context": ');
+  const unreadable = await realDeps.verify(worktree, r, "thing:find");
+  expect(unreadable).toMatchObject({ ok: false, runs: [], noExamples: false });
+  expect(unreadable.problem).toStartWith("examples.json: not JSON");
+  verifies = [unreadable];
+  const run = await testWorkflow(
+    defineBuild(deps()),
+    { id: r.id, home },
+    { agents: { planner: planning(), builder: [...building(), done("fixed the JSON")], checker: approve } },
+  );
+  expect(run.turnsOf("builder")[2]!.prompt).toContain("- thing:find: examples.json: not JSON");
+  expect(run.value.state).toBe("done");
+});
+
+test("after a helper change, another op whose examples.json can't be read is verified too, so verify says so", async () => {
+  git.changedFiles = ["x/helpers/index.ts"];
+  const other = join(home, "worktrees", "R-0001", "x", "ops", "thing-list");
+  mkdirSync(other, { recursive: true });
+  writeFileSync(join(other, "examples.json"), JSON.stringify({ context: "acme" }));
+  const r = file();
+  await testWorkflow(defineBuild(deps()), { id: r.id, home }, { agents: { planner: planning(), builder: building(), checker: approve } });
+  expect(verified.slice(0, 2)).toEqual(["thing:find", "thing:list"]);
 });
 
 test("a turn stuck on a permission prompt blocks the request instead of failing it", async () => {
   const r = file();
   await testWorkflow(defineBuild(deps()), { id: r.id, home }, { agents: { planner: reply.blocked() } });
   expect(requests.get(r.id)!.state).toBe("blocked");
-  expect(requests.get(r.id)!.question).toContain("prompt only a person can answer");
+  expect(requests.get(r.id)!.question).toStartWith("the planner agent (intake) stopped at a prompt only a person can answer");
 });
 
 test("a turn that times out stops the run and leaves the request for the worker to settle", async () => {
@@ -611,7 +659,7 @@ test("a turn that times out stops the run and leaves the request for the worker 
 test("a second request for an op waits for the one holding it", async () => {
   const first = file();
   requests.update(first.id, () => ({ state: "building" }));
-  requests.lockOp("candidate:merge", first.id);
+  requests.lockOp("thing:find", first.id);
   const second = file();
   await testWorkflow(defineBuild(deps()), { id: second.id, home }, { agents: { planner: [answer(INTAKE, planned)] } });
   expect(requests.get(second.id)).toMatchObject({ state: "received", waitingFor: first.id });
@@ -621,7 +669,7 @@ test("a continue takes the lock again, so a retry can't build beside a newer req
   const older = file();
   const newer = file();
   requests.update(newer.id, () => ({ state: "building" }));
-  requests.lockOp("candidate:merge", newer.id);
+  requests.lockOp("thing:find", newer.id);
   const run = await testWorkflow(defineBuild(deps()), { id: older.id, home }, { recorded: recordedUpTo("explore"), agents: {} });
   expect(run.turns).toHaveLength(0);
   expect(requests.get(older.id)).toMatchObject({ state: "received", waitingFor: newer.id });
@@ -631,7 +679,7 @@ test("a request that waits before building anything drops its worktree and start
   git.changedFiles = [];
   const first = file();
   requests.update(first.id, () => ({ state: "building" }));
-  requests.lockOp("candidate:merge", first.id);
+  requests.lockOp("thing:find", first.id);
   const second = file();
   await testWorkflow(defineBuild(deps()), { id: second.id, home }, { agents: { planner: [answer(INTAKE, planned)] } });
   expect(requests.get(second.id)).toMatchObject({ state: "received", waitingFor: first.id, redo: true });
@@ -639,15 +687,15 @@ test("a request that waits before building anything drops its worktree and start
 });
 
 test("intake sees the open requests, and one it finds the same ends as its duplicate", async () => {
-  const first = file({ op: "candidate:merge" });
+  const first = file({ op: "thing:find" });
   requests.update(first.id, () => ({ state: "building" }));
-  const second = file({ op: undefined, call: undefined, text: "combine two candidates into one" });
-  const same = answer(INTAKE, { kind: "same", request: first.id, reason: "it merges candidates too" });
+  const second = file({ op: undefined, call: undefined, text: "look things up by a word" });
+  const same = answer(INTAKE, { kind: "same", request: first.id, reason: "it finds things by a word too" });
   const run = await testWorkflow(defineBuild(deps()), { id: second.id, home }, { agents: { planner: [same] } });
-  expect(run.turnsOf("planner")[0]!.prompt).toContain(`- ${first.id} (building, candidate:merge): merge two duplicate candidates`);
+  expect(run.turnsOf("planner")[0]!.prompt).toContain(`- ${first.id} (building, thing:find): the things that match a word`);
   expect(requests.get(second.id)).toMatchObject({
     state: "duplicate",
-    reason: "it merges candidates too",
+    reason: "it finds things by a word too",
     result: { of: first.id },
   });
   expect(git.calls.at(-1)).toBe(`remove ${home}/worktrees/${second.id}`);
@@ -665,6 +713,21 @@ test("intake can't name a request it wasn't shown", async () => {
   expect(requests.get(r.id)!.state).toBe("building");
 });
 
+test("a cancelled request's sessions are closed wherever its run kept them, whatever workflows.json says now", async () => {
+  const r = file();
+  const homes: (string | undefined)[] = [];
+  const cleaning = {
+    ...deps(),
+    closeSessions: async (_wt: string, _r: RequestRecord, _s: string[], box?: { home: string }) => void homes.push(box?.home),
+  };
+  await cleanUpCancelled(r, cleaning);
+  expect(homes).toEqual([undefined]);
+  mkdirSync(join(home, "sandboxes", r.id), { recursive: true });
+  await cleanUpCancelled(r, cleaning);
+  expect(homes).toEqual([undefined, join(home, "sandboxes", r.id), undefined]);
+  expect(git.calls.filter((c) => c.startsWith("remove"))).toHaveLength(2);
+});
+
 // ── merge ─────────────────────────────────────────────────────────────────────────────────────────
 
 test("when main moved, the op is checked again before it lands", async () => {
@@ -673,7 +736,7 @@ test("when main moved, the op is checked again before it lands", async () => {
   const r = file();
   const run = await testWorkflow(defineBuild(deps()), { id: r.id, home }, { recorded: recordedUpTo("check") });
   // Verify and the repository's checks pass on the new main, so no agent is asked again.
-  expect(verified).toEqual(["candidate:merge"]);
+  expect(verified).toEqual(["thing:find"]);
   expect(run.turnsOf("checker")).toHaveLength(0);
   expect(run.value.state).toBe("done");
 });
@@ -692,7 +755,7 @@ test("a fix made while re-checking after a rebase is committed before it lands",
   );
   // squash, rebase, re-check with a fix, then squash and rebase again before the fast-forward.
   expect(git.calls.filter((c) => c.startsWith("squash"))).toHaveLength(2);
-  expect(git.calls.indexOf(`ff req/${r.id}`)).toBeGreaterThan(git.calls.lastIndexOf(`squash ${r.id} build candidate:merge`));
+  expect(git.calls.indexOf(`ff req/${r.id}`)).toBeGreaterThan(git.calls.lastIndexOf(`squash ${r.id} build thing:find`));
   expect(run.value.state).toBe("done");
 });
 
@@ -705,7 +768,7 @@ test("a merge redone after a block checks again against what was approved", asyn
       recorded: { ...recordedUpTo("check"), check: { revisions: 0, by: "builder", base: "approved-on-old-main" } },
     },
   );
-  expect(verified).toEqual(["candidate:merge"]);
+  expect(verified).toEqual(["thing:find"]);
   expect(run.value.state).toBe("done");
 });
 
@@ -720,17 +783,17 @@ test("a merge that landed before the run died is found on main", async () => {
 
 test("another op that fails on main too is not this change's to fix", async () => {
   git.changedFiles = ["x/helpers/index.ts"];
-  const opsDir = join(home, "worktrees", "R-0001", "x", "ops", "candidate-create");
+  const opsDir = join(home, "worktrees", "R-0001", "x", "ops", "thing-list");
   mkdirSync(opsDir, { recursive: true });
   writeFileSync(join(opsDir, "examples.json"), JSON.stringify([{ context: "acme", input: {} }]));
-  verifies = [passed(), failed("already broken", "candidate:create"), failed("already broken", "candidate:create")];
+  verifies = [passed(), failed("already broken", "thing:list"), failed("already broken", "thing:list")];
   const r = file();
   const run = await testWorkflow(
     defineBuild(deps()),
     { id: r.id, home },
     { agents: { planner: planning(), builder: building(), checker: approve } },
   );
-  expect(verified).toEqual(["candidate:merge", "candidate:create", "candidate:create"]);
+  expect(verified).toEqual(["thing:find", "thing:list", "thing:list"]);
   expect(run.value.state).toBe("done");
 });
 
@@ -775,7 +838,7 @@ test("a fast-forward that loses a race rebases once more", async () => {
 
 // ── repair ────────────────────────────────────────────────────────────────────────────────────────
 
-const repairOf = () => file({ kind: "repair", op: "candidate:create", failure: { step: "fill name", error: "Timeout", bundle: "/b/1" } });
+const repairOf = () => file({ kind: "repair", op: "thing:list", failure: { step: "fill name", error: "Timeout", bundle: "/b/1" } });
 
 test("a repair that reproduces is patched, checked and merged", async () => {
   const r = repairOf();
@@ -784,7 +847,7 @@ test("a repair that reproduces is patched, checked and merged", async () => {
     { id: r.id, home },
     {
       agents: {
-        builder: [answer(DIAGNOSIS, { kind: "reproduced", diagnosis: "First Name is now Given Name" }), done("relabelled")],
+        builder: [answer(DIAGNOSIS, { kind: "reproduced", diagnosis: "the Name label is now Title" }), done("relabelled")],
         checker: approve,
       },
     },
@@ -793,14 +856,14 @@ test("a repair that reproduces is patched, checked and merged", async () => {
   expect(diagnose!.prompt).toContain("/b/1");
   expect(diagnose!.prompt).toContain("never on the failed input's own records");
   expect(patch!.prompt).toContain("goes through the step that failed");
-  expect(run.value).toEqual({ state: "done", summary: "repaired candidate:create (0 revision(s)): First Name is now Given Name" });
-  expect(git.calls).toContain(`squash ${r.id} repair candidate:create`);
+  expect(run.value).toEqual({ state: "done", summary: "repaired thing:list (0 revision(s)): the Name label is now Title" });
+  expect(git.calls).toContain(`squash ${r.id} repair thing:list`);
 });
 
 test("a repair of a direct way is diagnosed from its calls, not a screenshot", async () => {
   const r = file({
     kind: "repair",
-    op: "candidate:create",
+    op: "thing:list",
     failure: { step: "search", error: "the direct way failed", bundle: "/b/2", fellBack: true },
   });
   const run = await testWorkflow(
@@ -820,14 +883,14 @@ test("a repair that can't be reproduced ends failed as flaky, freeing the op", a
   );
   expect(run.value.state).toBe("failed");
   expect(requests.get(r.id)!.reason).toContain("flaky");
-  expect(requests.lockOp("candidate:create", "R-9999")).toBeUndefined();
+  expect(requests.lockOp("thing:list", "R-9999")).toBeUndefined();
   expect(git.calls.at(-1)).toStartWith("remove");
 });
 
 test("a repair waits for another request holding its op", async () => {
-  const holder = file({ op: "candidate:create" });
+  const holder = file({ op: "thing:list" });
   requests.update(holder.id, () => ({ state: "building" }));
-  requests.lockOp("candidate:create", holder.id);
+  requests.lockOp("thing:list", holder.id);
   const r = repairOf();
   const run = await testWorkflow(defineRepair(deps()), { id: r.id, home }, { agents: {} });
   expect(run.turns).toHaveLength(0);

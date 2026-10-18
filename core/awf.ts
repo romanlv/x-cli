@@ -72,12 +72,8 @@ export const stopRun = async (request: RequestRecord): Promise<void> => {
   }
   if (request.attempts === 0) return;
   // Loaded only here: the workflows bring in awf's library, which no other command needs.
-  const [{ cleanUpAfter }, { realDeps }, { loadConfig }] = await Promise.all([
-    import("./workflows/shared"),
-    import("./workflows/deps"),
-    import("./workflows/config"),
-  ]);
-  await cleanUpAfter(realDeps, request, loadConfig(request.domain.root));
+  const { cleanUpCancelled } = await import("./workflows/shared");
+  await cleanUpCancelled(request);
 };
 
 export interface RunUsage {
@@ -123,13 +119,13 @@ export const formatCost = (usage: Pick<RunUsage, "usd" | "partial">): string => 
 type Activity = { type: string; tool?: string; input?: string; from?: string };
 
 /** The part of `awf runs <id> --json` that says what a running attempt is doing. */
-export interface RunView {
+interface RunView {
   stages?: { stage: string; state: string; started?: string; ended?: string }[];
   agents?: { key: string; state: string; live?: { lastActivity?: { activity: Activity; at: string } } }[];
 }
 
 /** A turn as the run's log (`turns.jsonl`) has it: started, and once it settles, answered. */
-export interface TurnLine {
+interface TurnLine {
   kind: string;
   attempt?: number;
   of?: string;

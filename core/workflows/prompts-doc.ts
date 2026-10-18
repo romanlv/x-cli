@@ -49,7 +49,8 @@ export const renderPrompts = (cli: string, domainFolder: string, config: Workflo
     ...request,
     id: "R-0002",
     kind: "repair",
-    text: `${failure.error} (at "${failure.step}")`,
+    // As the runner files it.
+    text: `${op} failed at "${failure.step}": ${failure.error}`,
     op,
     call: undefined,
     failure,
@@ -123,7 +124,7 @@ export const renderPrompts = (cli: string, domainFolder: string, config: Workflo
     section("write", "The builder.", prompts.write(run, op, plan)),
     "## Repair",
     "",
-    "Filed by the runner when an op failed; there is no intake. The summary in the brief is the failure.",
+    "Filed by the runner when an op failed; there is no intake. The request in the brief is the failure, as the runner filed it.",
     "",
     section("diagnose", "The builder. It answers reproduced or flaky.", prompts.diagnose(repair, op, failure)),
     section("patch", "The builder.", prompts.patch(repair, op, failure, "The sort control is now a menu.")),

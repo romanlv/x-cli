@@ -20,9 +20,9 @@ import Type from "typebox";
 import { envName, envValue } from "../env";
 import * as prompts from "../instructions/prompts";
 import { opFromFolder } from "../names";
-import { isSignInQuestion, isTerminal, type RequestRecord, Requests, signInQuestion } from "../requests";
+import { isSignInQuestion, isTerminal, type RequestKind, type RequestRecord, Requests, signInQuestion } from "../requests";
 import { loadConfig, type Role, type WorkflowConfig } from "./config";
-import { type CheckScope, cliEnv, type Deps, domainIn, entryIn, examplesIn, type Verified } from "./deps";
+import { type CheckScope, cliEnv, type Deps, domainIn, entryIn, examplesIn, realDeps, type Verified } from "./deps";
 import { type SandboxPaths, sandboxPaths, shellEnv, widen } from "./sandbox";
 
 const MINUTE = 60_000;
@@ -61,16 +61,12 @@ const strict = { additionalProperties: false } as const;
 /** The one question only a person can answer, which `ask` lets any turn end with. */
 export const QUESTION = Type.Object({ kind: Type.Literal("question"), question: Type.String() }, strict);
 
-export const INTAKE = Type.Union([
-  Type.Object(
-    {
-      kind: Type.Literal("build"),
-      op: Type.String({ description: "noun:verb, lowercase, no hyphen in the noun" }),
-      change: Type.Boolean({ description: "true when the op exists and this changes it" }),
-      summary: Type.String({ description: "the intent, in a few sentences" }),
-    },
-    strict,
-  ),
+const BUILD = {
+  kind: Type.Literal("build"),
+  op: Type.String({ description: "noun:verb, lowercase, no hyphen in the noun" }),
+  summary: Type.String({ description: "the intent, in a few sentences" }),
+};
+const NOT_BUILT = [
   Type.Object({ kind: Type.Literal("duplicate"), command: Type.String(), reason: Type.String() }, strict),
   Type.Object(
     {
@@ -82,7 +78,10 @@ export const INTAKE = Type.Union([
   ),
   Type.Object({ kind: Type.Literal("deferred"), reason: Type.String() }, strict),
   Type.Object({ kind: Type.Literal("declined"), reason: Type.String() }, strict),
-]);
+] as const;
+export const INTAKE = Type.Union([Type.Object(BUILD, strict), ...NOT_BUILT]);
+/** Intake's stage result: its answer, and with build whether the op is there to change, which the run decides. */
+export const PLAN = Type.Union([Type.Object({ ...BUILD, change: Type.Boolean() }, strict), ...NOT_BUILT]);
 export const DONE = Type.Object({ kind: Type.Literal("done"), summary: Type.String() }, strict);
 /** The way explore picked, or that none serves. */
 export const EXPLORED = Type.Union([
@@ -102,8 +101,7 @@ export const REVIEW = Type.Object(
           where: Type.String(),
           problem: Type.String(),
           severity: Type.Union([Type.Literal("blocking"), Type.Literal("minor")], {
-            description:
-              "blocking: the op is wrong, unsafe, or breaks the spec, authoring.md or another op. minor: wording, a doc line, a name, style — fixable without another look",
+            description: `blocking: ${prompts.SEVERITY.blocking}. minor: ${prompts.SEVERITY.minor}`,
           }),
         },
         strict,
@@ -164,12 +162,15 @@ const envLine = (env: Record<string, string>): string =>
     .map(([k, v]) => `${k}=${v}`)
     .join(" ");
 
+const worktreeOf = (request: RequestRecord): string => join(request.domain.home, "worktrees", request.id);
+const branchOf = (request: RequestRecord): string => `req/${request.id}`;
+
 export const pathsFor = (request: RequestRecord, config: WorkflowConfig): Paths => {
-  const worktree = join(request.domain.home, "worktrees", request.id);
+  const worktree = worktreeOf(request);
   const sandbox = config.sandbox ? sandboxPaths(request) : undefined;
   return {
     worktree,
-    branch: `req/${request.id}`,
+    branch: branchOf(request),
     domainDir: domainIn(worktree, request),
     cli: `env ${envLine(cliEnv(request, sandbox))} bun ${entryIn(worktree, request)}`,
     session: request.id,
@@ -278,16 +279,30 @@ export class RequestRun {
   }
 
   async cleanUp(): Promise<void> {
-    await cleanUpAfter(this.deps, this.request, this.config);
+    await cleanUpAfter(this.deps, this.request, this.paths.sandbox);
   }
 }
 
-/** Close a request's browser sessions and remove its worktree: as its run ends, or once it is cancelled. */
-export const cleanUpAfter = async (deps: Deps, request: RequestRecord, config: WorkflowConfig): Promise<void> => {
-  const paths = pathsFor(request, config);
-  await deps.closeSessions(paths.worktree, request, [paths.session, `${paths.session}-check`], paths.sandbox);
-  await deps.git.removeWorktree(request.domain.root, paths.worktree, paths.branch);
-  if (paths.sandbox) rmSync(paths.sandbox.sockets, { recursive: true, force: true });
+const sessionsOf = (request: RequestRecord): string[] => [request.id, `${request.id}-check`];
+
+/** Close a request's browser sessions, in the CLI home its agents used, and remove its worktree. */
+const cleanUpAfter = async (deps: Deps, request: RequestRecord, sandbox?: SandboxPaths): Promise<void> => {
+  const worktree = worktreeOf(request);
+  await deps.closeSessions(worktree, request, sessionsOf(request), sandbox);
+  await deps.git.removeWorktree(request.domain.root, worktree, branchOf(request));
+  if (sandbox) rmSync(sandbox.sockets, { recursive: true, force: true });
+};
+
+/**
+ * Clean up after a cancelled request, once its run has stopped. workflows.json may have changed
+ * since the run read it, so its sessions are closed in the request's sandbox home as well when it
+ * has one: closing a session that isn't running does nothing.
+ */
+export const cleanUpCancelled = async (request: RequestRecord, deps: Deps = realDeps): Promise<void> => {
+  const sandbox = sandboxPaths(request);
+  if (existsSync(sandbox.home)) await deps.closeSessions(worktreeOf(request), request, sessionsOf(request), sandbox);
+  await cleanUpAfter(deps, request);
+  rmSync(sandbox.sockets, { recursive: true, force: true });
 };
 
 /**
@@ -323,11 +338,13 @@ const turn = async <S extends Type.TSchema>(
 ): Promise<Answer<S>> => {
   const { outcome } = await agent.run<Answer<S>>({ prompt, schema, label, timeoutMs });
   if (isAnswered(outcome)) return outcome.value;
+  // The question names the agent, whose login or settings a person fixes, and the turn it was on.
+  const who = `the ${agent.key} agent (${label})`;
   if (outcome.kind === "failed" && outcome.login)
-    return run.block(`the ${label} agent has no login: ${outcome.login.run}, then answer this request to go on`);
+    return run.block(`${who} has no login: ${outcome.login.run}, then answer this request to go on`);
   if (outcome.kind === "blocked") {
     return run.block(
-      `the ${label} agent stopped at a prompt only a person can answer (${outcome.reason}); allow it in the agent's settings, then answer this request to go on`,
+      `${who} stopped at a prompt only a person can answer (${outcome.reason}); allow it in the agent's settings, then answer this request to go on`,
     );
   }
   return run.workflow.stop(`${label}: ${outcome.kind}: ${outcome.reason}`);
@@ -389,13 +406,18 @@ const openTeam = (run: RequestRun): Team => {
 const helpersIn = (paths: Paths, files: string[]): boolean =>
   files.some((f) => f.startsWith(`${relative(paths.worktree, paths.domainDir)}/helpers/`));
 
-/** Every op with an example for this context, as the worktree has them now. */
+/** Every op with an example for this context, as the worktree has them now, and every op whose examples.json can't be read, so verify says so. */
 const opsWithExamples = (paths: Paths, context: string): string[] => {
   const ops = join(paths.domainDir, "ops");
   if (!existsSync(ops)) return [];
-  return readdirSync(ops)
-    .filter((folder) => examplesIn(join(ops, folder)).some((e) => e.context === context))
-    .map(opFromFolder);
+  const verifiable = (folder: string): boolean => {
+    try {
+      return examplesIn(join(ops, folder)).some((e) => e.context === context);
+    } catch {
+      return true;
+    }
+  };
+  return readdirSync(ops).filter(verifiable).map(opFromFolder);
 };
 
 /**
@@ -578,7 +600,12 @@ const mergeToMain = async (
   return run.workflow.stop(`main kept moving: could not land the change after ${LIMITS.merges} tries`);
 };
 
-const PAST = { build: "built", change: "changed", repair: "repaired" } as const;
+/** What the commit says a kind of request did (`R-0012 build post:thread`), and what its result says. */
+const DID = {
+  new: { commit: "build", past: "built" },
+  change: { commit: "change", past: "changed" },
+  repair: { commit: "repair", past: "repaired" },
+} as const satisfies Record<Exclude<RequestKind, "intake">, { commit: string; past: string }>;
 
 /**
  * Check the op until approved, merge it, and end the request done. `summary` is the brief's, `said`
@@ -588,7 +615,7 @@ export const land = async (
   run: RequestRun,
   team: Team,
   op: string,
-  kind: keyof typeof PAST,
+  kind: keyof typeof DID,
   { summary, said, what }: { summary: string; said: string; what: string },
 ): Promise<Result> => {
   const checked = await run.stage(
@@ -601,10 +628,10 @@ export const land = async (
     "merge",
     MERGED,
     (m) => m.commit.slice(0, 10),
-    () => mergeToMain(run, team, op, summary, `${run.id} ${kind} ${op}`, checked.base),
+    () => mergeToMain(run, team, op, summary, `${run.id} ${DID[kind].commit} ${op}`, checked.base),
   );
   const { request } = run;
   const command = request.call ? `${request.domain.name} ${request.call.argv.join(" ")}` : `${request.domain.name} ${op} --help`;
-  const done = `${PAST[kind]} ${op} (${checked.revisions} revision(s)): ${what}`;
+  const done = `${DID[kind].past} ${op} (${checked.revisions} revision(s)): ${what}`;
   return run.end("done", done, { summary: done, command, commit: merged.commit });
 };
