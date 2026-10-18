@@ -75,7 +75,7 @@ export interface FileInput {
   failure?: RequestRecord["failure"];
 }
 
-const ID = /^R-\d{4,}$/;
+export const REQUEST_ID = /^R-\d{4,}$/;
 
 export class Requests {
   constructor(readonly home: string) {}
@@ -134,7 +134,7 @@ export class Requests {
   }
 
   get(id: string): RequestRecord | undefined {
-    if (!ID.test(id)) return undefined;
+    if (!REQUEST_ID.test(id)) return undefined;
     return readJson<RequestRecord | undefined>(this.fileOf(id), undefined);
   }
 

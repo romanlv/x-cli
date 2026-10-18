@@ -98,7 +98,7 @@ test("while a request runs, the worker keeps its context signed in", async () =>
   requests.file({ kind: "intake", text: "a", context: "acme", domain: domain() });
   const touched: string[] = [];
   const keepSignedIn = async (c: string) => touched.push(c) > 0;
-  await runWorker(t.home, ROOT, { pollMs: 20, awf: AWF, maxRunning: 2, keepSignedInMs: 100, keepSignedIn });
+  await runWorker(t.home, ROOT, { pollMs: 20, awf: AWF, maxRunning: 2, signInEveryMs: 100, keepSignedIn });
   expect(touched.length).toBeGreaterThan(0);
   expect(new Set(touched)).toEqual(new Set(["acme"]));
   // An app that doesn't sign out an idle session sets no interval: nothing is touched.

@@ -82,4 +82,4 @@ export const alive = (pid: number | undefined): boolean => {
   }
 };
 
-export const timestamp = (date = new Date()): string => date.toISOString();
+export const timestamp = (): string => new Date().toISOString();

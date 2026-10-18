@@ -71,7 +71,7 @@ export const runWorker = async (
     maxRunning,
     runTimeout = "3h",
     keepSignedIn,
-    keepSignedInMs,
+    signInEveryMs,
   }: {
     pollMs?: number;
     awf?: string;
@@ -85,7 +85,7 @@ export const runWorker = async (
     /** Open the app signed in as a context, signing in again if it can; true when it is signed in. */
     keepSignedIn?: (context: string) => Promise<boolean>;
     /** How often the contexts of running requests are kept signed in; unset, they aren't. */
-    keepSignedInMs?: number;
+    signInEveryMs?: number;
   },
 ): Promise<void> => {
   const requests = new Requests(home);
@@ -148,7 +148,7 @@ export const runWorker = async (
     if (!keepSignedIn || signingIn) return;
     const contexts = new Set<string>();
     const building = all.filter((r) => r.state === "building");
-    if (keepSignedInMs !== undefined && building.length > 0 && Date.now() - touchedAt >= keepSignedInMs) {
+    if (signInEveryMs !== undefined && building.length > 0 && Date.now() - touchedAt >= signInEveryMs) {
       touchedAt = Date.now();
       for (const r of building) contexts.add(r.context);
     }

@@ -20,7 +20,7 @@ import Type from "typebox";
 import { envName, envValue } from "../env";
 import * as prompts from "../instructions/prompts";
 import { opFromFolder } from "../names";
-import { isSignInQuestion, isTerminal, type RequestKind, type RequestRecord, Requests, signInQuestion } from "../requests";
+import { isSignInQuestion, isTerminal, REQUEST_ID, type RequestKind, type RequestRecord, Requests, signInQuestion } from "../requests";
 import { loadConfig, type Role, type WorkflowConfig } from "./config";
 import { type CheckScope, cliEnv, type Deps, domainIn, entryIn, examplesIn, realDeps, type Verified } from "./deps";
 import { type SandboxPaths, sandboxPaths, shellEnv, widen } from "./sandbox";
@@ -132,7 +132,7 @@ type RunArgs = {
 
 const prepareArgs = ({ argv }: { argv: readonly string[] }): RunArgs => {
   const id = argv[0];
-  if (!id || !/^R-\d+$/.test(id)) throw new Error("usage: awf run <workflow> -- R-0012");
+  if (!id || !REQUEST_ID.test(id)) throw new Error("usage: awf run <workflow> -- R-0012");
   const home = envValue("HOME");
   if (!home) throw new Error(`${envName("HOME")} is not set: the worker starts these runs`);
   return { id, home };

@@ -329,7 +329,7 @@ const work = async (env: Env): Promise<Outcome> => {
   await runWorker(domain.home, domain.root, {
     maxRunning: envNumber("MAX_RUNNING", domain.maxRunning ?? 2),
     runTimeout: envValue("RUN_TIMEOUT"),
-    keepSignedInMs: envOverride("KEEP_ALIVE_SIGN_IN_MS", domain.keepAlive?.signInEveryMs),
+    signInEveryMs: envOverride("KEEP_ALIVE_SIGN_IN_MS", domain.keepAlive?.signInEveryMs),
     // Signed out, a person who left their sign-in in .env.<context> needn't come back for it.
     keepSignedIn: async (name) => {
       const ctx = contexts.list().contexts.find((c) => c.name === name);
