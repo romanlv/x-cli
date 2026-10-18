@@ -470,14 +470,20 @@ export const entryText = (entry: Entry): string => {
   return lines.join("\n");
 };
 
-/** A page of entries: blocks with a rule between them, and when there is more, how to read on. */
-export const pageText = (page: { items: Entry[]; more?: boolean }): string => {
+/**
+ * A page of entries: blocks with a rule between them, and when there is more, how to read on:
+ * from the newest id with `--until`, or, for a timeline that is not in id order, only that there is more.
+ */
+export const pageText = (page: { items: Entry[]; more?: boolean }, byId = true): string => {
   if (page.items.length === 0) return "no posts";
   const blocks = page.items.map(entryText);
   const newest = page.items.map((e) => e.id).find(Boolean);
-  if (page.more && newest) blocks.push(`${page.items.length} posts · more: pass --until ${newest}`);
+  if (page.more && newest) blocks.push(`${page.items.length} posts · more${byId ? `: pass --until ${newest}` : " past the limit"}`);
   return blocks.join(`\n${RULE}\n`);
 };
+
+/** `pageText` for a timeline X ranks (home), which has no `--until` to read on from. */
+export const rankedPageText = (page: { items: Entry[]; more?: boolean }): string => pageText(page, false);
 
 /** One account as a person reads it in the terminal: who, how it relates to the viewer, its bio and counts. */
 export const userText = (user: User | UserUnavailable): string => {

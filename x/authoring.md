@@ -82,7 +82,7 @@ This is a sketch, not a built op: the first real one replaces it here.
   account's responses yet: the first op that uses one compares its output with what the page
   received (`page:requests <n> body`), fixes the mapper and its fixture where they differ, and
   records the shape as confirmed in `knowledge/x.md`.
-- **The helpers** (`app`) are `open`, `search`, `profile`, `posts`, `timeline`, `thread`, `user`,
+- **The helpers** (`app`) are `open`, `search`, `profile`, `home`, `posts`, `timeline`, `thread`, `user`,
   `graphql` and `errors`.
 - **Target `data-testid`**, then role and name, then text. X's class names change with every release.
 - **Errors**: `InputError` for a bad handle or a limit out of range; `PreconditionError` for an

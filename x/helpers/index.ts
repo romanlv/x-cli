@@ -19,6 +19,16 @@ export const HANDLE = /^\w{1,15}$/;
 export const SEARCH_TABS = ["top", "latest", "people", "media"] as const;
 export type SearchTab = (typeof SEARCH_TABS)[number];
 
+/** The tabs of X's home timeline: For you (ranked, with suggestions) and Following (accounts the person follows). */
+export const HOME_TABS = ["for-you", "following"] as const;
+export type HomeTab = (typeof HOME_TABS)[number];
+
+/** Each home tab's name on the page, and the GraphQL operation that loads it. */
+export const HOME = {
+  "for-you": { name: /^for you$/i, operation: "HomeTimeline" },
+  following: { name: /^following$/i, operation: "HomeLatestTimeline" },
+} as const;
+
 export const SEL = {
   accountSwitcher: '[data-testid="SideNav_AccountSwitcher_Button"]',
   signInButtons: '[data-testid="loginButton"], [data-testid="login"]',
@@ -385,6 +395,36 @@ export const xHelpers = (page: Page) => {
     async search(query: string, tab: SearchTab = "latest"): Promise<void> {
       const f = { top: "", latest: "&f=live", people: "&f=user", media: "&f=media" }[tab];
       await helpers.open(`/search?q=${encodeURIComponent(query)}&src=typed_query${f}`);
+    },
+
+    /**
+     * The home timeline on `tab`, as a person gets there: /home opens on For you, and a click on the
+     * Following tab switches it. X keeps the choice with the page, not the account (a new page opens
+     * on For you again, 2026-10-18), so there is nothing to put back.
+     */
+    async home(tab: HomeTab): Promise<void> {
+      await helpers.open("/home");
+      if ((await helpers.homeShown()) !== tab) await helpers.homeTab(tab);
+    },
+
+    /** The home tab that is selected now; waits for the tab list, which X draws after the main column. */
+    async homeShown(): Promise<HomeTab> {
+      const selected = page.locator(SEL.primaryColumn).getByRole("tab", { selected: true });
+      await selected.first().waitFor({ state: "visible", timeout: 20_000 });
+      const name = (await selected.first().innerText()).trim();
+      const tab = HOME_TABS.find((t) => HOME[t].name.test(name));
+      if (!tab) throw new PreconditionError(`the home timeline shows a tab called "${name}", not For you or Following`);
+      return tab;
+    },
+
+    /** Click a home tab (a person's click, which X remembers as the account's tab) and wait until it is the selected one. */
+    async homeTab(tab: HomeTab): Promise<void> {
+      await page.locator(SEL.primaryColumn).getByRole("tab", { name: HOME[tab].name }).first().click();
+      await page
+        .locator(SEL.primaryColumn)
+        .getByRole("tab", { name: HOME[tab].name, selected: true })
+        .first()
+        .waitFor({ state: "visible", timeout: 15_000 });
     },
 
     /** A profile, by handle; a handle that isn't there is a precondition, not the op's fault. */

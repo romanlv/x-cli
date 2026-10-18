@@ -21,6 +21,7 @@ import {
   pageText,
   postUrl,
   type Repost,
+  rankedPageText,
   Thread,
   timeOfId,
   User,
@@ -336,6 +337,14 @@ describe("x model: helpers and writes", () => {
     expect(text).toContain("\n────");
     expect(text).toMatch(/\d+ posts · more: pass --until \d+$/);
     expect(text).toContain("[deleted] This Post was deleted");
+  });
+
+  test("text for a ranked timeline says there is more, but not to pass --until", () => {
+    const { items } = postsPage(userTweets);
+    const text = rankedPageText({ items, more: true });
+    expect(text).toMatch(/\d+ posts · more past the limit$/);
+    expect(text).not.toContain("--until");
+    expect(rankedPageText({ items, more: false })).not.toContain("past the limit");
   });
 
   test("a draft references what it replies to and quotes by id", () => {

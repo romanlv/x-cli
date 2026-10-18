@@ -24,11 +24,11 @@ pages" below.
 
 ## Pages
 
-Search (Latest), a profile and a post's page are **confirmed** (2026-10-18); the rest are not yet.
+Search (Latest), a profile, a post's page and home are **confirmed** (2026-10-18); the rest are not yet.
 
 | What | URL |
 | --- | --- |
-| home timeline | `/home` |
+| home timeline | `/home`: tabs For you and Following (role tab, in `primaryColumn`); a new page opens on For you |
 | search | `/search?q=<query>&src=typed_query` plus `&f=live` (Latest), `&f=user` (People), `&f=media` |
 | a profile | `/<handle>`; replies at `/<handle>/with_replies`, media at `/<handle>/media` |
 | a post and its replies | `/<handle>/status/<id>`; `/i/status/<id>` redirects there, so an id alone is enough |
@@ -104,6 +104,18 @@ Confirmed against this account:
   30 fresh browsers in ten minutes did it, and it had reset ten minutes later. `x/domain.ts` keeps
   each page's 429s (`watchLimits`), so the sign-in check and triage call it X's refusal (exit 4), not
   a page that showed neither x's pages nor a sign-in (exit 3). While building, space the runs out.
+- `HomeTimeline` and `HomeLatestTimeline` (2026-10-18, `home:posts`): the home page's For you tab calls
+  `HomeTimeline` (GET, `count: 20`, `includePromotedContent: true`), a click on Following calls
+  `HomeLatestTimeline` (POST, a JSON body with `variables.enableRanking: true` and `seenTweetIds`).
+  Both: `data.home.home_timeline_urt`, one `TimelineAddEntries` of 35 to 38 entries, about 27 posts
+  once the ads are gone. **Neither tab is in id order**: Following is ranked too
+  (`ranked_following`), so no `until` there. **Ads** are `promoted-tweet-<id>-<hash>` entries with
+  `promotedMetadata`, about 8 in 37, in both tabs; `readTimeline` drops them. A conversation comes as
+  a `home-conversation-<id>` module (`VerticalConversation`), earlier post first. Each entry's
+  `clientEventInfo.component` says why X showed it (`for_you_in_network`, `for_you_phoenix_retrieval`,
+  `for_you_simclusters`, `ranked_following`); the model has no field for it yet. `postsPage` read
+  both as they came and agreed with the DOM on every count looked at.
+- The tab clicked on `/home` is kept with the page, not the account: a new page opens on For you again.
 - A timeline's next page loads only when the page is scrolled near its bottom (20 posts are about
   8000 px), so a read can't count early scrolls without a new call as the end: `app.timeline` counts
   one only at the page's bottom.
