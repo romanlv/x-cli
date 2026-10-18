@@ -10,7 +10,7 @@ import { envNumber, envValue } from "./env";
 import { BrowserError, InputError, PreconditionError } from "./errors";
 import { type NetworkEntry, recordNetwork } from "./network";
 import { firstLine, progress } from "./output";
-import { browserBinary, type PlainBrowser, startPlain, type Tab } from "./plain-browser";
+import { browserBinary, startPlain } from "./plain-browser";
 
 export interface OpenBrowser {
   browser: Browser;
@@ -228,14 +228,11 @@ const signedIn = async (domain: Domain, contexts: Contexts, ctx: Context, contex
   contexts.markSignedIn(ctx.name, domain.appUrl?.(page.url(), ctx.url) ?? page.url());
 };
 
-/** When a tab that stays on one page is looked at again while a person signs in, by what the last look found. */
-const LOOK_AGAIN_MS = { unknown: 3000, other: 30_000 };
-
 /**
  * Signing in by hand happens in the installed browser started as itself (`plain-browser.ts`), in a
- * profile kept for the context, so the app sees the same ordinary browser each time. Nothing drives
- * it: core lists its tabs, and attaches for one look at whether one is signed in only once the tab
- * has held still on a page that isn't one of the app's sign-in pages (`signInPage`).
+ * profile kept for the context: nothing drives or watches it, since X turned away a sign-in in a
+ * window it could tell was watched. Once the person says they're done (Enter here, or quitting the
+ * browser), it closes, and Playwright opens the profile, headless, to check the sign-in and save it.
  */
 const signInByHand = async (
   domain: Domain,
@@ -243,65 +240,51 @@ const signInByHand = async (
   ctx: Context,
   { timeoutMs = 10 * 60_000, headless }: { timeoutMs?: number; headless: boolean },
 ): Promise<void> => {
-  const plain = await startPlain(browserBinary(envValue("BROWSER_CHANNEL")), {
-    profileDir: join(dirname(ctx.authFile), "browser"),
-    url: ctx.url,
-    headless,
-    size: VIEWPORT,
-  });
-  try {
-    progress(`sign in to ${ctx.url} in the browser window; waiting up to ${Math.round(timeoutMs / 60_000)} minutes`);
-    const deadline = Date.now() + timeoutMs;
-    const nextLook = new Map<string, number>();
-    let last = "";
-    for (;;) {
-      if (plain.closed()) throw new PreconditionError("the sign-in window was closed before signing in");
-      if (Date.now() > deadline) throw new PreconditionError("timed out waiting for the sign-in");
-      const tabs = await plain.tabs().catch(() => []);
-      const urls = tabs.map((t) => t.url).join("\n");
-      const still = urls === last;
-      last = urls;
-      const ready = still ? tabs.filter((t) => !domain.signInPage?.(t.url) && Date.now() >= (nextLook.get(t.url) ?? 0)) : [];
-      if (ready.length && (await lookForSignIn(domain, contexts, ctx, plain, ready, nextLook))) return;
-      await Bun.sleep(1000);
-    }
-  } finally {
-    await plain.close();
-  }
+  const profileDir = join(dirname(ctx.authFile), "browser");
+  const binary = browserBinary(envValue("BROWSER_CHANNEL"));
+  const plain = startPlain(binary, { profileDir, url: ctx.url, headless, size: VIEWPORT });
+  const minutes = Math.round(timeoutMs / 60_000);
+  progress(`sign in to ${ctx.url} in the browser window, then press Enter here (or quit the browser); waiting up to ${minutes} minutes`);
+  const done = await Promise.race([plain.exited.then(() => true), enterPressed().then(() => true), Bun.sleep(timeoutMs).then(() => false)]);
+  process.stdin.pause();
+  await plain.close();
+  if (!done) throw new PreconditionError("timed out waiting for the sign-in");
+  await readSignIn(domain, contexts, ctx, { profileDir, binary });
 };
 
+/** Settles when the person presses Enter; never, without a terminal. */
+const enterPressed = (): Promise<void> =>
+  new Promise((resolve) => {
+    if (process.stdin.isTTY) process.stdin.once("data", () => resolve());
+  });
+
 /**
- * Attach, look once at whether each tab is signed in, save the sign-in when one is, and detach.
- * One look, not a wait: a page still loading is looked at again soon, by then perhaps a sign-in page.
+ * Open a closed sign-in window's profile with the browser that wrote it (another may not read it),
+ * and save its sign-in for the context if it is signed in.
  */
-const lookForSignIn = async (
+export const readSignIn = async (
   domain: Domain,
   contexts: Contexts,
   ctx: Context,
-  plain: PlainBrowser,
-  tabs: Tab[],
-  nextLook: Map<string, number>,
-): Promise<boolean> => {
-  const browser = await plain.attach().catch(() => undefined);
-  if (!browser) return false;
+  { profileDir, binary }: { profileDir: string; binary: string },
+): Promise<void> => {
+  let context: BrowserContext;
   try {
-    const context = browser.contexts()[0];
-    const urls = new Set(tabs.map((t) => t.url));
-    for (const page of context?.pages() ?? []) {
-      const url = page.url();
-      if (!urls.has(url)) continue;
-      const state = await domain.signInState(page, ctx.url).catch(() => "unknown" as const);
-      if (state === "elsewhere") throw new PreconditionError(`signed in elsewhere than ${ctx.url} (another account or tenant)`);
-      if (state === "signed-in") {
-        await signedIn(domain, contexts, ctx, context!, page);
-        return true;
-      }
-      nextLook.set(url, Date.now() + (state === "unknown" ? LOOK_AGAIN_MS.unknown : LOOK_AGAIN_MS.other));
-    }
-    return false;
+    context = await launchWith(false, ({ channel: _, ...options }) =>
+      chromium.launchPersistentContext(profileDir, { ...options, executablePath: binary, viewport: VIEWPORT, timeout: 30_000 }),
+    );
+  } catch (err) {
+    throw new BrowserError(`could not open the sign-in window's profile: ${firstLine((err as Error).message)}`);
+  }
+  try {
+    const page = await context.newPage();
+    await page.goto(ctx.url, { waitUntil: "domcontentloaded" });
+    const state = await signInStateOf(domain, page, ctx.url);
+    if (state === "elsewhere") throw new PreconditionError(`signed in elsewhere than ${ctx.url} (another account or tenant)`);
+    if (state !== "signed-in") throw new PreconditionError(`not signed in to ${ctx.url}: the window was closed before signing in`);
+    await signedIn(domain, contexts, ctx, context, page);
   } finally {
-    // Detaches; the browser stays open.
-    await browser.close().catch(() => {});
+    await context.close().catch(() => {});
   }
 };
 

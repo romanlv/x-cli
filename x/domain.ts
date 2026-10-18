@@ -58,15 +58,6 @@ export const isSignInUrl = (url: string): boolean => {
   }
 };
 
-/** X's sign-in pages, and the challenges a person clears by hand (an "unusual activity" check, a locked account). */
-const isSignInPage = (url: string): boolean => {
-  try {
-    return isSignInUrl(url) || /^\/account\/access(\/|$)/.test(new URL(url).pathname);
-  } catch {
-    return false;
-  }
-};
-
 /**
  * Signed in shows the side nav's account switcher; signed out lands on the login flow or shows the
  * sign-in buttons. Anything else is unknown, which core asks again: a slow page is not a signed-out one.
@@ -103,7 +94,6 @@ export const xDomain = (overrides: Partial<Domain<Xh>> = {}): Domain<Xh> =>
     directCalls: false,
     testIdAttribute: "data-testid",
     signInState,
-    signInPage: isSignInPage,
     // No submitSignIn: X challenges automated logins, so a person always signs in in the window.
     appUrl(_signedInUrl, contextUrl) {
       const { handle } = accountOf(contextUrl);

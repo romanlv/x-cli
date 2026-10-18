@@ -15,9 +15,11 @@ pages" below.
 - A context is an X account. Its URL is `https://x.com/<handle>`, so the sign-in check refuses a
   saved session signed in as anyone else; plain `https://x.com` takes whichever account signs in.
 - A person signs in by hand in the window (`x context:login <name>`). There is no username and
-  password sign-in: X challenges automated logins. X refused a sign-in in a Chrome that Playwright
-  started (2026-10-17), so the window is the installed Chrome started as itself, on a profile kept
-  in `.state/contexts/<name>/browser`, which core looks at only once a tab leaves the login pages.
+  password sign-in: X challenges automated logins. X refused ("We've temporarily limited your
+  login") a sign-in in a Chrome that Playwright started, and in one with a debugging port core
+  attached to, but not in Chrome started by hand (2026-10-17). So the window is the installed Chrome
+  started as itself, with nothing watching it, on a profile kept in `.state/contexts/<name>/browser`;
+  core reads the sign-in from that profile once the person says they are done.
 - What is particular to one account (its lists, who it follows) goes in `contexts/<context>.md`.
 
 ## Pages _(unconfirmed)_

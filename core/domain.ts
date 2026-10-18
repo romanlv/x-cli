@@ -72,11 +72,6 @@ export interface Domain<Helpers = unknown> {
    */
   submitSignIn?(page: Page, credentials: Credentials): Promise<void>;
   /**
-   * Is `url` one of the app's sign-in pages (a login form, an MFA step, a challenge)? While a person
-   * signs in by hand, core never attaches to a tab on one; unset, it looks at any tab that holds still.
-   */
-  signInPage?(url: string): boolean;
-  /**
    * Set up every signed-in browser before it loads the app, such as routes that block a page the
    * app would otherwise load to sign out the sign-in every browser of the context shares.
    */

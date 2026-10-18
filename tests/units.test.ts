@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Type from "typebox";
 import { awfArgs, describeRun, formatCost, runUsage } from "../core/awf";
-import { launch, signedInContext, signIn } from "../core/browser";
+import { launch, readSignIn, signedInContext } from "../core/browser";
 import { callOf, parseArgs } from "../core/cli";
 import { Contexts } from "../core/contexts";
 import type { Domain } from "../core/domain";
@@ -12,6 +12,7 @@ import { envName, envOverride } from "../core/env";
 import { InputError, OpError } from "../core/errors";
 import { callArgv, loadOps, type OpEntry, opHelp, parseInput, runOp } from "../core/ops";
 import { EXIT, formatDuration } from "../core/output";
+import { browserBinary, startPlain } from "../core/plain-browser";
 import { flakyReason, Requests } from "../core/requests";
 import { pageCommandsOf } from "../core/session";
 import { formatSnapshot, type SnapshotNode, suggestLocator, takeSnapshot } from "../core/snapshot";
@@ -659,30 +660,50 @@ describe("signing in by hand", () => {
     t.cleanup();
   });
 
-  test("saves the session from a browser nothing drives, never looking at a sign-in page", async () => {
-    const looked: string[] = [];
+  test("reads the sign-in from the profile of a browser nothing drove, once it is closed", async () => {
     const domain: Domain = {
       name: "t",
       dir: join(t.home, "t"),
       root: t.home,
       home: t.home,
       helpers: () => ({}),
-      signInPage: (url) => new URL(url).pathname === "/login",
-      async signInState(p) {
-        looked.push(new URL(p.url()).pathname);
-        return (await p.getByRole("heading").count()) ? "signed-in" : "unknown";
-      },
+      signInState: async (p) => ((await p.getByRole("heading").count()) ? "signed-in" : "signed-out"),
       appUrl: (signedInUrl) => signedInUrl,
     };
     const contexts = new Contexts(t.home, "t");
-    const ctx = contexts.add("acme", server.url.href);
-    await signIn(domain, contexts, ctx, { headless: true, timeoutMs: 30_000 });
-    expect(looked).not.toContain("/login");
-    expect(looked).toContain("/home");
+    const ctx = contexts.add("acme", new URL("/home", server.url).href);
+    const profileDir = join(t.home, "browser");
+    const binary = browserBinary(undefined);
+    const plain = startPlain(binary, {
+      profileDir,
+      url: server.url.href,
+      size: { width: 800, height: 600 },
+      headless: true,
+    });
+    // The person signs in, then is done.
+    await Bun.sleep(7000);
+    await plain.close();
+    await readSignIn(domain, contexts, ctx, { profileDir, binary });
     expect(JSON.parse(readFileSync(ctx.authFile, "utf8")).cookies).toContainEqual(
       expect.objectContaining({ name: "sid", value: "signed-in" }),
     );
-    expect(contexts.get("acme").appUrl).toBe(new URL("/home", server.url).href);
+    expect(contexts.get("acme").signedInAt).toBeDefined();
+  }, 45_000);
+
+  test("a window closed before signing in says so", async () => {
+    const domain: Domain = {
+      name: "t",
+      dir: join(t.home, "t"),
+      root: t.home,
+      home: t.home,
+      helpers: () => ({}),
+      signInState: async () => "signed-out",
+    };
+    const contexts = new Contexts(t.home, "t");
+    const ctx = contexts.add("acme", server.url.href);
+    await expect(
+      readSignIn(domain, contexts, ctx, { profileDir: join(t.home, "browser"), binary: browserBinary(undefined) }),
+    ).rejects.toThrow("closed before signing in");
   }, 45_000);
 });
 
