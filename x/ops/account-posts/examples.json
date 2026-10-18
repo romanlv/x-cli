@@ -1,0 +1,6 @@
+[
+  { "context": "me", "input": { "handle": "NASA", "limit": 5 } },
+  { "context": "me", "input": { "handle": "@NASA", "limit": 12, "withReplies": true } },
+  { "context": "me", "input": { "handle": "NASA", "limit": 10, "until": "2110823965954637903" } },
+  { "context": "me", "input": { "handle": "OpenAI", "limit": 8, "withReplies": true } }
+]

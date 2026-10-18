@@ -115,6 +115,18 @@ Confirmed against this account:
   `clientEventInfo.component` says why X showed it (`for_you_in_network`, `for_you_phoenix_retrieval`,
   `for_you_simclusters`, `ranked_following`); the model has no field for it yet. `postsPage` read
   both as they came and agreed with the DOM on every count looked at.
+- A profile's tabs are Posts, Replies, Reposts and Media (2026-10-18, `account:posts`; there is no
+  "Posts & replies"). Each is its own call: `UserOriginalsTimeline` (`/<handle>`: own posts and
+  quotes, no reposts, no replies, the pin above them as a `TimelinePinEntry`), `UserRepliesTimeline`
+  (`/<handle>/with_replies`: only replies, a `profile-conversation-<id>` module each, the post
+  answered first, then the reply; the account's standalone posts are not on it) and
+  `UserRepostsTimeline` (`/<handle>/reposts`). All three: `data.user.result.timeline.timeline`,
+  `variables.userId`, `count: 20`, about 20 posts or modules a page, entries newest first by the
+  account's own post id. `postsPage`/`readTimeline` read all three as they came and nothing
+  differed. On Reposts each entry is a `repost`: its own id (the `tweet-<id>` entry, newest first by it), `by` the
+  account (id, handle, name) and `post` the original, nested at `legacy.retweeted_status_result`, with its
+  author's account id and exact counts (checked on @NASA: repost 2111148671219753420, by 11348282, of
+  2111147283160998281, counts equal to the page's). Opening the tab's URL makes only that tab's call.
 - The tab clicked on `/home` is kept with the page, not the account: a new page opens on For you again.
 - A timeline's next page loads only when the page is scrolled near its bottom (20 posts are about
   8000 px), so a read can't count early scrolls without a new call as the end: `app.timeline` counts

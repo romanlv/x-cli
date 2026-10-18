@@ -15,6 +15,19 @@ const gone: Unavailable = { kind: "unavailable", reason: "deleted", source: "dom
 const cells = (...entries: Entry[]) => entries.map((entry) => ({ entry }));
 
 describe("x helpers: gathering a timeline", () => {
+  test("a limit that cuts through a self-thread keeps the newest posts, not the first read", () => {
+    const read = gather({ limit: 2, newestFirst: true });
+    // A module lays 1/ 2/ 3/ out oldest first, after a newer post; an older post follows.
+    read.add([
+      { entry: post("9000") },
+      { entry: post("8001"), earlier: true },
+      { entry: post("8002"), earlier: true },
+      { entry: post("8003") },
+      { entry: post("7000") },
+    ]);
+    expect(read.page().items.map((e) => e.id)).toEqual(["9000", "8003"]);
+  });
+
   test("a tombstone with no id is counted once across overlapping reads, wherever it falls in each", () => {
     const read = gather({ limit: 50 });
     read.add(cells(post("1001"), gone, post("1003")));

@@ -82,8 +82,9 @@ This is a sketch, not a built op: the first real one replaces it here.
   account's responses yet: the first op that uses one compares its output with what the page
   received (`page:requests <n> body`), fixes the mapper and its fixture where they differ, and
   records the shape as confirmed in `knowledge/x.md`.
-- **The helpers** (`app`) are `open`, `search`, `profile`, `home`, `posts`, `timeline`, `thread`, `user`,
-  `graphql` and `errors`.
+- **The helpers** (`app`) are `open`, `search`, `profile`, `profileTimeline`, `home`, `posts`, `timeline`,
+  `thread`, `user`, `graphql` and `errors`. `timeline`'s `keep` drops entries that count for nothing (a
+  profile's Replies tab holds the posts the account answered).
 - **Target `data-testid`**, then role and name, then text. X's class names change with every release.
 - **Errors**: `InputError` for a bad handle or a limit out of range; `PreconditionError` for an
   account or post that isn't there, or a protected account; `RefusedError` for a rate limit or a

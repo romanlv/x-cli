@@ -339,6 +339,16 @@ describe("x model: helpers and writes", () => {
     expect(text).toContain("[deleted] This Post was deleted");
   });
 
+  test("text marks the pinned post, and reads on from the newest post, not the pinned one or the first", () => {
+    const post = (id: string): Post => ({ kind: "post", id, source: "graphql", author: { handle: "ada" }, text: `post ${id}` });
+    // Pinned first, then a self-thread's 1/ above its newer 2/.
+    const items = [post("1000"), post("3001"), post("3002")];
+    const text = pageText({ items, more: true, pinned: ["1000"] });
+    expect(text.startsWith("📌 pinned\n")).toBe(true);
+    expect(text.match(/📌/g)).toHaveLength(1);
+    expect(text).toMatch(/3 posts · more: pass --until 3002$/);
+  });
+
   test("text for a ranked timeline says there is more, but not to pass --until", () => {
     const { items } = postsPage(userTweets);
     const text = rankedPageText({ items, more: true });

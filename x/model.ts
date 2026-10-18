@@ -473,11 +473,15 @@ export const entryText = (entry: Entry): string => {
 /**
  * A page of entries: blocks with a rule between them, and when there is more, how to read on:
  * from the newest id with `--until`, or, for a timeline that is not in id order, only that there is more.
+ * A pinned entry (`pinned`) is marked, and is not the newest: it sits out of the timeline's order.
  */
-export const pageText = (page: { items: Entry[]; more?: boolean }, byId = true): string => {
+export const pageText = (page: { items: Entry[]; more?: boolean; pinned?: string[] }, byId = true): string => {
   if (page.items.length === 0) return "no posts";
-  const blocks = page.items.map(entryText);
-  const newest = page.items.map((e) => e.id).find(Boolean);
+  const pins = new Set(page.pinned);
+  const blocks = page.items.map((e) => (e.id && pins.has(e.id) ? `📌 pinned\n${entryText(e)}` : entryText(e)));
+  const ids = page.items.flatMap((e) => (e.id && !pins.has(e.id) ? [BigInt(e.id)] : []));
+  // The newest by id, not the first: a self-thread's 1/ sits above its newer 2/.
+  const newest = ids.length ? ids.reduce((a, b) => (b > a ? b : a)) : undefined;
   if (page.more && newest) blocks.push(`${page.items.length} posts · more${byId ? `: pass --until ${newest}` : " past the limit"}`);
   return blocks.join(`\n${RULE}\n`);
 };

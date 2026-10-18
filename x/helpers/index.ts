@@ -23,6 +23,9 @@ export type SearchTab = (typeof SEARCH_TABS)[number];
 export const HOME_TABS = ["for-you", "following"] as const;
 export type HomeTab = (typeof HOME_TABS)[number];
 
+/** The tabs of a profile an account's posts are read from: Posts, Replies (the account's replies, with what they answer) and Reposts. */
+export type ProfileTab = "posts" | "replies" | "reposts";
+
 /** Each home tab's name on the page, and the GraphQL operation that loads it. */
 export const HOME = {
   "for-you": { name: /^for you$/i, operation: "HomeTimeline" },
@@ -157,6 +160,11 @@ export interface Bound {
   newestFirst?: boolean;
   /** At most this many scrolls (MAX_SCROLLS); a read cut short by it says `more`. */
   scrolls?: number;
+  /**
+   * Which entries the read keeps, for `timeline`. One left out counts for nothing: not toward `limit`,
+   * and it never stops the read. (A profile's replies hold the posts the account replied to.)
+   */
+  keep?: (entry: Entry) => boolean;
 }
 
 /** How `gather` knows an entry again: its kind and id; a DOM repost, which has no id, by its post's. */
@@ -238,7 +246,22 @@ export const gather = ({ limit = 20, until, newestFirst }: Bound) => {
      * skip what was cut.
      */
     page(moreAfter?: boolean): XPage<Entry> {
-      const kept = [...seen].slice(0, limit);
+      let kept = [...seen];
+      if (newestFirst && kept.length > limit) {
+        // A module lays a self-thread out oldest first, so the first `limit` read are not the newest:
+        // keep the pinned ones and the newest of the rest by id, in the order read.
+        const id = ([, e]: [string, Entry]) => BigInt((e.kind === "repost" ? (e.id ?? postOf(e).id) : e.id) || 0);
+        const room = Math.max(limit - [...pinned].filter((k) => seen.has(k)).length, 0);
+        const newest = new Set(
+          kept
+            .filter(([k]) => !pinned.has(k))
+            .sort((a, b) => (id(b) > id(a) ? 1 : id(b) < id(a) ? -1 : 0))
+            .slice(0, room)
+            .map(([k]) => k),
+        );
+        kept = kept.filter(([k]) => pinned.has(k) || newest.has(k));
+      }
+      kept = kept.slice(0, limit);
       const pins = kept.flatMap(([key, e]) => (pinned.has(key) && e.id ? [e.id] : []));
       return clean({
         items: kept.map(([, e]) => e),
@@ -427,20 +450,50 @@ export const xHelpers = (page: Page) => {
         .waitFor({ state: "visible", timeout: 15_000 });
     },
 
-    /** A profile, by handle; a handle that isn't there is a precondition, not the op's fault. */
-    async profile(handle: string): Promise<void> {
+    /**
+     * A profile, by handle, on its Posts tab or its Replies tab (`/<handle>/with_replies`, where a person
+     * clicks "Replies"); a handle that isn't there, or is suspended, is a precondition, not the op's fault.
+     */
+    async profile(handle: string, tab: ProfileTab = "posts"): Promise<void> {
       const name = bare(handle);
       if (!HANDLE.test(name)) throw new InputError(`"${handle}" is not an X handle (letters, digits and _, at most 15)`);
-      await helpers.open(`/${name}`);
+      await helpers.open(tab === "replies" ? `/${name}/with_replies` : tab === "reposts" ? `/${name}/reposts` : `/${name}`);
       // The main column comes before either: wait for the profile or X's message, then decide.
       const missing = page.getByText(/this account doesn.t exist/i);
+      const suspended = page.getByText(/^account suspended$/i);
       await page
         .locator(SEL.profileName)
         .or(missing)
+        .or(suspended)
         .first()
         .waitFor({ state: "visible", timeout: 20_000 })
         .catch(() => {});
       if (await missing.isVisible().catch(() => false)) throw new PreconditionError(`no account @${name}`);
+      if (await suspended.isVisible().catch(() => false)) throw new PreconditionError(`@${name} is suspended`);
+    },
+
+    /**
+     * A profile's posts as `profile` opens it, for a read of its timeline: a protected account the
+     * signed-in one doesn't follow shows no posts and makes no timeline call, so it is a precondition here.
+     */
+    async profileTimeline(handle: string, tab: ProfileTab = "posts"): Promise<void> {
+      const name = bare(handle);
+      await helpers.profile(name, tab);
+      const locked = page.getByText(/these posts are protected|this account.s posts are protected/i);
+      await page
+        .locator(SEL.post)
+        .or(page.locator(SEL.emptyState))
+        .or(locked)
+        .first()
+        .waitFor({ state: "visible", timeout: 15_000 })
+        .catch(() => {});
+      if (
+        await locked
+          .first()
+          .isVisible()
+          .catch(() => false)
+      )
+        throw new PreconditionError(`@${name} is protected: its posts are not visible to this account`);
     },
 
     /**
@@ -530,7 +583,10 @@ export const xHelpers = (page: Page) => {
       const match = callOf(operation);
       const responses: Response[] = [];
       const listen = (r: Response) => {
-        if (match.test(r.url())) responses.push(r);
+        if (!match.test(r.url())) return;
+        // Fetch the body now: the browser drops it once the page moves on, and a 200 can come back with none.
+        r.body().catch(() => {});
+        responses.push(r);
       };
       page.on("response", listen);
       try {
@@ -540,20 +596,31 @@ export const xHelpers = (page: Page) => {
         let more: boolean | undefined;
         let done = false;
         let atEnd = false;
+        let emptied: Response | undefined;
         for (let used = 0, idle = 0, scrolls = 0; ; scrolls++) {
           const before = used;
           while (!done && used < responses.length) {
-            const { body, low } = await bodyOf(operation, responses[used++]!);
+            const response = responses[used++]!;
+            // A 200 with no JSON is not a timeline page (an aborted or repeated call): skip it, and
+            // say so below if no other page ever came.
+            if (response.ok() && !(await response.json().catch(() => undefined))) {
+              emptied = response;
+              continue;
+            }
+            const { body, low } = await bodyOf(operation, response);
             const t = readTimeline(body);
             more = hasMore(t);
             const items = t.items.filter((i): i is TimelineItem & { value: Entry } => isEntry(i.value));
-            const cells = items.map(({ entryId, module, value }, n) =>
-              clean({
-                entry: value,
-                pinned: t.pinned.includes(entryId) || undefined,
-                earlier: (!!module && items[n + 1]?.module === module) || undefined,
-              }),
-            );
+            // `earlier` is worked out on all the items, so a module's order survives what `keep` drops.
+            const cells = items
+              .map(({ entryId, module, value }, n) =>
+                clean({
+                  entry: value,
+                  pinned: t.pinned.includes(entryId) || undefined,
+                  earlier: (!!module && items[n + 1]?.module === module) || undefined,
+                }),
+              )
+              .filter((cell) => bound.keep?.(cell.entry) ?? true);
             done = read.add(cells) || more === false;
             if (!done && low) {
               if (!read.size) throw new RefusedError(low);
@@ -561,6 +628,12 @@ export const xHelpers = (page: Page) => {
             }
           }
           if (done) break;
+          // Only the calls that had no JSON came: give a repeated one a moment, then say what X answered.
+          if (!read.size && emptied && scrolls < (bound.scrolls ?? MAX_SCROLLS)) {
+            await page.waitForResponse((r) => match.test(r.url()) && r !== emptied, { timeout: 5_000 }).catch(() => {});
+            if (used >= responses.length) await bodyOf(operation, emptied);
+            continue;
+          }
           // Only a scroll that reached the bottom without a new call counts as idle.
           idle = used !== before ? 0 : atEnd ? idle + 1 : idle;
           if (idle >= 3) break;

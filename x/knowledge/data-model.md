@@ -236,6 +236,8 @@ operations **[paths confirmed: twscrape fixtures]**:
 | --- | --- | --- |
 | SearchTimeline | `data.search_by_raw_query.search_timeline.timeline` | `tweet-<id>` (or `user-<id>` on People) |
 | UserOriginalsTimeline (a profile's Posts tab) | `data.user.result.timeline.timeline` | `tweet-`, `profile-originals-conversation-`, `who-to-follow-` (left out) **[confirmed 2026-10-18]** |
+| UserRepliesTimeline (a profile's Replies tab) | `data.user.result.timeline.timeline` | `profile-conversation-<id>` modules, the post answered first (another account's) then the account's reply; no standalone posts **[confirmed 2026-10-18]** |
+| UserRepostsTimeline (a profile's Reposts tab) | `data.user.result.timeline.timeline` | `tweet-<id>`, each a `Tweet` with `legacy.retweeted_status_result` **[confirmed 2026-10-18: `repost` with its own id, `by` the account, `post` the nested original]** |
 | UserTweets, UserTweetsAndReplies, UserMedia, Likes | `data.user.result.timeline.timeline` (older: `timeline_v2`) | `tweet-`, `profile-conversation-`, `who-to-follow-` (left out) |
 | TweetDetail | `data.threaded_conversation_with_injections_v2` | `tweet-`, `conversationthread-`, `cursor-showmorethreads-` |
 | Followers, Following, BlueVerifiedFollowers | `data.user.result.timeline.timeline` | `user-<id>` |
