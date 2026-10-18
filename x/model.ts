@@ -222,7 +222,6 @@ export const User = Type.Object({
 export const UserUnavailable = Type.Object({
   kind: Type.Literal("user-unavailable"),
   id: Type.Optional(UserId),
-  handle: Type.Optional(Type.String()),
   reason: Type.Union([Type.Literal("suspended"), Type.Literal("unknown")]),
   message: Type.Optional(Type.String()),
   source: Source,
@@ -256,10 +255,11 @@ export const Notification = Type.Object({
 
 /**
  * A bounded read of a timeline. `more` says X had more past the last item. `cursor` is X's opaque
- * bottom cursor, set only by the one-response mappers (postsPage, usersPage) and for the API source:
- * ops never send their own calls, so a later read resumes from an id (`until`), and app.timeline and
- * app.posts leave it out, since a cursor past a page cut at `limit` would skip what was cut. `pinned` names the items X pinned above the timeline (a
- * profile's pinned post): they are out of its order, and `until` never stops at them.
+ * bottom cursor, set only by the one-response mappers (postsPage, usersPage) and for the API
+ * source: ops never send their own calls, so a later read resumes from an id (`until`), and
+ * app.timeline and app.posts leave it out, since a cursor past a page cut at `limit` would skip
+ * what was cut. `pinned` names the items X pinned above the timeline (a profile's pinned post):
+ * they are out of its order, and `until` never stops at them.
  */
 export const Page = <T extends TSchema>(item: T) =>
   Type.Object({

@@ -5,7 +5,7 @@
 // first op is built.
 
 /** A user in the 2026 shape: no `legacy`, fields in core/avatar/privacy/... (twscrape raw_user_by_login.json). */
-export const userResult = (id: string, handle: string, extra: Record<string, unknown> = {}) => ({
+const userResult = (id: string, handle: string, extra: Record<string, unknown> = {}) => ({
   __typename: "User",
   id: btoa(`User:${id}`),
   rest_id: id,

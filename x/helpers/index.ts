@@ -308,10 +308,11 @@ const bodyOf = async (operation: string, response: Response) => {
   return answer;
 };
 
+/** A handle as X writes it in a URL: without the "@" people type. */
+const bare = (handle: string): string => handle.replace(/^@/, "");
+
 export const xHelpers = (page: Page) => {
   const helpers = {
-    page,
-
     /** Open a path on x.com and wait for its main column. */
     async open(path: string): Promise<void> {
       await page.goto(new URL(path, ORIGIN).toString(), { waitUntil: "domcontentloaded" });
@@ -328,9 +329,9 @@ export const xHelpers = (page: Page) => {
 
     /** A profile, by handle; a handle that isn't there is a precondition, not the op's fault. */
     async profile(handle: string): Promise<void> {
-      const bare = handle.replace(/^@/, "");
-      if (!HANDLE.test(bare)) throw new InputError(`"${handle}" is not an X handle (letters, digits and _, at most 15)`);
-      await helpers.open(`/${bare}`);
+      const name = bare(handle);
+      if (!HANDLE.test(name)) throw new InputError(`"${handle}" is not an X handle (letters, digits and _, at most 15)`);
+      await helpers.open(`/${name}`);
       // The main column comes before either: wait for the profile or X's message, then decide.
       const missing = page.getByText(/this account doesn.t exist/i);
       await page
@@ -339,7 +340,7 @@ export const xHelpers = (page: Page) => {
         .first()
         .waitFor({ state: "visible", timeout: 20_000 })
         .catch(() => {});
-      if (await missing.isVisible().catch(() => false)) throw new PreconditionError(`no account @${bare}`);
+      if (await missing.isVisible().catch(() => false)) throw new PreconditionError(`no account @${name}`);
     },
 
     /**
@@ -483,7 +484,7 @@ export const xHelpers = (page: Page) => {
     async user(handle: string): Promise<User | UserUnavailable> {
       const json = await helpers.graphql<{ data?: { user?: { result?: unknown } } }>("UserByScreenName", () => helpers.profile(handle));
       const user = userFromResult(json.data?.user?.result);
-      if (!user) throw new PreconditionError(`no account @${handle.replace(/^@/, "")}`);
+      if (!user) throw new PreconditionError(`no account @${bare(handle)}`);
       return user;
     },
 

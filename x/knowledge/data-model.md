@@ -54,8 +54,9 @@ Bookmarks and likes have no type of their own. `bookmarks:list` is a `Page<Entry
 - `postUrl(id)` gives `https://x.com/i/status/<id>`, which works whatever the author is now called
   **[inferred: X redirects /i/status/ to the canonical URL]**. No URL is stored.
 - `timeOfId(id)` gives a post's time from its id (snowflake bits 22+, epoch 1288834974657)
-  **[confirmed: X's snowflake format]**. When `createdAt` is missing, text output (`entryText`) falls back to it; no mapper fills `createdAt` from it. Ids from before
-  snowflakes (2010-11-04, below about 2.97e10, such as jack/status/20) are counters with no time in
+  **[confirmed: X's snowflake format]**. When `createdAt` is missing, text output (`entryText`)
+  falls back to it; no mapper fills `createdAt` from it. Ids from before snowflakes (2010-11-04,
+  below about 2.97e10, such as jack/status/20) are counters with no time in
   them: `timeOfId` gives undefined, and `entryText` leaves the time out.
 - A `UserRef` from the DOM has only a `handle`, because the page shows no user ids. GraphQL and the
   API always give `id` **[confirmed: rest_id in every fixture]**. If an op needs account ids, it
@@ -173,16 +174,16 @@ API v2 reports a missing referenced post as an `errors[]` entry next to `data` (
 
 ## Pagination
 
-`Page<T> = { items, more?, cursor?, pinned? }`. Ops never make calls of their own
-(`authoring.md`), so an op can't resume a GraphQL cursor: scrolling sends the page's next request.
-A read is bounded by
-`limit`, or by a stopping id (`until`), and a later read resumes from an id. Post ids are
+`Page<T> = { items, more?, cursor?, pinned? }`. Ops never make calls of their own (`authoring.md`),
+so an op can't resume a GraphQL cursor: scrolling sends the page's next request. A read is bounded
+by `limit`, or by a stopping id (`until`), and a later read resumes from an id. Post ids are
 time-ordered snowflakes. `cursor` is X's Bottom cursor where one response is mapped (`postsPage`,
 `usersPage`), and for the API source the `next_token` an op can pass back; `app.timeline` and
 `app.posts` leave it out, since a cursor past a page cut at `limit` would skip what was cut.
 
-`more` is true when X sent a Bottom cursor, unless X said the timeline ends: a `TimelineTerminateTimeline` with
-`direction: "Bottom"` **[confirmed in fixtures: raw_followers]**, or a page with cursors and no
+`more` is true when X sent a Bottom cursor, unless X said the timeline ends: a
+`TimelineTerminateTimeline` with `direction: "Bottom"` **[confirmed in fixtures: raw_followers]**,
+or a page with cursors and no
 entries, which is how X ends a timeline that still sends a Bottom cursor **[confirmed: twscrape
 api.py comment; inferred that the cursor-only page is that end]**. A page whose entries were all
 left out (ads, suggestions) still has `more`, so a read scrolls on past it. A bounded read

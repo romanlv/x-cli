@@ -32,7 +32,7 @@ const names = (handle: string, name: string, permalink?: string, time = "2026-07
 
 const DEFAULT_LABELS = { reply: "3 Replies. Reply", retweet: "1,204 reposts. Repost", like: "12K Likes. Like", bookmark: "Bookmark" };
 
-export const cell = (c: Cell) => `
+const cell = (c: Cell) => `
 <div data-testid="cellInnerDiv">${c.ad ? `<div data-testid="placementTracking">` : ""}
   <article data-testid="tweet" role="article" tabindex="0">
     ${c.context ? `<a href="/${c.context}" role="link"><span data-testid="socialContext">${c.context} reposted</span></a>` : ""}
@@ -51,14 +51,14 @@ export const cell = (c: Cell) => `
 </div>`;
 
 /** X's embedded quote: a box that is a link as a whole, with its own User-Name and text; `id` when it carries a permalink. */
-export const quoteBox = (handle: string, text: string, id?: string) => `
+const quoteBox = (handle: string, text: string, id?: string) => `
   <div role="link" tabindex="0">
     ${names(handle, `Name ${handle}`, undefined, "2026-07-01T10:00:00.000Z")}
     <div data-testid="tweetText" lang="fr"><span>${text}</span></div>
     ${id ? `<a href="/${handle}/status/${id}" aria-hidden="true"></a>` : ""}
   </div>`;
 
-export const tombstone = (text: string) => `
+const tombstone = (text: string) => `
 <div data-testid="cellInnerDiv"><div><span>${text}</span> <a href="https://help.x.com/rules-and-policies/notices-on-x">Learn more</a></div></div>`;
 
 /** A timeline: a post, a repost, a post with a quote, a deleted post, and two more posts. */

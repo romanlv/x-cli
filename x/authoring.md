@@ -113,8 +113,8 @@ X limits each account, not each op, and a locked account stops every op. So:
 - `app.timeline` reads X's budget (`x-rate-limit-remaining` of `-limit`) on its operation's
   responses, and `app.posts`, which can't tell which call is the timeline, on every GraphQL response
   the page receives. Both stop at a tenth of it with what they have read and `more` (`RefusedError`
-  if they have read nothing); a rate limit or a lock in one is `RefusedError`. `app.posts` also checks X's messages before it takes a timeline that stopped
-  growing as its end.
+  if they have read nothing); a rate limit or a lock in one is `RefusedError`. `app.posts` also
+  checks X's messages before it takes a timeline that stopped growing as its end.
 - A challenge, a captcha or the login page mid-run is the person's to clear, by hand: stop, never
   try to get past it.
 

@@ -60,7 +60,7 @@ describe("x helpers: gathering a timeline", () => {
     expect(original.page(true).items).toEqual([repost("1012", "500")]);
   });
 
-  test("more: true past limit, false when X ended the timeline, absent when unknown, as postsPage says it", () => {
+  test("more: true past limit, false when X ended the timeline, absent when unknown, as data-model.md's Pagination says", () => {
     const read = gather({ limit: 1 });
     read.add(cells(post("1002")));
     expect(read.page(false).more).toBe(false);
