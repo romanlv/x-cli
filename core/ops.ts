@@ -99,7 +99,7 @@ const allowedValues = (schema: TSchema): string[] | undefined => {
 };
 
 /** Text for `<op> --help`, from the op's own schema, so a new op documents itself. */
-export const opHelp = (cli: string, entry: OpEntry): string => {
+export const opHelp = (cli: string, entry: OpEntry, { readOnly = false } = {}): string => {
   const { input, output, description } = entry.definition;
   const required = new Set(input.required ?? []);
   const flags = Object.entries(input.properties).map(([key, schema]) => {
@@ -119,7 +119,7 @@ export const opHelp = (cli: string, entry: OpEntry): string => {
     "",
     "Every op also takes:",
     "  --context <name>   run against this context instead of the current one",
-    "  --dry-run          stop before the last submit, with a screenshot of the filled form",
+    ...(readOnly ? [] : ["  --dry-run          stop before the last submit, with a screenshot of the filled form"]),
     "  --headed           show the browser",
     ...(entry.definition.direct ? ["  --browser          skip the direct way, which runs without a browser, and run it in one"] : []),
     `  --request "<text>" file a change to this op; the rest of the call is its example`,

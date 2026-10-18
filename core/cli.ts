@@ -496,7 +496,7 @@ const callOp = async (env: Env, name: string, rest: string[]): Promise<Outcome> 
     return filedOutcome(env, filed, wait, `no op ${name} yet`, again);
   }
 
-  if (args.global.help) return ok(opHelp(cli, entry));
+  if (args.global.help) return ok(opHelp(cli, entry, { readOnly: env.domain.readOnly }));
   const ctx = contexts.resolve(contextFlag(args));
 
   // A change may add flags the op doesn't take yet, so its example is filed as given, unchecked.

@@ -91,6 +91,7 @@ export const xDomain = (overrides: Partial<Domain<Xh>> = {}): Domain<Xh> =>
     // keep-alive nudges.
     browserChannel: "chrome",
     hideAutomation: true,
+    readOnly: true,
     maxRunning: 1,
     directCalls: false,
     testIdAttribute: "data-testid",

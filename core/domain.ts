@@ -94,6 +94,8 @@ export interface Domain<Helpers = unknown> {
    * still drives the pages over DevTools, which a page can notice.
    */
   hideAutomation?: boolean;
+  /** Its ops only read: there is no submit for `--dry-run` to stop before, so help leaves it out. */
+  readOnly?: boolean;
   /** How many requests the worker builds at once (2); one for an app that limits each account. */
   maxRunning?: number;
   /**

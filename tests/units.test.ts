@@ -138,6 +138,9 @@ describe("op input", () => {
     expect(help).toContain("--kind a|b");
     expect(help).toContain("--query <string>  what to look for");
     expect(help).toContain("--page-size <number> (optional)");
+    expect(help).toContain("--dry-run");
+    // A domain whose ops only read has no submit to stop before.
+    expect(opHelp("x", entry(), { readOnly: true })).not.toContain("--dry-run");
   });
 
   test("a call round-trips to the argv that reruns it", () => {
