@@ -14,6 +14,10 @@ export interface SnapshotNode {
   /** Whether that test id names this element alone on the page. */
   testIdUnique?: boolean;
   label?: string;
+  /** Its text as Playwright's `hasText` and `getByText` match it (`textContent`), where that isn't its name. */
+  text?: string;
+  /** Whether its name is its `aria-label`, which `getByLabel` matches, rather than its text. */
+  labelled?: boolean;
   disabled?: boolean;
   checked?: boolean;
 }
@@ -149,6 +153,12 @@ const collect = (testIdAttribute: string): Omit<Snapshot, "url" | "title"> => {
         role: role ?? (interactive ? "generic" : "text"),
         name: labelText && !role ? clean(ownText) : nameOf(el, role ?? "generic"),
       };
+      // Playwright matches text as textContent, children joined without the spaces innerText puts
+      // between blocks, so a locator by text needs that text, not the name.
+      const text = clean(el.textContent);
+      if (text && text !== node.name) node.text = text;
+      const aria = clean(el.getAttribute("aria-label"));
+      if (aria && aria === node.name) node.labelled = true;
       if (testId) {
         node.testId = testId;
         node.testIdUnique = counts.get(testId) === 1;
@@ -284,8 +294,11 @@ export const suggestLocator = (node: SnapshotNode): string => {
     return `page.getByRole(${q(node.role)}, { name: ${q(name)}${cut(node.name) ? "" : ", exact: true"} })`;
   }
   // Any other role (an article, a region, an element that is a control only by taking focus) is
-  // named by its aria-label alone, not by the text the snapshot shows: its test id, narrowed by that text, finds it.
-  const hasText = `.filter({ hasText: ${q(name)} })`;
+  // named by its aria-label alone, which getByLabel finds, or else by nothing: its text, as Playwright
+  // reads it, narrows its test id or role down to it.
+  if (node.labelled) return cut(node.name) ? `page.getByLabel(${q(name)})` : `page.getByLabel(${q(name)}, { exact: true })`;
+  const text = node.text ? (cut(node.text) ?? node.text) : name;
+  const hasText = `.filter({ hasText: ${q(text)} })`;
   if (node.testId) return `page.getByTestId(${q(node.testId)})${hasText}`;
-  return node.role === "generic" || node.role === "text" ? `page.getByText(${q(name)})` : `page.getByRole(${q(node.role)})${hasText}`;
+  return node.role === "generic" || node.role === "text" ? `page.getByText(${q(text)})` : `page.getByRole(${q(node.role)})${hasText}`;
 };

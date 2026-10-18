@@ -475,20 +475,25 @@ describe("snapshot", () => {
     }
   });
 
-  test("the suggested locator finds its element alone: a post that shares its test id, a name cut short", async () => {
+  test("the suggested locator finds its element alone: a post that shares its test id, an alert by its label, a name cut short", async () => {
     const browser = await launch(false);
     try {
       const page = await browser.newPage();
       await page.setContent(`
-        <article role="article" tabindex="0" data-testid="tweet"><a href="/ada">Ada</a> posted</article>
-        <article role="article" tabindex="0" data-testid="tweet"><a href="/bob">Bob</a> replied</article>
+        <article role="article" tabindex="0" data-testid="tweet"><div>Ada</div><div>posted</div></article>
+        <article role="article" tabindex="0" data-testid="tweet"><div>Bob</div><div>replied</div></article>
+        <div role="alert" aria-label="Timeline"><div>Bob</div></div>
         <button>${"a long name ".repeat(10)}</button>`);
       const { nodes } = await takeSnapshot(page);
       const find = (n: SnapshotNode) => new Function("page", `return ${suggestLocator(n)}.count()`)(page) as Promise<number>;
       const post = nodes.find((n) => n.role === "article" && n.name === "Ada posted")!;
-      // An article isn't named by its text, so getByRole with it would match nothing.
-      expect(suggestLocator(post)).toBe(`page.getByTestId("tweet").filter({ hasText: "Ada posted" })`);
+      // An article isn't named by its text, so getByRole with it would match nothing; and Playwright
+      // reads its text with the blocks joined, not spaced as the snapshot shows it.
+      expect(suggestLocator(post)).toBe(`page.getByTestId("tweet").filter({ hasText: "Adaposted" })`);
       expect(await find(post)).toBe(1);
+      const alert = nodes.find((n) => n.role === "alert")!;
+      expect(suggestLocator(alert)).toBe(`page.getByLabel("Timeline", { exact: true })`);
+      expect(await find(alert)).toBe(1);
       const button = nodes.find((n) => n.role === "button")!;
       expect(button.name.endsWith("…")).toBe(true);
       expect(suggestLocator(button)).not.toContain("exact");
