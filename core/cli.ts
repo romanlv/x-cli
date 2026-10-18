@@ -520,7 +520,11 @@ const refuseInWorktree = (env: Env, what = "requests are filed"): void => {
 };
 
 const startWorker = (env: Env): void => {
-  if (!env.worktree) ensureWorker(env.domain.home, env.entry);
+  if (env.worktree) return;
+  // Checked here too, so the caller hears of it rather than only a detached worker's log, and a
+  // --wait doesn't start a worker that fails on every poll.
+  maxRunningOf(env.domain);
+  ensureWorker(env.domain.home, env.entry);
 };
 
 /** `--wait [--timeout <seconds>]`, checked before anything is filed; undefined without --wait. */

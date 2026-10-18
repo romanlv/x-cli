@@ -66,14 +66,18 @@ describe("parseArgs", () => {
     }
   });
 
-  test("a worker given no whole number of runs at once is bad input, not a worker that never starts one", async () => {
+  test("no whole number of runs at once is bad input to the call that would start the worker, and to the worker", async () => {
     const t = tempHome();
     try {
+      await cli(t.home, ["context:add", "acme", "--url", "https://example.com"]);
       for (const runs of ["0", "-1", "two", "1.5"]) {
-        const worker = await cli(t.home, ["request:worker"], { [envName("MAX_RUNNING")]: runs });
-        expect(worker.code).toBe(2);
-        expect(worker.stderr).toContain("must be a whole number, 1 or more");
+        const filing = await cli(t.home, ["request", "the replies under a post"], { [envName("MAX_RUNNING")]: runs });
+        expect(filing.code).toBe(2);
+        expect(filing.stderr).toContain("must be a whole number, 1 or more");
       }
+      const worker = await cli(t.home, ["request:worker"], { [envName("MAX_RUNNING")]: "0" });
+      expect(worker.code).toBe(2);
+      expect(worker.stderr).toContain("must be a whole number, 1 or more");
     } finally {
       t.cleanup();
     }
