@@ -6,3 +6,5 @@ node_modules
 # A person's sign-in per context (.env.<context>), for context:login; never committed.
 .env*
 .claude/worktrees/
+# Feed digests and other local output.
+out/
