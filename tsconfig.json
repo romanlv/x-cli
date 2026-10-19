@@ -9,11 +9,7 @@
     "noEmit": true,
     "skipLibCheck": true,
     "verbatimModuleSyntax": true,
-    "noUncheckedIndexedAccess": true,
-    "paths": {
-      "agentswf/workflow": ["/Users/roman/dev/awf/packages/contract/src/workflow/index.ts"],
-      "agentswf/testing": ["/Users/roman/dev/awf/packages/engine/src/workflow-testing/index.ts"]
-    }
+    "noUncheckedIndexedAccess": true
   },
   "include": ["core/**/*.ts", "x/**/*.ts", "tests/**/*.ts"]
 }

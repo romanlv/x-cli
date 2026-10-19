@@ -29,10 +29,11 @@ expo, is set for Nov. 7-8 @NASAKennedy — featuring flyovers and static display
   https://x.com/i/status/2111180963661435219
 ```
 
-## What it built in one afternoon
+## Its first nine requests
 
-Every op below was asked for in a sentence and built by the agents, starting from an empty
-`x/ops/`. Nobody wrote op code by hand.
+The CLI, the request queue and the build workflows came first, with no op at all. Every op below
+was then asked for in a sentence and built by the agents, one after another on the morning of
+2026-10-18, starting from an empty `x/ops/`. Nobody wrote op code by hand.
 
 | Asked for | Op built | Time | Cost | Revisions |
 | --- | --- | ---: | ---: | ---: |
@@ -156,21 +157,67 @@ The agents drive a real, personal account, so the limits are in code, not only i
 
 ## Try it
 
-You need [bun](https://bun.sh), Google Chrome, `awf` (the agent workflow runner the builds run on)
-and the Claude Code and Codex CLIs for the agents.
+### Running ops
+
+You need [bun](https://bun.sh) 1.4 or later, git and Google Chrome (Playwright's Chromium stands
+in when Chrome is missing). `bun install` brings the rest.
 
 ```sh
+git clone https://github.com/romanlv/x-cli && cd x-cli
 bun install && bunx playwright install chromium
 bin/x context:add me --url https://x.com/<your handle>
 bin/x context:login me          # sign in by hand in the window, then press Enter
 bin/x help                      # the ops it has
-bin/x request "the replies under a post, oldest first"
-bin/x request:status R-0001 --wait
+bin/x home:posts --limit 5
 ```
 
-Builds run Claude in a sandbox (`"sandbox": true` in `workflows.json`), where it can't use the
-keychain login. Give it a token: run `claude setup-token` and put the token in the checkout's
-`.env`, as `CLAUDE_CODE_OAUTH_TOKEN=…`, or export it.
+### Building ops: the coding agents
+
+`x request` hands the build to coding agents. `bun install` already brought the two tools that run
+them: [agents.wf](https://github.com/romanlv/agentswf) (`awf`), which runs the workflows in
+`core/workflows/`, and Anthropic's [srt](https://github.com/anthropic-experimental/sandbox-runtime),
+the sandbox they run in. x-cli runs both from its own `node_modules`, so neither needs installing
+globally. You install the agents themselves:
+
+| What | For | Set up |
+| --- | --- | --- |
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | the planner, builder and troubleshooter | install, then `claude` and `/login` |
+| [Codex CLI](https://github.com/openai/codex) | the checker, a second vendor's model | install, then `codex login` |
+| [Herdr](https://herdr.dev) | the terminal multiplexer the Claude agents run in | see herdr.dev |
+| Node.js | srt runs on node | any current release |
+
+**Herdr.** awf opens the Claude agents in panes of a Herdr session of its own, `awf`, where you can
+watch them and type to them. You don't have to work inside Herdr, but it has to be installed.
+Running in panes keeps Claude on your Claude subscription. Headless `claude -p` is billed per token
+as API usage, so awf refuses it. The Codex checker runs headless.
+
+**Sandbox.** With `"sandbox": true` in `workflows.json` (the checkout's setting), agents run in
+srt. They write only their own worktree, read only their account's saved sign-in, and reach no
+network but their model's. A sandboxed Claude can't use the keychain login, so give it a token:
+run `claude setup-token` and put the token in the checkout's `.env` as `CLAUDE_CODE_OAUTH_TOKEN=…`,
+or export it. On Linux, srt also needs bubblewrap.
+
+To run without it, set `"sandbox": false`. Agents then run on your own logins, as you, with no
+token needed. Know what that gives them: awf starts Claude with Bash allowed and Codex with full
+access and no approvals, so they can run any command your user can. Claude Code's other permission
+settings still apply. Use it on a machine and account you're comfortable handing to an agent.
+
+**Models.** The defaults are in `core/workflows/config.ts`: Claude Opus plans and troubleshoots,
+Claude Sonnet builds, and GPT checks. Swap any of them in `workflows.json`:
+
+```json
+{
+  "sandbox": true,
+  "agents": { "checker": { "harness": "claude", "model": "claude-opus-5-5" } }
+}
+```
+
+Then:
+
+```sh
+bin/x request "the replies under a post, oldest first"
+bin/x request:status R-0001 --wait   # stage by stage, with which agent is working
+```
 
 For agents and scripts, every command takes `--json` and prints `{ ok, data, error, next }`, where
 `next` lists the commands worth running next. Exit codes say what happened: 0 done, 2 bad input,

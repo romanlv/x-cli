@@ -7,7 +7,10 @@ import { formatDuration } from "./output";
 import type { RequestRecord } from "./requests";
 import { alive, readJson, readJsonLines } from "./store";
 
-export const awfCommand = (): string => envValue("AWF") ?? "awf";
+// What the checkout installs (agentswf, and srt for its sandboxes), ahead of anything on PATH.
+const BIN = join(import.meta.dir, "..", "node_modules", ".bin");
+
+export const awfCommand = (): string => envValue("AWF") ?? (existsSync(join(BIN, "awf")) ? join(BIN, "awf") : "awf");
 
 /**
  * The workflow each kind of request runs, and its first stage with an agent, which a redo starts
@@ -64,7 +67,12 @@ export const awfEnv = (home: string, root: string): Record<string, string | unde
   const token =
     process.env.CLAUDE_CODE_OAUTH_TOKEN ??
     (existsSync(file) ? /^CLAUDE_CODE_OAUTH_TOKEN=(.+)$/m.exec(readFileSync(file, "utf8"))?.[1]?.trim() : undefined);
-  return { ...process.env, ...(token && { CLAUDE_CODE_OAUTH_TOKEN: token }), [envName("HOME")]: home };
+  return {
+    ...process.env,
+    PATH: [BIN, process.env.PATH].filter(Boolean).join(":"),
+    ...(token && { CLAUDE_CODE_OAUTH_TOKEN: token }),
+    [envName("HOME")]: home,
+  };
 };
 
 /**
