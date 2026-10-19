@@ -104,3 +104,28 @@ looked at: the same ids and text, replies, likes, bookmarks and views to the uni
 ## Direct way
 
 None: x/authoring.md rules it out. Layers 1 and 2 done; the calls are above. `page:fetch` not used.
+
+## Reading 200 (R-0014, 2026-10-19, `me`)
+
+Why: `--limit 200` stopped near 60 posts because `timeline`'s 10 scrolls ran out. A ranked feed has no
+cursor and a fresh `/home` re-ranks (the ids of two loads differ), so a later call can't continue: the
+one read scrolls on in its page.
+
+- Ways to get past 60, none new in the app: the same two tabs (kept), a second call (re-ranks, repeats
+  and misses posts, so no), `filter:follows` search (time order and a cursor-free `until`, but not the
+  home feed; see above), a profile's tab (one account). Picked: more scrolls in the same page.
+- What scrolling gives (`app.timeline` with `scrolls: 60`, one page, logging each response): a new call
+  only after about 10 scrolls (the scroll is 1800 px, a page about 8000 px plus what loaded, so 9 to
+  11). Following: pages of 51, 48, 33, 39, 41, 52 entries at scrolls 0, 10, 20, 29, 38, 46: 200 posts
+  from 5 Oct 15 to Oct 19, done at the limit. For you: pages of 28 to 34 at scrolls 0, 11, 20, 30, 39,
+  49, 58: 196 posts (Oct 17 to 19) when 60 scrolls ran out. So 3 to 4.3 posts a scroll; `max(10,
+  ceil(limit / 2))` leaves room (100 for 200).
+- Budget: `x-rate-limit-limit` 500 for both calls, one used per page (499 to 492 after 7), so a tenth
+  (50) is far off; X's end of the feed was not reached either. Neither came before 200 posts.
+- Time: a scroll plus its pause (2 to 6 s) is about 4.2 s; observed: Following 200 posts in about 245 s
+  (47 scrolls); For you 196 posts in 249 s (60 scrolls, the cap then), so its 200 is an estimate of about
+  4.5 min (about 63 scrolls). The most a read can spend, 100 scrolls, is about 7 min.
+- The `scrolls` growth is in this op only (`scrollsFor`), not in `app.timeline`: `posts:search` and
+  `account:posts` stop by `until` and their reads are bounded by it, and a default that grew with the
+  limit would lengthen every scrolling read. `Bound.scrolls` is what they can use the same way.
+- Paths not taken: no click on anything in the feed.

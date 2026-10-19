@@ -143,6 +143,9 @@ Confirmed against this account:
   account (id, handle, name) and `post` the original, nested at `legacy.retweeted_status_result`, with its
   author's account id and exact counts (checked on @NASA: repost 2111148671219753420, by 11348282, of
   2111147283160998281, counts equal to the page's). Opening the tab's URL makes only that tab's call.
+- **Scrolling a home tab** (2026-10-19, R-0014): a new `HomeTimeline`/`HomeLatestTimeline` call after about 10 scrolls
+  (1800 px each), 28 to 52 entries, 3 to 4 posts a scroll once ads are gone; `x-rate-limit-limit` 500, one call a page.
+  A ranked feed has no cursor, so a long read scrolls on in its page (`Bound.scrolls`), about 4.2 s a scroll.
 - The tab clicked on `/home` is kept with the page, not the account: a new page opens on For you again.
 - A timeline's next page loads only when the page is scrolled near its bottom (20 posts are about
   8000 px), so a read can't count early scrolls without a new call as the end: `app.timeline` counts
