@@ -346,6 +346,6 @@ X detects automation and limits or locks accounts that look like it. `x/knowledg
 ## Open questions
 
 - [ ] One request at a time still opens two browsers on the account (the builder's and the checker's). Watch whether X minds.
-- [ ] The e2e tests and their mock app were Workday's and were not copied. A mock X (a sign-in page, a search page, a profile with posts) would let `ci:check` cover the runner, the browser and the helpers again.
-- [ ] X sets no `keepAlive`, so nothing opens the app just to stay signed in. If a long run finds itself signed out, set it in `x/domain.ts`, and watch whether the nudge looks like automation to X.
+- [ ] The e2e tests and their mock app were Workday's and were not copied. A mock X (a sign-in page, a search page, a profile with posts) would let `ci:check` cover the runner, the browser and the helpers again. %% we can build more tests based on real usage %%
+- [ ] X sets no `keepAlive`, so nothing opens the app just to stay signed in. If a long run finds itself signed out, set it in `x/domain.ts`, and watch whether the nudge looks like automation to X. %% x sessions should last longer, no worries %%
 
