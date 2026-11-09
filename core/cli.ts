@@ -2,7 +2,7 @@
 // `main(domain)`; nothing here knows which app the domain drives.
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { formatCost, runActivity, runRoot, runUsage, stopRun, sumUsage } from "./awf";
+import { formatCost, runActivity, runRoot, runUsage, runUsages, stopRun, sumUsage } from "./awf";
 import { keepSignedIn, type OpenBrowser, signIn } from "./browser";
 import { Contexts } from "./contexts";
 import { savedCredentials } from "./credentials";
@@ -285,7 +285,8 @@ const fileRequest = (env: Env, args: ParsedArgs): Promise<Outcome> => {
 const listRequests = (env: Env, args: ParsedArgs): Outcome => {
   const state = flag(args, "state") as RequestState | undefined;
   const list = env.requests.list({ state });
-  const usage = new Map(list.map((r) => [r.id, runUsage(env.domain.home, r.id)]));
+  const usageOf = runUsages(env.domain.home);
+  const usage = new Map(list.map((r) => [r.id, usageOf(r.id)]));
   const data = list.map((r) => ({ ...r, usage: usage.get(r.id) }));
   if (list.length === 0) return ok(data, undefined, state ? `no ${state} requests` : "no requests yet");
   const rows = list.map((r) => {

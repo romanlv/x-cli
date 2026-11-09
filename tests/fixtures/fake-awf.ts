@@ -9,7 +9,7 @@ import { Requests } from "../../core/requests";
 
 const args = process.argv.slice(2);
 const home = envValue("HOME")!;
-const id = args.includes("--continue") ? args[args.indexOf("--continue") + 1]! : args.at(-1)!;
+const id = args[args.indexOf("--id") + 1]!;
 appendFileSync(join(home, "awf-calls.jsonl"), `${JSON.stringify({ id, args, at: Date.now() })}\n`);
 const mode = process.env.FAKE_AWF ?? "done";
 if (mode === "slow") await Bun.sleep(400);

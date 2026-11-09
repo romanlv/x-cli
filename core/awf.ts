@@ -1,6 +1,6 @@
 // What the tool knows of awf: the command line and environment of a request's run, how to stop
 // one, and what awf keeps of a run (its folder under `.state/runs/`), read back for status.
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { envName, envValue } from "./env";
 import { formatDuration } from "./output";
@@ -36,26 +36,64 @@ const runDir = (home: string, id: string): string | undefined => {
 };
 
 /**
- * awf's record of a run's last attempt: how it ended and why. awf keeps an attempt's record until
- * the next attempt ends, so with `since`, an attempt's start, a record written before it is none.
+ * An attempt's file, `attempts/{n}.json`. `accounting` is only in a run from before agentswf 0.1,
+ * which awf no longer reads: in the attempt file itself, or under `pre-format/` once awf's
+ * migrate-runs script has moved the run on.
+ */
+interface AttemptFile {
+  started?: string;
+  ended?: string | null;
+  outcome?: string;
+  reason?: string;
+  accounting?: { wallMs?: number; totals?: { estimate?: number } };
+}
+
+/** A run's attempt files, oldest first. */
+const attemptFiles = (dir: string): AttemptFile[] => {
+  const folder = join(dir, "attempts");
+  if (!existsSync(folder)) return [];
+  return readdirSync(folder)
+    .filter((f) => f.endsWith(".json"))
+    .sort((a, b) => Number.parseInt(a, 10) - Number.parseInt(b, 10))
+    .map((f) => {
+      const attempt = readJson<AttemptFile>(join(folder, f), {});
+      const accounting = attempt.accounting ?? readJson<AttemptFile>(join(dir, "pre-format", "attempts", f), {}).accounting;
+      return accounting ? { ...attempt, accounting } : attempt;
+    });
+};
+
+/**
+ * How a run's latest attempt ended, and why; neither while it runs or if it died without saying.
+ * With `since`, an attempt's start: one that began before it is another attempt's, so none.
  */
 export const runOutput = (home: string, id: string, since?: number): { outcome?: string; reason?: string } | undefined => {
   const dir = runDir(home, id);
-  if (!dir) return undefined;
-  const file = join(dir, "output.json");
-  if (since !== undefined && (!existsSync(file) || statSync(file).mtimeMs < since)) return undefined;
-  return readJson(file, undefined);
+  const latest = dir ? attemptFiles(dir).at(-1) : undefined;
+  if (!latest) return undefined;
+  if (since !== undefined && !(Date.parse(latest.started ?? "") >= since)) return undefined;
+  return latest;
 };
 
 /**
  * The awf command line for a request's next attempt: a new run, or a continue of the one it has,
  * from the first stage when the request is to be redone. `timeout` is the attempt's whole budget.
+ * A pane agent's pane stays open when it fails, for a look; headless and sandboxed ones keep none.
  */
 export const awfArgs = (home: string, root: string, request: Pick<RequestRecord, "id" | "kind" | "redo">, timeout: string): string[] => {
   const workflow = workflowOf(request);
-  const common = [join(root, "core", "workflows", workflow.file), "--run-root", runRoot(home), "--timeout", timeout, "--no-watch"];
-  if (runDir(home, request.id) === undefined) return ["run", ...common, "--id", request.id, "--", request.id];
-  return ["run", ...common, "--continue", request.id, ...(request.redo ? ["--from-stage", workflow.firstStage] : [])];
+  const common = [
+    join(root, "core", "workflows", workflow.file),
+    "--run-root",
+    runRoot(home),
+    "--timeout",
+    timeout,
+    "--no-watch",
+    "--id",
+    request.id,
+  ];
+  // A continue keeps what the run started with, and awf refuses another value: a run older than this flag has its default.
+  if (runDir(home, request.id) === undefined) return ["run", ...common, "--keep-panes", "on-failure", "--", request.id];
+  return ["run", ...common, "--continue", ...(request.redo ? ["--from-stage", workflow.firstStage] : [])];
 };
 
 /**
@@ -99,26 +137,60 @@ export interface RunUsage {
   partial: boolean;
 }
 
-/** What a request's runs took so far: money and time, summed over its attempts. */
-export const runUsage = (home: string, id: string): RunUsage | undefined => {
+/** What `awf runs --json` lists: a run's cost over its attempts, by run id. Empty when awf can't say. */
+export const runEstimates = (home: string): Map<string, number> => {
+  const estimates = new Map<string, number>();
+  try {
+    const child = Bun.spawnSync([awfCommand(), "runs", "--run-root", runRoot(home), "--limit", "100000", "--json"], {
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    if (child.exitCode !== 0) return estimates;
+    const { runs } = JSON.parse(child.stdout.toString()) as { runs?: { ref?: string; estimate?: number }[] };
+    for (const { ref, estimate } of runs ?? [])
+      if (ref && typeof estimate === "number") estimates.set(ref.slice(ref.indexOf("/") + 1), estimate);
+  } catch {}
+  return estimates;
+};
+
+/**
+ * What a request's runs took so far: money and time, summed over its attempts. awf prices a run
+ * when asked; a run from before agentswf 0.1 kept its price in its attempt files, and awf no longer
+ * reads it. `estimates` is asked only for a run that needs it.
+ */
+export const runUsage = (
+  home: string,
+  id: string,
+  estimates: () => Map<string, number> = () => runEstimates(home),
+): RunUsage | undefined => {
   const dir = runDir(home, id);
-  const attempts = dir && existsSync(join(dir, "attempts")) ? readdirSync(join(dir, "attempts")).filter((f) => f.endsWith(".json")) : [];
+  const attempts = dir ? attemptFiles(dir) : [];
   if (attempts.length === 0) return undefined;
   const usage: RunUsage = { usd: 0, ms: 0, partial: false };
-  for (const file of attempts) {
-    const attempt = readJson<{ started?: string; ended?: string | null; accounting?: { wallMs?: number; totals?: { estimate?: number } } }>(
-      join(dir!, "attempts", file),
-      {},
-    );
-    const estimate = attempt.accounting?.totals?.estimate;
-    if (typeof estimate === "number") usage.usd += estimate;
-    else usage.partial = true;
+  for (const attempt of attempts) {
+    if (attempt.accounting) {
+      const estimate = attempt.accounting.totals?.estimate;
+      if (typeof estimate === "number") usage.usd += estimate;
+      else usage.partial = true;
+    } else if (!attempt.ended) usage.partial = true;
     const started = attempt.started ? Date.parse(attempt.started) : NaN;
     usage.ms +=
       attempt.accounting?.wallMs ??
       (attempt.ended ? Date.parse(attempt.ended) - started : Number.isNaN(started) ? 0 : Date.now() - started);
   }
+  // Attempts since awf stopped keeping a price: a migrated run continued has both kinds.
+  if (attempts.some((a) => !a.accounting)) {
+    const estimate = estimates().get(id);
+    if (estimate === undefined) usage.partial = true;
+    else usage.usd += estimate;
+  }
   return usage;
+};
+
+/** `runUsage` for many runs, asking awf for their prices at most once. */
+export const runUsages = (home: string): ((id: string) => RunUsage | undefined) => {
+  let estimates: Map<string, number> | undefined;
+  return (id) => runUsage(home, id, () => (estimates ??= runEstimates(home)));
 };
 
 export const sumUsage = (usages: (RunUsage | undefined)[]): RunUsage =>
@@ -138,7 +210,7 @@ interface RunView {
   agents?: { key: string; state: string; live?: { lastActivity?: { activity: Activity; at: string } } }[];
 }
 
-/** A turn as the run's log (`turns.jsonl`) has it: started, and once it settles, answered. */
+/** A turn as the run's log (`log.jsonl`) has it: started, and once it settles, answered. */
 interface TurnLine {
   kind: string;
   attempt?: number;
@@ -179,10 +251,14 @@ const doing = (activity: Activity): string => {
 
 const since = (iso: string, now: number) => formatDuration(Math.max(0, now - Date.parse(iso)));
 
-/** An attempt as awf records it once it ends: each stage it ran, and for how long. */
-interface AttemptRecord {
+/** A line of `run.jsonl`, what the run settled: an attempt claiming the run, or a stage that ran ending. */
+interface RunLine {
+  kind: string;
   attempt?: number;
-  stages?: { stage: string; source?: string; spanMs?: number }[];
+  at?: string;
+  name?: string;
+  started?: string;
+  provided?: boolean;
 }
 
 /**
@@ -190,13 +266,12 @@ interface AttemptRecord {
  * again ran in several; the latest attempt reuses the ones that had succeeded, and shows them as
  * taking no time.
  */
-export const earlierSpans = (attempts: AttemptRecord[]): Map<string, number[]> => {
-  const latest = Math.max(0, ...attempts.map((a) => a.attempt ?? 0));
+export const earlierSpans = (lines: RunLine[]): Map<string, number[]> => {
+  const latest = Math.max(0, ...lines.map((l) => l.attempt ?? 0));
   const spans = new Map<string, number[]>();
-  for (const a of [...attempts].sort((x, y) => (x.attempt ?? 0) - (y.attempt ?? 0))) {
-    if ((a.attempt ?? 0) === latest) continue;
-    for (const s of a.stages ?? [])
-      if (s.source === "ran" && typeof s.spanMs === "number") spans.set(s.stage, [...(spans.get(s.stage) ?? []), s.spanMs]);
+  for (const l of lines) {
+    if (l.kind !== "stage" || l.provided || (l.attempt ?? 0) === latest || !l.name || !l.started || !l.at) continue;
+    spans.set(l.name, [...(spans.get(l.name) ?? []), Date.parse(l.at) - Date.parse(l.started)]);
   }
   return spans;
 };
@@ -222,12 +297,13 @@ export const describeRun = (view: RunView, turns: TurnLine[], now = Date.now(), 
     else if (t.kind === "turn" && t.operationId) open.delete(t.operationId);
   }
   const live = new Map((view.agents ?? []).map((a) => [a.key, a.live?.lastActivity]));
+  const carried = (state: string) => state === "reused" || state === "provided";
   return (view.stages ?? []).map((stage) => ({
     stage: stage.stage,
-    state: stage.state === "reused" ? "succeeded" : stage.state,
+    state: carried(stage.state) ? "succeeded" : stage.state,
     time: stageTime([
       ...(earlier.get(stage.stage) ?? []),
-      ...(stage.started && stage.state !== "reused"
+      ...(stage.started && !carried(stage.state)
         ? [Math.max(0, (stage.ended ? Date.parse(stage.ended) : now) - Date.parse(stage.started))]
         : []),
     ]),
@@ -254,12 +330,12 @@ export const runActivity = async (home: string, id: string): Promise<StageRow[] 
     const child = Bun.spawn([awfCommand(), "runs", id, "--run-root", runRoot(home), "--json"], { stdout: "pipe", stderr: "ignore" });
     const out = await new Response(child.stdout).text();
     if ((await child.exited) !== 0) return undefined;
-    const attempts = existsSync(join(dir, "attempts"))
-      ? readdirSync(join(dir, "attempts"))
-          .filter((f) => f.endsWith(".json"))
-          .map((f) => readJson<AttemptRecord>(join(dir, "attempts", f), {}))
-      : [];
-    return describeRun(JSON.parse(out) as RunView, readJsonLines<TurnLine>(join(dir, "turns.jsonl")), Date.now(), earlierSpans(attempts));
+    return describeRun(
+      JSON.parse(out) as RunView,
+      readJsonLines<TurnLine>(join(dir, "log.jsonl")),
+      Date.now(),
+      earlierSpans(readJsonLines<RunLine>(join(dir, "run.jsonl"))),
+    );
   } catch {
     return undefined;
   }

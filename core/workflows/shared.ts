@@ -7,15 +7,7 @@
 // prompts.ts writes them.
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join, relative } from "node:path";
-import {
-  type AgentRef,
-  defineExecutableWorkflow,
-  isAnswered,
-  type JsonValue,
-  type SandboxRef,
-  type WorkflowContext,
-  type WorkflowMeta,
-} from "agentswf/workflow";
+import { type AgentRef, defineWorkflow, type JsonValue, type SandboxRef, type WorkflowContext, type WorkflowMeta } from "agentswf/workflow";
 import Type from "typebox";
 import { envName, envValue } from "../env";
 import * as prompts from "../instructions/prompts";
@@ -314,14 +306,12 @@ export const cleanUpCancelled = async (request: RequestRecord, deps: Deps = real
  * run's id the request's. The worktree is there on every attempt before `body` runs.
  */
 export const defineRequestWorkflow = (meta: WorkflowMeta, body: (run: RequestRun, team: Team) => Promise<Result>) => (deps: Deps) =>
-  defineExecutableWorkflow<RunArgs, Result>({
-    definition: {
-      meta,
-      run: async (workflow, { id, home }) => {
-        const run = new RequestRun(workflow, deps, id, home);
-        await deps.git.ensureWorktree(run.request.domain.root, run.paths.worktree, run.paths.branch);
-        return body(run, openTeam(run));
-      },
+  defineWorkflow<RunArgs, Result>({
+    meta,
+    run: async (workflow, { id, home }) => {
+      const run = new RequestRun(workflow, deps, id, home);
+      await deps.git.ensureWorktree(run.request.domain.root, run.paths.worktree, run.paths.branch);
+      return body(run, openTeam(run));
     },
     prepare: prepareArgs,
     present: (result) => `${result.state}: ${result.summary}`,
@@ -340,8 +330,8 @@ const turn = async <S extends Type.TSchema>(
   prompt: string,
   timeoutMs: number,
 ): Promise<Answer<S>> => {
-  const { outcome } = await agent.run<Answer<S>>({ prompt, schema, label, timeoutMs });
-  if (isAnswered(outcome)) return outcome.value;
+  const { outcome } = await agent.run<Answer<S>>({ prompt, schema, label, timeout: `${timeoutMs / 1000}s` });
+  if (outcome.answered) return outcome.value;
   // The question names the agent, whose login or settings a person fixes, and the turn it was on.
   const who = `the ${agent.key} agent (${label})`;
   if (outcome.kind === "failed" && outcome.login)
@@ -390,12 +380,7 @@ const openTeam = (run: RequestRun): Team => {
     return { sandbox: await box };
   };
   const open = (role: Role, instructions: string) => async () => {
-    const runtime = config.agents[role];
-    // A pane agent's pane stays open when it fails, for a look; a headless one has none, and awf
-    // doesn't keep a sandboxed one's, whose pane is in the sandbox's own Herdr.
-    const keep =
-      paths.sandbox || (typeof runtime === "object" && runtime.placement === "headless") ? {} : { keepPane: "on-failure" as const };
-    return workflow.agents.open({ key: role, runtime, cwd: paths.worktree, instructions, ...keep, ...(await sandbox()) });
+    return workflow.agents.open({ key: role, runtime: config.agents[role], cwd: paths.worktree, instructions, ...(await sandbox()) });
   };
   const builder = prompts.builderInstructions(run);
   return {

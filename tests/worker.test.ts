@@ -63,12 +63,12 @@ test("at most maxRunning runs at a time", async () => {
 
 test("a retry of a run that completed redoes it from its first stage, and says so until that stage starts", async () => {
   const r = requests.file({ kind: "intake", text: "a", context: "acme", domain: domain() });
-  mkdirSync(join(t.home, "runs", "op-build", r.id), { recursive: true });
-  writeFileSync(join(t.home, "runs", "op-build", r.id, "output.json"), JSON.stringify({ outcome: "completed" }));
+  mkdirSync(join(t.home, "runs", "op-build", r.id, "attempts"), { recursive: true });
+  writeFileSync(join(t.home, "runs", "op-build", r.id, "attempts", "1.json"), JSON.stringify({ outcome: "completed" }));
   requests.update(r.id, () => ({ state: "deferred" }));
   requests.retry(r.id);
   await runWorker(t.home, ROOT, { pollMs: 20, awf: AWF, maxRunning: 2 });
-  expect(calls()[0]!.args.slice(-4)).toEqual(["--continue", r.id, "--from-stage", "intake"]);
+  expect(calls()[0]!.args.slice(-4)).toEqual([r.id, "--continue", "--from-stage", "intake"]);
   // The fake run never starts a stage, so the next attempt would redo it too.
   expect(requests.get(r.id)!.redo).toBe(true);
 });
@@ -94,8 +94,11 @@ test("a run that dies without recording an end leaves its request failed", async
 test("a run that dies is not given the reason the attempt before it ended with", async () => {
   process.env.FAKE_AWF = "crash";
   const r = requests.file({ kind: "intake", text: "a", context: "acme", domain: domain() });
-  mkdirSync(join(t.home, "runs", "op-build", r.id), { recursive: true });
-  writeFileSync(join(t.home, "runs", "op-build", r.id, "output.json"), JSON.stringify({ outcome: "failed", reason: "the attempt before" }));
+  mkdirSync(join(t.home, "runs", "op-build", r.id, "attempts"), { recursive: true });
+  writeFileSync(
+    join(t.home, "runs", "op-build", r.id, "attempts", "1.json"),
+    JSON.stringify({ started: new Date(Date.now() - 60_000).toISOString(), outcome: "failed", reason: "the attempt before" }),
+  );
   await Bun.sleep(5);
   await runWorker(t.home, ROOT, { pollMs: 20, awf: AWF, maxRunning: 2 });
   expect(requests.get(r.id)).toMatchObject({ state: "failed", reason: "the run ended without a result: awf exited 1" });

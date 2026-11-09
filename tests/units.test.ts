@@ -363,14 +363,57 @@ describe("request ledger", () => {
     const r = requests.file({ kind: "intake", text: "x", context: "acme", domain: domain() });
     const attempts = join(t.home, "runs", "op-build", r.id, "attempts");
     mkdirSync(attempts, { recursive: true });
-    writeFileSync(join(attempts, "1.json"), JSON.stringify({ accounting: { wallMs: 60_000, totals: { estimate: 1.25 } } }));
-    writeFileSync(join(attempts, "2.json"), JSON.stringify({ started: new Date(Date.now() - 120_000).toISOString(), ended: null }));
-    const usage = runUsage(t.home, r.id)!;
+    writeFileSync(join(attempts, "1.json"), JSON.stringify({ started: new Date(0).toISOString(), ended: new Date(60_000).toISOString() }));
+    writeFileSync(join(attempts, "2.json"), JSON.stringify({ started: new Date(Date.now() - 120_000).toISOString() }));
+    const usage = runUsage(t.home, r.id, () => new Map([[r.id, 1.25]]))!;
     expect(usage).toMatchObject({ usd: 1.25, partial: true });
     expect(Math.round(usage.ms / 60_000)).toBe(3);
     expect(formatCost(usage)).toBe("$1.25+");
     expect(formatDuration(usage.ms)).toBe("3m");
     expect(formatDuration(3_900_000)).toBe("1h05m");
+  });
+
+  test("a run from before agentswf 0.1 keeps its price from its attempt files, without asking awf", () => {
+    const r = requests.file({ kind: "intake", text: "x", context: "acme", domain: domain() });
+    const attempts = join(t.home, "runs", "op-build", r.id, "attempts");
+    mkdirSync(attempts, { recursive: true });
+    writeFileSync(join(attempts, "1.json"), JSON.stringify({ accounting: { wallMs: 60_000, totals: { estimate: 1.25 } } }));
+    const asked = () => {
+      throw new Error("asked awf");
+    };
+    expect(runUsage(t.home, r.id, asked)).toEqual({ usd: 1.25, ms: 60_000, partial: false });
+  });
+
+  test("a migrated run keeps its old price from pre-format, and a later attempt adds awf's", () => {
+    const r = requests.file({ kind: "intake", text: "x", context: "acme", domain: domain() });
+    const dir = join(t.home, "runs", "op-build", r.id);
+    mkdirSync(join(dir, "attempts"), { recursive: true });
+    mkdirSync(join(dir, "pre-format", "attempts"), { recursive: true });
+    const moved = { started: new Date(0).toISOString(), ended: new Date(60_000).toISOString() };
+    writeFileSync(join(dir, "attempts", "1.json"), JSON.stringify(moved));
+    writeFileSync(
+      join(dir, "pre-format", "attempts", "1.json"),
+      JSON.stringify({ ...moved, accounting: { wallMs: 60_000, totals: { estimate: 1.25 } } }),
+    );
+    const asked = () => {
+      throw new Error("asked awf");
+    };
+    expect(runUsage(t.home, r.id, asked)).toEqual({ usd: 1.25, ms: 60_000, partial: false });
+
+    writeFileSync(
+      join(dir, "attempts", "2.json"),
+      JSON.stringify({ started: new Date(100_000).toISOString(), ended: new Date(101_000).toISOString() }),
+    );
+    expect(runUsage(t.home, r.id, () => new Map([[r.id, 0.5]]))).toEqual({ usd: 1.75, ms: 61_000, partial: false });
+    expect(runUsage(t.home, r.id, () => new Map())).toEqual({ usd: 1.25, ms: 61_000, partial: true });
+  });
+
+  test("an ended run awf has no price for is counted as not known, not as free", () => {
+    const r = requests.file({ kind: "intake", text: "x", context: "acme", domain: domain() });
+    const attempts = join(t.home, "runs", "op-build", r.id, "attempts");
+    mkdirSync(attempts, { recursive: true });
+    writeFileSync(join(attempts, "1.json"), JSON.stringify({ started: new Date(0).toISOString(), ended: new Date(1_000).toISOString() }));
+    expect(runUsage(t.home, r.id, () => new Map())).toEqual({ usd: 0, ms: 1_000, partial: true });
   });
 
   test("a run is a row per stage, the running one with its open turns: label, agent, and the agent's last step", () => {
@@ -432,17 +475,21 @@ describe("request ledger", () => {
 
   test("a stage's time is its attempts' together, those the latest reused included", () => {
     const now = Date.parse("2026-10-18T14:00:00Z");
-    const attempts = [
-      { attempt: 3, stages: [] },
-      { attempt: 1, stages: [{ stage: "intake", source: "ran", spanMs: 1_000 }] },
-      {
-        attempt: 2,
-        stages: [
-          { stage: "intake", source: "ran", spanMs: 154_000 },
-          { stage: "write", source: "ran", spanMs: 85_000 },
-          { stage: "check", source: "ran", spanMs: 541_000 },
-        ],
-      },
+    const stage = (attempt: number, name: string, ms: number) => ({
+      kind: "stage",
+      attempt,
+      name,
+      started: new Date(now - 3_600_000).toISOString(),
+      at: new Date(now - 3_600_000 + ms).toISOString(),
+    });
+    const lines = [
+      { kind: "claimed", attempt: 1 },
+      stage(1, "intake", 1_000),
+      { kind: "claimed", attempt: 2 },
+      stage(2, "intake", 154_000),
+      stage(2, "write", 85_000),
+      stage(2, "check", 541_000),
+      { kind: "claimed", attempt: 3 },
     ];
     const at = "2026-10-18T13:44:28Z";
     const view = {
@@ -453,7 +500,7 @@ describe("request ledger", () => {
         { stage: "merge", state: "pending" },
       ],
     };
-    const rows = describeRun(view, [], now, earlierSpans(attempts));
+    const rows = describeRun(view, [], now, earlierSpans(lines));
     expect(rows.map((r) => [r.stage, r.state, r.time])).toEqual([
       ["intake", "succeeded", "3m (1s + 3m)"],
       ["write", "succeeded", "1m"],
@@ -465,17 +512,20 @@ describe("request ledger", () => {
   test("a retry of a run that stopped continues from the stage that stopped", () => {
     const r = requests.file({ kind: "new", op: "x:y", text: "x", context: "acme", domain: domain() });
     mkdirSync(join(t.home, "runs", "op-build", r.id), { recursive: true });
-    writeFileSync(join(t.home, "runs", "op-build", r.id, "output.json"), JSON.stringify({ outcome: "stopped" }));
     requests.update(r.id, () => ({ state: "failed", reason: "the run was killed" }));
-    expect(awfArgs(t.home, "/root", requests.retry(r.id), "3h").slice(-2)).toEqual(["--continue", r.id]);
+    expect(awfArgs(t.home, "/root", requests.retry(r.id), "3h").slice(-3)).toEqual(["--id", r.id, "--continue"]);
   });
 
   test("a request to be redone is, from its workflow's first stage, whatever stopped the attempt before", () => {
     const r = requests.file({ kind: "repair", op: "x:y", text: "x", context: "acme", domain: domain() });
     mkdirSync(join(t.home, "runs", "op-repair", r.id), { recursive: true });
-    // An attempt stopped on a lock before reaching diagnose: its outcome is no longer "completed".
-    writeFileSync(join(t.home, "runs", "op-repair", r.id, "output.json"), JSON.stringify({ outcome: "stopped" }));
-    expect(awfArgs(t.home, "/root", { ...r, redo: true }, "3h").slice(-4)).toEqual(["--continue", r.id, "--from-stage", "diagnose"]);
+    expect(awfArgs(t.home, "/root", { ...r, redo: true }, "3h").slice(-5)).toEqual([
+      "--id",
+      r.id,
+      "--continue",
+      "--from-stage",
+      "diagnose",
+    ]);
   });
 
   test("the worker continues a run that has a record, and starts one that doesn't", () => {
@@ -490,6 +540,8 @@ describe("request ledger", () => {
       "--no-watch",
       "--id",
       r.id,
+      "--keep-panes",
+      "on-failure",
       "--",
       r.id,
     ]);

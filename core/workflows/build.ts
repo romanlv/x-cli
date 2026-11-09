@@ -1,7 +1,7 @@
 // awf run core/workflows/build.ts --id R-0012 -- R-0012     (the worker starts it; XCLI_HOME set)
 //
 // A new op, or a change to one, from a request in the ledger. The run's id is the request's, so
-// `awf runs R-0012` is its record and `--continue R-0012` picks up at the stage that stopped.
+// `awf runs R-0012` is its record and `--id R-0012 --continue` picks up at the stage that stopped.
 //
 // intake ─┬─ duplicate, deferred, declined ─▶ ended
 //         ├─ same as an open request ─▶ ended, a duplicate of that one
